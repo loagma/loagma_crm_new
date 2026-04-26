@@ -36,6 +36,8 @@ dependencies:
   http: ^1.2.2
   fluttertoast: ^8.2.8
   shared_preferences: ^2.3.4
+  image_picker: ^1.1.2
+  geolocator: ^13.0.2
 
 dev_dependencies:
   flutter_test:

@@ -34,7 +34,7 @@ class ApiConfig {
     try {
       if (Platform.isAndroid) {
         // Physical Android devices need the machine's LAN IP.
-        return 'http://192.168.1.12:$_laravelPort';
+        return 'http://192.168.1.9:$_laravelPort';
       }
       return 'http://localhost:$_laravelPort';
     } catch (_) {

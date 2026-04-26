@@ -11,6 +11,8 @@ import '../screens/admin/employee_create_screen.dart';
 import '../screens/admin/area_assign_screen.dart';
 import '../screens/admin/salesman_area_assign_screen.dart';
 import '../screens/lead/lead_account_screen.dart';
+import '../screens/lead/lead_account_list_screen.dart';
+import '../screens/lead/lead_account_detail_screen.dart';
 import '../screens/marketing/marketing_area_screen.dart';
 import '../screens/marketing/area_pincode_screen.dart';
 import '../services/user_service.dart';
@@ -50,9 +52,33 @@ final appRouter = GoRouter(
         return RoleDashboardTemplate(role: role);
       },
     ),
+    // Lead account — create form (existing menu entry)
     GoRoute(
       path: '/lead-account',
       builder: (context, state) => const LeadAccountScreen(),
+    ),
+    // Lead accounts list
+    GoRoute(
+      path: '/lead-accounts',
+      builder: (context, state) => const LeadAccountListScreen(),
+    ),
+    // Lead account detail
+    GoRoute(
+      path: '/lead-accounts/:id',
+      builder: (context, state) {
+        final id    = state.pathParameters['id'] ?? '';
+        final extra = state.extra as Map<String, dynamic>?;
+        return LeadAccountDetailScreen(id: id, initialData: extra);
+      },
+    ),
+    // Lead account edit form
+    GoRoute(
+      path: '/lead-accounts/:id/edit',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>?;
+        final id = state.pathParameters['id'];
+        return LeadAccountScreen(initialData: extra, leadId: id);
+      },
     ),
     GoRoute(
       path: '/marketing-area',

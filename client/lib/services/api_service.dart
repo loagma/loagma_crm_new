@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'api_config.dart';
 import 'user_service.dart';
@@ -203,5 +204,212 @@ class ApiService {
       print('updateEmployee failed for $url: $e');
     }
     return null;
+  }
+
+  // ── Lead Accounts ─────────────────────────────────────────────────────────
+
+  /// Fetch paginated/searched list of lead accounts.
+  /// Returns {'data': [...], 'meta': {...}} or {'data': [...]}.
+  static Future<Map<String, dynamic>> getLeadAccounts({String? q, int? page, int? perPage}) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts').replace(queryParameters: {
+      if (q != null && q.isNotEmpty) 'q': q,
+      if (page != null) 'page': page.toString(),
+      if (perPage != null) 'per_page': perPage.toString(),
+    });
+
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      return decoded;
+    } catch (e) {
+      print('getLeadAccounts failed for $uri: $e');
+      return {'success': false, 'data': <dynamic>[]};
+    }
+  }
+
+  /// Fetch a single lead account by id.
+  static Future<Map<String, dynamic>?> getLeadAccount(String id) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/$id');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded.containsKey('data')) {
+          return Map<String, dynamic>.from(decoded['data'] as Map);
+        }
+      }
+    } catch (e) {
+      print('getLeadAccount failed for $url: $e');
+    }
+    return null;
+  }
+
+  /// Create a new lead account. Returns the created record or an errors map on 422.
+  static Future<Map<String, dynamic>?> createLeadAccount(Map<String, dynamic> body) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 20));
+      final status = response.statusCode;
+
+      if (status >= 200 && status < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded.containsKey('data')) {
+          return Map<String, dynamic>.from(decoded['data'] as Map);
+        }
+        return decoded;
+      }
+
+      if (status == 422) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
+      }
+
+      print('createLeadAccount unexpected status $status: ${response.body}');
+    } catch (e) {
+      print('createLeadAccount failed for $url: $e');
+    }
+    return null;
+  }
+
+  /// Update an existing lead account. Returns updated record or errors map on 422.
+  static Future<Map<String, dynamic>?> updateLeadAccount(String id, Map<String, dynamic> body) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/$id');
+    try {
+      final response = await http
+          .put(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 20));
+      final status = response.statusCode;
+
+      if (status >= 200 && status < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded.containsKey('data')) {
+          return Map<String, dynamic>.from(decoded['data'] as Map);
+        }
+        return decoded;
+      }
+
+      if (status == 422) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
+      }
+
+      print('updateLeadAccount unexpected status $status: ${response.body}');
+    } catch (e) {
+      print('updateLeadAccount failed for $url: $e');
+    }
+    return null;
+  }
+
+  /// Check whether a contact number is already registered.
+  /// Pass [excludeId] in edit mode to skip the record being updated.
+  /// Returns {'exists': bool, 'data': {...}} or null on network error.
+  static Future<Map<String, dynamic>?> checkLeadContactExists(
+    String contactNumber, {
+    String? excludeId,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/check-contact').replace(
+      queryParameters: {
+        'contact_number': contactNumber,
+        if (excludeId case final id?) 'exclude_id': id,
+      },
+    );
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 8));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('checkLeadContactExists failed for $uri: $e');
+    }
+    return null;
+  }
+
+  /// Delete a lead account by id. Returns true on success.
+  static Future<bool> deleteLeadAccount(String id) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/$id');
+    try {
+      final response = await http.delete(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('deleteLeadAccount failed for $url: $e');
+      return false;
+    }
+  }
+
+  /// Upload lead image and return stored relative URL path (e.g. /storage/leads/..)
+  static Future<String?> uploadLeadImage(String filePath) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/upload-image');
+    try {
+      final req = http.MultipartRequest('POST', url)
+        ..headers['Accept'] = 'application/json'
+        ..headers['Authorization'] = 'Bearer ${UserService.token}'
+        ..files.add(await http.MultipartFile.fromPath('image', filePath));
+
+      final streamed = await req.send().timeout(const Duration(seconds: 30));
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['path'] != null) {
+          return decoded['path'].toString();
+        }
+      }
+      print('uploadLeadImage unexpected status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('uploadLeadImage failed for $url (${File(filePath).path}): $e');
+    }
+    return null;
+  }
+
+  /// Lookup Indian pincode details using public postal API.
+  /// Returns normalized shape:
+  /// {
+  ///   'country': 'India',
+  ///   'state': '...',
+  ///   'district': '...',
+  ///   'city': '...',
+  ///   'areas': ['...', ...],
+  /// }
+  static Future<Map<String, dynamic>?> lookupIndianPincode(String pincode) async {
+    final url = Uri.parse('https://api.postalpincode.in/pincode/$pincode');
+    try {
+      final response = await http.get(url).timeout(const Duration(seconds: 12));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! List || decoded.isEmpty) return null;
+      final first = decoded.first;
+      if (first is! Map) return null;
+
+      final postOfficesRaw = first['PostOffice'];
+      if (postOfficesRaw is! List || postOfficesRaw.isEmpty) return null;
+
+      final postOffices = postOfficesRaw
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+
+      if (postOffices.isEmpty) return null;
+      final top = postOffices.first;
+
+      final areas = postOffices
+          .map((e) => (e['Name'] ?? '').toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+
+      return {
+        'country': (top['Country'] ?? 'India').toString().trim(),
+        'state': (top['State'] ?? '').toString().trim(),
+        'district': (top['District'] ?? '').toString().trim(),
+        'city': (top['Block'] ?? top['Division'] ?? '').toString().trim(),
+        'areas': areas,
+      };
+    } catch (e) {
+      print('lookupIndianPincode failed for $url: $e');
+      return null;
+    }
   }
 }

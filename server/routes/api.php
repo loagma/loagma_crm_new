@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\Auth\OtpAuthController;
 use App\Http\Controllers\MastersController;
+use App\Http\Controllers\LeadsAccountController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -27,12 +28,14 @@ Route::prefix('auth')->group(function () {
 });
 
 // ---------------------------------------------------------------------------
-// RBAC-protected routes (examples — add your real routes here)
+// Lead Accounts CRUD
 // ---------------------------------------------------------------------------
-// Route::middleware(['jwt.auth', 'role:admin'])->group(function () {
-//     Route::get('/admin/...', [...]);
-// });
-//
-// Route::middleware(['jwt.auth', 'role:manager,admin'])->group(function () {
-//     Route::get('/reports/...', [...]);
-// });
+Route::prefix('lead-accounts')->group(function () {
+    Route::get('/',                [LeadsAccountController::class, 'index']);
+    Route::post('/',               [LeadsAccountController::class, 'store']);
+    Route::post('/upload-image',   [LeadsAccountController::class, 'uploadImage']);
+    Route::get('/check-contact',   [LeadsAccountController::class, 'checkContact']); // must be before /{id}
+    Route::get('/{id}',            [LeadsAccountController::class, 'show']);
+    Route::put('/{id}',            [LeadsAccountController::class, 'update']);
+    Route::delete('/{id}',         [LeadsAccountController::class, 'destroy']);
+});

@@ -30,7 +30,7 @@ class AppDrawer extends StatelessWidget {
       {
         'title': 'Lead Account',
         'icon': Icons.account_balance_wallet_rounded,
-        'route': '/lead-account'
+        'route': '/lead-accounts'
       },
       {
         'title': 'Marketing Area (pincode allotment)',
@@ -94,7 +94,7 @@ class AppDrawer extends StatelessWidget {
     final admin = [
       {'title': 'Dashboard', 'icon': Icons.dashboard, 'route': '/admin/dashboard'},
       {'title': 'Employee List', 'icon': Icons.people_alt_rounded, 'route': '/employee-list'},
-      {'title': 'Lead Account', 'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-account'},
+      {'title': 'Lead Account', 'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts'},
       {'title': 'Marketing Area (pincode allotment)', 'icon': Icons.location_on, 'route': '/marketing-area'},
       {'title': 'Area Assign', 'icon': Icons.location_history_rounded, 'route': '/area-assign'},
       // {'title': 'Users', 'icon': Icons.people, 'route': '/admin/users'},
