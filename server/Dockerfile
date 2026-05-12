@@ -1,9 +1,20 @@
 # Multi-stage Dockerfile for Laravel app (PHP 8.2 + Apache)
-# Stage 1: install PHP dependencies via Composer
-FROM composer:2 AS composer
+# Stage 1: install PHP dependencies with PHP 8.2 so the lock file resolves
+FROM php:8.2-cli AS composer
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git unzip zip curl libzip-dev zlib1g-dev \
+  && docker-php-ext-install zip \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+
 WORKDIR /app
+ENV COMPOSER_ALLOW_SUPERUSER=1
+
 COPY composer.json composer.lock ./
 RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress
+
 COPY . /app
 RUN composer dump-autoload -o
 
