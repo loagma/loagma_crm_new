@@ -1,6 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class UserService {
+class UserService extends ChangeNotifier {
   static const _keyToken  = 'token';
   static const _keyId     = 'user_id';
   static const _keyName   = 'user_name';
@@ -12,6 +13,14 @@ class UserService {
   static String? _name;
   static String? _mobile;
   static int?    _id;
+
+  static final UserService _instance = UserService._internal();
+
+  UserService._internal();
+
+  factory UserService() {
+    return _instance;
+  }
 
   static bool    get isLoggedIn     => _token != null && _token!.isNotEmpty;
   static String? get currentRole    => _role;
@@ -47,6 +56,8 @@ class UserService {
     if (_name   != null) await prefs.setString(_keyName,   _name!);
     if (_mobile != null) await prefs.setString(_keyMobile, _mobile!);
     if (_id     != null) await prefs.setInt(_keyId,        _id!);
+    
+    _instance.notifyListeners();
   }
 
   /// Dev-mode only: create a fake session without a real token.
@@ -62,6 +73,8 @@ class UserService {
     await prefs.setString(_keyToken,  'dev_token');
     await prefs.setString(_keyRole,   role);
     await prefs.setString(_keyMobile, contactNumber);
+    
+    _instance.notifyListeners();
   }
 
   static Future<void> logout() async {
@@ -77,5 +90,7 @@ class UserService {
     await prefs.remove(_keyName);
     await prefs.remove(_keyMobile);
     await prefs.remove(_keyId);
+    
+    _instance.notifyListeners();
   }
 }

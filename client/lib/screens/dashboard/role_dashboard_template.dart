@@ -27,10 +27,22 @@ class RoleDashboardTemplate extends StatelessWidget {
             TextButton(
               onPressed: () async {
                 Navigator.pop(dialogContext);
-                await ApiService.logout();
-                await UserService.logout();
-                Fluttertoast.showToast(msg: 'Logged out successfully');
-                if (context.mounted) context.go('/login');
+                try {
+                  await ApiService.logout();
+                  await UserService.logout();
+                  Fluttertoast.showToast(msg: 'Logged out successfully');
+                  if (context.mounted) {
+                    context.go('/login');
+                  }
+                } catch (e) {
+                  print('Logout error: $e');
+                  // Always clear local data and navigate, even if API fails
+                  await UserService.logout();
+                  if (context.mounted) {
+                    Fluttertoast.showToast(msg: 'Logged out');
+                    context.go('/login');
+                  }
+                }
               },
               child: const Text('Yes', style: TextStyle(color: Color.fromARGB(255, 225, 85, 30))),
             ),
@@ -81,11 +93,49 @@ class RoleDashboardTemplate extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 6),
-
-            
+            Expanded(
+              flex: 1,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Welcome',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      UserService.currentName ?? 'Staff',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${role[0].toUpperCase()}${role.substring(1)} Dashboard',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
 
             // Feature icons grid (built from drawer nav links)
             Expanded(
+              flex: 3,
               child: GridView.builder(
                 padding: const EdgeInsets.only(top: 8, bottom: 8),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import '../../services/api_service.dart';
 import '../../services/user_service.dart';
 
 class NoRoleScreen extends StatelessWidget {
@@ -22,10 +23,19 @@ class NoRoleScreen extends StatelessWidget {
             TextButton(
               onPressed: () async {
                 Navigator.pop(dialogContext);
-                await UserService.logout();
-                Fluttertoast.showToast(msg: 'Logged out successfully');
-                if (context.mounted) {
-                  context.go('/login');
+                try {
+                  await ApiService.logout();
+                  await UserService.logout();
+                  Fluttertoast.showToast(msg: 'Logged out successfully');
+                  if (context.mounted) context.go('/login');
+                } catch (e) {
+                  print('Logout error: $e');
+                  // Always clear local data and navigate, even if API fails
+                  await UserService.logout();
+                  if (context.mounted) {
+                    Fluttertoast.showToast(msg: 'Logged out');
+                    context.go('/login');
+                  }
                 }
               },
               child: const Text('Yes', style: TextStyle(color: Color(0xFFD7BE69))),

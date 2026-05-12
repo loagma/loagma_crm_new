@@ -5,12 +5,14 @@ import '../screens/auth/otp_screen.dart';
 import '../screens/auth/no_role_screen.dart';
 import '../screens/auth/splash_screen.dart';
 import '../screens/dashboard/role_dashboard_template.dart';
+import '../services/user_service.dart';
 import 'auth_guard.dart';
 import 'role_guard.dart';
 
 final appRouter = GoRouter(
   initialLocation: '/splash',
   redirect: authGuard,
+  refreshListenable: UserService(),
   routes: [
     GoRoute(
       path: '/splash',

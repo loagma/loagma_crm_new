@@ -44,9 +44,15 @@ class ApiService {
   static Future<void> logout() async {
     try {
       final url = Uri.parse('${ApiConfig.baseUrl}/api/auth/logout');
-      await http
+      final response = await http
           .post(url, headers: _authHeaders)
           .timeout(const Duration(seconds: 10));
-    } catch (_) {}
+      // Log response for debugging
+      print('Logout response status: ${response.statusCode}');
+      print('Logout response body: ${response.body}');
+    } catch (e) {
+      print('Logout API error: $e');
+      // Continue with local logout even if API fails (user might have expired token)
+    }
   }
 }
