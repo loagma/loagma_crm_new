@@ -3,7 +3,7 @@
 FROM php:8.2-cli AS composer
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  git unzip zip curl libzip-dev zlib1g-dev libonig-dev \
+  git unzip zip curl libzip-dev zlib1g-dev liboniguruma-dev \
   && docker-php-ext-install zip \
   && rm -rf /var/lib/apt/lists/*
 
@@ -24,7 +24,7 @@ FROM php:8.2-apache
 
 # System deps and PHP extensions needed by Laravel
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  libzip-dev zlib1g-dev libpng-dev libjpeg-dev libfreetype6-dev libonig-dev git unzip \
+  libzip-dev zlib1g-dev libpng-dev libjpeg-dev libfreetype6-dev liboniguruma-dev git unzip \
   && docker-php-ext-configure gd --with-freetype --with-jpeg \
   && docker-php-ext-install pdo pdo_mysql mbstring exif pcntl bcmath gd zip \
   && a2enmod rewrite headers
