@@ -24,7 +24,15 @@ FROM php:8.2-apache
 
 # System deps and PHP extensions needed by Laravel
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  libzip-dev zlib1g-dev libpng-dev libjpeg-dev libfreetype6-dev libonig-dev git unzip \
+  libzip-dev \
+  zlib1g-dev \
+  libpng-dev \
+  libjpeg-dev \
+  libfreetype6-dev \
+  libonig-dev \
+  git \
+  unzip \
+  ca-certificates \
   && docker-php-ext-configure gd --with-freetype --with-jpeg \
   && docker-php-ext-install pdo pdo_mysql mbstring exif pcntl bcmath gd zip \
   && a2enmod rewrite headers
@@ -35,7 +43,8 @@ COPY --from=composer /app /var/www/html
 # Ensure the webroot points to Laravel's public folder
 ENV APACHE_DOCUMENT_ROOT /var/www/html/public
 RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
- && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
+ && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf \
+ && echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
 # Permissions for storage and cache
 RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache || true
