@@ -3,7 +3,7 @@
 FROM php:8.2-cli AS composer
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git unzip zip curl libzip-dev zlib1g-dev \
+  git unzip zip curl libzip-dev zlib1g-dev libonig-dev \
   && docker-php-ext-install zip \
   && rm -rf /var/lib/apt/lists/*
 
@@ -13,17 +13,18 @@ WORKDIR /app
 ENV COMPOSER_ALLOW_SUPERUSER=1
 
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress
+RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-progress --no-scripts
 
 COPY . /app
-RUN composer dump-autoload -o
+RUN composer dump-autoload -o --no-scripts \
+ && php artisan package:discover --ansi
 
 # Final stage: PHP + Apache
 FROM php:8.2-apache
 
 # System deps and PHP extensions needed by Laravel
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libzip-dev zlib1g-dev libpng-dev libjpeg-dev libfreetype6-dev git unzip \
+  libzip-dev zlib1g-dev libpng-dev libjpeg-dev libfreetype6-dev libonig-dev git unzip \
   && docker-php-ext-configure gd --with-freetype --with-jpeg \
   && docker-php-ext-install pdo pdo_mysql mbstring exif pcntl bcmath gd zip \
   && a2enmod rewrite headers
