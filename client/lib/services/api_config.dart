@@ -7,7 +7,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 class ApiConfig {
   /// Set to false for local development, true for production (Render).
   /// To switch: change to `true` for prod, `false` for local
-  static const bool useProduction = true;
+  static const bool useProduction = false;
 
   /// Optional override for local testing, for example:
   /// `--dart-define=API_BASE_URL=http://192.168.1.27:8000`
@@ -34,7 +34,7 @@ class ApiConfig {
     try {
       if (Platform.isAndroid) {
         // Physical Android devices need the machine's LAN IP.
-        return 'http://192.168.1.27:$_laravelPort';
+        return 'http://192.168.1.12:$_laravelPort';
       }
       return 'http://localhost:$_laravelPort';
     } catch (_) {

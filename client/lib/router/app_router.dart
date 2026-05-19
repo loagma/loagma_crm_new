@@ -5,6 +5,14 @@ import '../screens/auth/otp_screen.dart';
 import '../screens/auth/no_role_screen.dart';
 import '../screens/auth/splash_screen.dart';
 import '../screens/dashboard/role_dashboard_template.dart';
+import '../screens/admin/employee_list_screen.dart';
+import '../screens/admin/employee_detail_screen.dart';
+import '../screens/admin/employee_create_screen.dart';
+import '../screens/admin/area_assign_screen.dart';
+import '../screens/admin/salesman_area_assign_screen.dart';
+import '../screens/lead/lead_account_screen.dart';
+import '../screens/marketing/marketing_area_screen.dart';
+import '../screens/marketing/area_pincode_screen.dart';
 import '../services/user_service.dart';
 import 'auth_guard.dart';
 import 'role_guard.dart';
@@ -40,6 +48,56 @@ final appRouter = GoRouter(
       builder: (context, state) {
         final role = state.pathParameters['role'] ?? '';
         return RoleDashboardTemplate(role: role);
+      },
+    ),
+    GoRoute(
+      path: '/lead-account',
+      builder: (context, state) => const LeadAccountScreen(),
+    ),
+    GoRoute(
+      path: '/marketing-area',
+      builder: (context, state) => const MarketingAreaScreen(),
+    ),
+    GoRoute(
+      path: '/marketing-area/:id',
+      builder: (context, state) {
+        final area = state.extra as Map<String, dynamic>? ?? {'id': int.tryParse(state.pathParameters['id'] ?? '') ?? 0, 'area_name': ''};
+        return AreaPincodeScreen(area: area);
+      },
+    ),
+    GoRoute(
+      path: '/employee-list',
+      builder: (context, state) => const EmployeeListScreen(),
+    ),
+    GoRoute(
+      path: '/employee/create',
+      builder: (context, state) => const EmployeeCreateScreen(),
+    ),
+    GoRoute(
+      path: '/employee/edit/:id',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>?;
+        return EmployeeCreateScreen(initialData: extra);
+      },
+    ),
+    GoRoute(
+      path: '/employee/:id',
+      builder: (context, state) {
+        final id = state.pathParameters['id'] ?? '';
+        final extra = state.extra as Map<String, dynamic>?;
+        return EmployeeDetailScreen(employee: extra, id: id);
+      },
+    ),
+    GoRoute(
+      path: '/area-assign',
+      builder: (context, state) => const AreaAssignScreen(),
+    ),
+    GoRoute(
+      path: '/area-assign/:id',
+      builder: (context, state) {
+        final salesman = state.extra as Map<String, dynamic>? ??
+            {'id': int.tryParse(state.pathParameters['id'] ?? '') ?? 0, 'name': '', 'mobile': ''};
+        return SalesmanAreaAssignScreen(salesman: salesman);
       },
     ),
   ],

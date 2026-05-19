@@ -14,17 +14,28 @@ class DeliStaff extends Authenticatable implements JWTSubject
     public $timestamps = false;
 
     protected $fillable = [
+        'admin_id',
         'name',
         'mobile',
         'role',
         'otp',
         'otp_expires_at',
+        'pincode',
+        'city',
+        'state',
+        'lat',
+        'lng',
+        'is_locked',
     ];
 
-    protected $hidden = ['otp', 'otp_expires_at'];
+    protected $hidden = ['password', 'sess_id', 'otp', 'otp_expires_at'];
 
     protected $casts = [
-        'otp_expires_at' => 'datetime',
+        'otp_expires_at'         => 'datetime',
+        'location_last_updated'  => 'datetime',
+        'lat'                    => 'float',
+        'lng'                    => 'float',
+        'is_locked'              => 'boolean',
     ];
 
     public function getJWTIdentifier(): mixed

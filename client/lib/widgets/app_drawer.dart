@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 class AppDrawer extends StatelessWidget {
   final String role;
@@ -21,11 +22,26 @@ class AppDrawer extends StatelessWidget {
         'icon': Icons.dashboard_rounded,
         'route': '/admin/dashboard'
       },
-      // {
-      //   'title': 'Users',
-      //   'icon': Icons.people_alt_rounded,
-      //   'route': '/admin/users'
-      // },
+      {
+        'title': 'Employee List',
+        'icon': Icons.people_alt_rounded,
+        'route': '/employee-list'
+      },
+      {
+        'title': 'Lead Account',
+        'icon': Icons.account_balance_wallet_rounded,
+        'route': '/lead-account'
+      },
+      {
+        'title': 'Marketing Area (pincode allotment)',
+        'icon': Icons.location_on_rounded,
+        'route': '/marketing-area'
+      },
+      {
+        'title': 'Area Assign',
+        'icon': Icons.location_history_rounded,
+        'route': '/area-assign'
+      },
       {
         'title': 'Settings',
         'icon': Icons.settings_rounded,
@@ -77,6 +93,10 @@ class AppDrawer extends StatelessWidget {
 
     final admin = [
       {'title': 'Dashboard', 'icon': Icons.dashboard, 'route': '/admin/dashboard'},
+      {'title': 'Employee List', 'icon': Icons.people_alt_rounded, 'route': '/employee-list'},
+      {'title': 'Lead Account', 'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-account'},
+      {'title': 'Marketing Area (pincode allotment)', 'icon': Icons.location_on, 'route': '/marketing-area'},
+      {'title': 'Area Assign', 'icon': Icons.location_history_rounded, 'route': '/area-assign'},
       // {'title': 'Users', 'icon': Icons.people, 'route': '/admin/users'},
       {'title': 'Settings', 'icon': Icons.settings, 'route': '/admin/settings'},
     ];
@@ -180,7 +200,7 @@ class AppDrawer extends StatelessWidget {
                       vertical: 10,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.14),
+                      color: Colors.white.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Row(
@@ -273,8 +293,8 @@ class AppDrawer extends StatelessWidget {
                         leading: Container(
                           padding: const EdgeInsets.all(7),
                           decoration: BoxDecoration(
-                            color:
-                                accent1.withOpacity(0.12),
+                          color:
+                            accent1.withValues(alpha: 0.12),
                             borderRadius:
                                 BorderRadius.circular(10),
                           ),
@@ -302,13 +322,10 @@ class AppDrawer extends StatelessWidget {
                         onTap: () {
                           Navigator.of(context).pop();
 
-                          final route =
-                              it['route'] as String?;
+                          final route = it['route'] as String?;
 
-                          if (route != null &&
-                              route.isNotEmpty) {
-                            Navigator.of(context)
-                                .pushNamed(route);
+                          if (route != null && route.isNotEmpty) {
+                            context.go(route);
                           }
                         },
                       ),
@@ -329,7 +346,7 @@ class AppDrawer extends StatelessWidget {
 
                   /// LOGOUT BUTTON
                   Material(
-                    color: Colors.red.withOpacity(0.08),
+                    color: Colors.red.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(12),
                     child: ListTile(
                       dense: true,
@@ -362,9 +379,7 @@ class AppDrawer extends StatelessWidget {
                         if (onLogout != null) {
                           await onLogout!(context);
                         } else {
-                          Navigator.of(context)
-                              .pushReplacementNamed(
-                                  '/login');
+                          context.go('/login');
                         }
                       },
                     ),

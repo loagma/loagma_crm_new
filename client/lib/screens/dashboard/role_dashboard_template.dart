@@ -92,47 +92,7 @@ class RoleDashboardTemplate extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 6),
-            Expanded(
-              flex: 1,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Welcome',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      UserService.currentName ?? 'Staff',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '${role[0].toUpperCase()}${role.substring(1)} Dashboard',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
+          
             // Feature icons grid (built from drawer nav links)
             Expanded(
               flex: 3,
@@ -142,7 +102,7 @@ class RoleDashboardTemplate extends StatelessWidget {
                   crossAxisCount: 2,
                   crossAxisSpacing: 14,
                   mainAxisSpacing: 14,
-                  childAspectRatio: 1.15,
+                  childAspectRatio: 1.05,
                 ),
                 itemCount: featureItems.length,
                 itemBuilder: (context, index) {
@@ -151,7 +111,7 @@ class RoleDashboardTemplate extends StatelessWidget {
                     onTap: () {
                       final route = it['route'] as String?;
                       if (route != null && route.isNotEmpty) {
-                        Navigator.of(context).pushNamed(route);
+                        context.push(route);
                       }
                     },
                     child: Container(
@@ -171,33 +131,36 @@ class RoleDashboardTemplate extends StatelessWidget {
                           ),
                         ],
                       ),
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(12),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Container(
-                            height: 68,
-                            width: 68,
+                            height: 52,
+                            width: 52,
                             decoration: BoxDecoration(
                               color: const Color(0xFFD7BE69).withValues(alpha: 0.14),
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
                               it['icon'] as IconData,
-                              size: 40,
+                              size: 28,
                               color: const Color(0xFFC09E3E),
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          Text(
-                            it['title'] as String,
-                            textAlign: TextAlign.center,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black87,
+                          const SizedBox(height: 8),
+                          Flexible(
+                            child: Text(
+                              it['title'] as String,
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.black87,
+                              ),
                             ),
                           ),
                         ],

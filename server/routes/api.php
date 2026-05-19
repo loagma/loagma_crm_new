@@ -9,6 +9,11 @@ Route::get('/health', [HealthController::class, 'index']);
 
 // Public: used by Flutter dev-mode role picker
 Route::get('/masters/roles', [MastersController::class, 'roles']);
+// List staff/employees (simple public endpoint for dashboards)
+Route::get('/employees', [MastersController::class, 'employees']);
+Route::post('/employees', [MastersController::class, 'store']);
+Route::put('/employees/{id}', [MastersController::class, 'update']);
+Route::get('/employees/{id}', [MastersController::class, 'show']);
 
 // OTP Auth
 Route::prefix('auth')->group(function () {
