@@ -444,19 +444,36 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
     final source = await _askImageSource();
     if (source == null || !mounted) return;
 
+    XFile? picked;
     try {
-      final picked = await _picker.pickImage(
+      picked = await _picker.pickImage(
         source: source,
         imageQuality: 80,
         maxWidth: 1800,
       );
-      if (picked == null || !mounted) return;
+    } on MissingPluginException {
+      if (!mounted) return;
+      _showSnack('Image picker plugin not ready. Please restart app.');
+      return;
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      _showSnack('Unable to pick image: ${e.message ?? 'permission denied or cancelled'}');
+      return;
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack('Unable to pick image. Please try again.');
+      debugPrint('pickImage error: $e');
+      return;
+    }
 
+    if (picked == null || !mounted) return;
+
+    try {
       _showSnack('Uploading image...');
       final uploadedPath = await ApiService.uploadLeadImage(picked.path);
       if (!mounted) return;
       if (uploadedPath == null || uploadedPath.trim().isEmpty) {
-        _showSnack('Image upload failed. Please try again.');
+        _showSnack('Image upload failed. Check API URL/network and try again.');
         return;
       }
 
@@ -468,9 +485,10 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
         }
       });
       _showSnack('Image uploaded');
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      _showSnack('Unable to pick image. Please try again.');
+      _showSnack('Image upload failed. Please try again.');
+      debugPrint('uploadImage error: $e');
     }
   }
 
