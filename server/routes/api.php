@@ -5,6 +5,7 @@ use App\Http\Controllers\HealthController;
 use App\Http\Controllers\Auth\OtpAuthController;
 use App\Http\Controllers\MastersController;
 use App\Http\Controllers\LeadsAccountController;
+use App\Http\Controllers\AreaController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -38,4 +39,19 @@ Route::prefix('lead-accounts')->group(function () {
     Route::get('/{id}',            [LeadsAccountController::class, 'show']);
     Route::put('/{id}',            [LeadsAccountController::class, 'update']);
     Route::delete('/{id}',         [LeadsAccountController::class, 'destroy']);
+});
+
+// ---------------------------------------------------------------------------
+// Areas + Pincodes (dynamic marketing + area assign source)
+// ---------------------------------------------------------------------------
+Route::prefix('areas')->group(function () {
+    Route::get('/', [AreaController::class, 'index']);
+    Route::post('/', [AreaController::class, 'store']);
+    Route::get('/{id}', [AreaController::class, 'show']);
+    Route::put('/{id}', [AreaController::class, 'update']);
+    Route::delete('/{id}', [AreaController::class, 'destroy']);
+
+    Route::post('/{id}/pincodes', [AreaController::class, 'addPincodes']);
+    Route::put('/{id}/pincodes/{pincode}', [AreaController::class, 'updatePincode']);
+    Route::delete('/{id}/pincodes/{pincode}', [AreaController::class, 'deletePincode']);
 });

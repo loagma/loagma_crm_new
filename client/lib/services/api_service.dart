@@ -412,4 +412,148 @@ class ApiService {
       return null;
     }
   }
+
+  // ── Areas (Marketing + Assign source) ─────────────────────────────────────
+  static Future<Map<String, dynamic>> getAreas({String? q, int? page, int? perPage}) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/areas').replace(queryParameters: {
+      if (q != null && q.isNotEmpty) 'q': q,
+      if (page != null) 'page': page.toString(),
+      if (perPage != null) 'per_page': perPage.toString(),
+    });
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('getAreas failed for $uri: $e');
+      return {'success': false, 'data': <dynamic>[]};
+    }
+  }
+
+  static Future<Map<String, dynamic>?> getArea(int id) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/areas/$id');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
+      }
+    } catch (e) {
+      print('getArea failed for $url: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> createArea(String areaName, {List<String>? pincodes}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/areas');
+    try {
+      final body = {
+        'area_name': areaName,
+        if (pincodes != null) 'pincodes': pincodes,
+      };
+      final response = await http.post(url, headers: _authHeaders, body: jsonEncode(body)).timeout(const Duration(seconds: 15));
+      final status = response.statusCode;
+      if (status >= 200 && status < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
+      }
+      if (status == 422) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
+      }
+      print('createArea unexpected status $status: ${response.body}');
+    } catch (e) {
+      print('createArea failed for $url: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> updateArea(int id, {String? areaName, List<String>? pincodes}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/areas/$id');
+    try {
+      final body = <String, dynamic>{
+        if (areaName != null) 'area_name': areaName,
+        if (pincodes != null) 'pincodes': pincodes,
+      };
+      final response = await http.put(url, headers: _authHeaders, body: jsonEncode(body)).timeout(const Duration(seconds: 15));
+      final status = response.statusCode;
+      if (status >= 200 && status < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
+      }
+      if (status == 422) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
+      }
+      print('updateArea unexpected status $status: ${response.body}');
+    } catch (e) {
+      print('updateArea failed for $url: $e');
+    }
+    return null;
+  }
+
+  static Future<bool> deleteArea(int id) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/areas/$id');
+    try {
+      final response = await http.delete(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('deleteArea failed for $url: $e');
+      return false;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> addAreaPincodes(int areaId, List<String> pincodes) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/areas/$areaId/pincodes');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'pincodes': pincodes}))
+          .timeout(const Duration(seconds: 15));
+      final status = response.statusCode;
+      if (status >= 200 && status < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
+      }
+      if (status == 422) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
+      }
+      print('addAreaPincodes unexpected status $status: ${response.body}');
+    } catch (e) {
+      print('addAreaPincodes failed for $url: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> updateAreaPincode(int areaId, String oldPincode, String newPincode) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/areas/$areaId/pincodes/$oldPincode');
+    try {
+      final response = await http
+          .put(url, headers: _authHeaders, body: jsonEncode({'new_pincode': newPincode}))
+          .timeout(const Duration(seconds: 15));
+      final status = response.statusCode;
+      if (status >= 200 && status < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
+      }
+      if (status == 422) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
+      }
+      print('updateAreaPincode unexpected status $status: ${response.body}');
+    } catch (e) {
+      print('updateAreaPincode failed for $url: $e');
+    }
+    return null;
+  }
+
+  static Future<bool> deleteAreaPincode(int areaId, String pincode) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/areas/$areaId/pincodes/$pincode');
+    try {
+      final response = await http.delete(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('deleteAreaPincode failed for $url: $e');
+      return false;
+    }
+  }
 }

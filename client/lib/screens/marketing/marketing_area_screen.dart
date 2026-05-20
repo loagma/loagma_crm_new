@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../services/api_service.dart';
 
 class MarketingAreaScreen extends StatefulWidget {
   const MarketingAreaScreen({super.key});
@@ -11,34 +15,59 @@ class MarketingAreaScreen extends StatefulWidget {
 class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
   static const gold = Color(0xFFD7BE69);
 
-  final List<Map<String, dynamic>> _areas = [
-    {'id': 1, 'area_name': 'North Zone'},
-    {'id': 2, 'area_name': 'South Zone'},
-    {'id': 3, 'area_name': 'East Zone'},
-  ];
-
   final _searchCtrl = TextEditingController();
+  Timer? _debounce;
+  bool _loading = false;
   String _query = '';
+  List<Map<String, dynamic>> _areas = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAreas();
+  }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
 
-  List<Map<String, dynamic>> get _filtered => _query.isEmpty
-      ? _areas
-      : _areas.where((a) => (a['area_name'] as String).toLowerCase().contains(_query)).toList();
+  int _idOf(Map<String, dynamic> area) => int.tryParse((area['id'] ?? '').toString()) ?? 0;
 
-  void _showCreateDialog() {
-    final ctrl = TextEditingController();
+  String _nameOf(Map<String, dynamic> area) => (area['area_name'] ?? '').toString();
+
+  Future<void> _loadAreas() async {
+    setState(() => _loading = true);
+    final result = await ApiService.getAreas(q: _query.isEmpty ? null : _query);
+    if (!mounted) return;
+    final raw = result['data'];
+    final list = raw is List
+        ? raw.map((e) => Map<String, dynamic>.from(e as Map)).toList()
+        : <Map<String, dynamic>>[];
+    setState(() {
+      _areas = list;
+      _loading = false;
+    });
+  }
+
+  void _onSearchChanged(String v) {
+    _query = v.trim();
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 350), _loadAreas);
+  }
+
+  Future<void> _showCreateOrEditDialog({Map<String, dynamic>? area}) async {
+    final ctrl = TextEditingController(text: area == null ? '' : _nameOf(area));
     final formKey = GlobalKey<FormState>();
+    final isEdit = area != null;
 
-    showDialog(
+    await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: const Text('New Area', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        title: Text(isEdit ? 'Edit Area' : 'New Area', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
         content: Form(
           key: formKey,
           child: TextFormField(
@@ -65,28 +94,65 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
             child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               if (!formKey.currentState!.validate()) return;
-              final newId = _areas.isEmpty ? 1 : (_areas.last['id'] as int) + 1;
-              setState(() => _areas.add({'id': newId, 'area_name': ctrl.text.trim()}));
-              Navigator.pop(ctx);
+              final name = ctrl.text.trim();
+              Map<String, dynamic>? res;
+              if (isEdit) {
+                res = await ApiService.updateArea(_idOf(area), areaName: name);
+              } else {
+                res = await ApiService.createArea(name);
+              }
+              if (!mounted) return;
+              if (res == null || res.containsKey('errors')) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(isEdit ? 'Failed to update area' : 'Failed to create area')),
+                );
+                return;
+              }
+              if (ctx.mounted) Navigator.pop(ctx);
+              _loadAreas();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: gold,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-            child: const Text('Create'),
+            child: Text(isEdit ? 'Update' : 'Create'),
           ),
         ],
       ),
     );
   }
 
+  Future<void> _deleteArea(Map<String, dynamic> area) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Area'),
+        content: Text('Delete "${_nameOf(area)}"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final done = await ApiService.deleteArea(_idOf(area));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(done ? 'Area deleted' : 'Failed to delete area')),
+    );
+    if (done) _loadAreas();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final filtered = _filtered;
-
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
@@ -96,21 +162,21 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
       ),
       body: Column(
         children: [
-          // Search bar
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
             child: TextField(
               controller: _searchCtrl,
-              onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+              onChanged: _onSearchChanged,
               decoration: InputDecoration(
-                hintText: 'Search areas…',
+                hintText: 'Search areas...',
                 prefixIcon: const Icon(Icons.search_rounded, color: gold),
                 suffixIcon: _query.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.close_rounded, size: 18),
                         onPressed: () {
                           _searchCtrl.clear();
-                          setState(() => _query = '');
+                          _query = '';
+                          _loadAreas();
                         },
                       )
                     : null,
@@ -124,28 +190,38 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
               ),
             ),
           ),
-
-          // List
           Expanded(
-            child: filtered.isEmpty
-                ? _emptyState()
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 8),
-                    itemBuilder: (context, i) {
-                      final area = filtered[i];
-                      return _AreaCard(
-                        area: area,
-                        onDoubleTap: () => context.push('/marketing-area/${area['id']}', extra: area),
-                      );
-                    },
-                  ),
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(color: gold))
+                : _areas.isEmpty
+                    ? _emptyState()
+                    : RefreshIndicator(
+                        onRefresh: _loadAreas,
+                        child: ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                          itemCount: _areas.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          itemBuilder: (context, i) {
+                            final area = _areas[i];
+                            final pins = area['pincodes'] is List ? (area['pincodes'] as List).length : 0;
+                            return _AreaCard(
+                              area: area,
+                              pincodeCount: pins,
+                              onDoubleTap: () async {
+                                final changed = await context.push('/marketing-area/${_idOf(area)}', extra: area);
+                                if (changed == true) _loadAreas();
+                              },
+                              onEdit: () => _showCreateOrEditDialog(area: area),
+                              onDelete: () => _deleteArea(area),
+                            );
+                          },
+                        ),
+                      ),
           ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showCreateDialog,
+        onPressed: () => _showCreateOrEditDialog(),
         backgroundColor: gold,
         foregroundColor: Colors.white,
         child: const Icon(Icons.add_rounded),
@@ -157,14 +233,11 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_query.isNotEmpty ? Icons.search_off_rounded : Icons.location_off_rounded,
-                size: 64, color: Colors.grey.shade300),
+            Icon(_query.isNotEmpty ? Icons.search_off_rounded : Icons.location_off_rounded, size: 64, color: Colors.grey.shade300),
             const SizedBox(height: 12),
-            Text(_query.isNotEmpty ? 'No results for "$_query"' : 'No areas yet',
-                style: TextStyle(fontSize: 15, color: Colors.grey.shade500)),
+            Text(_query.isNotEmpty ? 'No results for "$_query"' : 'No areas yet', style: TextStyle(fontSize: 15, color: Colors.grey.shade500)),
             const SizedBox(height: 4),
-            if (_query.isEmpty)
-              Text('Tap + to add the first area', style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
+            if (_query.isEmpty) Text('Tap + to add the first area', style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
           ],
         ),
       );
@@ -172,12 +245,24 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
 
 class _AreaCard extends StatelessWidget {
   final Map<String, dynamic> area;
+  final int pincodeCount;
   final VoidCallback onDoubleTap;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
-  const _AreaCard({required this.area, required this.onDoubleTap});
+  const _AreaCard({
+    required this.area,
+    required this.pincodeCount,
+    required this.onDoubleTap,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final name = (area['area_name'] ?? '').toString();
+    final id = (area['id'] ?? '').toString();
+
     return GestureDetector(
       onDoubleTap: onDoubleTap,
       child: Card(
@@ -203,15 +288,22 @@ class _AreaCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(area['area_name'] as String,
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 2),
-                    Text('ID: ${area['id']}  •  Double-tap to view pincodes',
-                        style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                    Text('ID: $id --- $pincodeCount pincodes ', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: Colors.grey, size: 20),
+              PopupMenuButton<String>(
+                onSelected: (v) {
+                  if (v == 'edit') onEdit();
+                  if (v == 'delete') onDelete();
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'edit', child: Text('Edit')),
+                  PopupMenuItem(value: 'delete', child: Text('Delete')),
+                ],
+              ),
             ],
           ),
         ),

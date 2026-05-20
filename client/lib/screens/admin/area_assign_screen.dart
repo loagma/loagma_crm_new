@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../services/api_service.dart';
 
 class AreaAssignScreen extends StatefulWidget {
   const AreaAssignScreen({super.key});
@@ -11,16 +13,16 @@ class AreaAssignScreen extends StatefulWidget {
 class _AreaAssignScreenState extends State<AreaAssignScreen> {
   static const gold = Color(0xFFD7BE69);
 
-  final List<Map<String, dynamic>> _salesmen = [
-    {'id': 1, 'name': 'Rahul Sharma', 'mobile': '9876543210'},
-    {'id': 2, 'name': 'Priya Patel', 'mobile': '9876543211'},
-    {'id': 3, 'name': 'Amit Kumar', 'mobile': '9876543212'},
-    {'id': 4, 'name': 'Sneha Gupta', 'mobile': '9876543213'},
-    {'id': 5, 'name': 'Vikas Singh', 'mobile': '9876543214'},
-  ];
-
   final _searchCtrl = TextEditingController();
   String _query = '';
+  bool _loading = false;
+  List<Map<String, dynamic>> _salesmen = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSalesmen();
+  }
 
   @override
   void dispose() {
@@ -28,18 +30,34 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
     super.dispose();
   }
 
-  List<Map<String, dynamic>> get _filtered => _query.isEmpty
-      ? _salesmen
-      : _salesmen
-          .where((s) =>
-              (s['name'] as String).toLowerCase().contains(_query) ||
-              (s['mobile'] as String).contains(_query))
-          .toList();
+  Future<void> _loadSalesmen() async {
+    setState(() => _loading = true);
+    final list = await ApiService.getEmployees(q: _query.isEmpty ? null : _query, perPage: 100);
+    if (!mounted) return;
+
+    final normalized = list.map((e) {
+      final role = (e['role'] ?? '').toString().trim().toLowerCase();
+      final id = (e['deli_id'] ?? e['mobile'] ?? '').toString();
+      return <String, dynamic>{
+        'id': id,
+        'name': (e['name'] ?? '').toString(),
+        'mobile': (e['mobile'] ?? '').toString(),
+        'role': role,
+      };
+    }).where((e) {
+      final isSalesman = e['role'] == 'salesman';
+      final hasIdentity = e['name'].toString().isNotEmpty || e['mobile'].toString().isNotEmpty;
+      return isSalesman && hasIdentity;
+    }).toList();
+
+    setState(() {
+      _salesmen = normalized;
+      _loading = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _filtered;
-
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
@@ -49,21 +67,24 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
       ),
       body: Column(
         children: [
-          // Search bar
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
             child: TextField(
               controller: _searchCtrl,
-              onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+              onChanged: (v) {
+                _query = v.trim().toLowerCase();
+                _loadSalesmen();
+              },
               decoration: InputDecoration(
-                hintText: 'Search salesman by name or mobile…',
+                hintText: 'Search salesman by name or mobile...',
                 prefixIcon: const Icon(Icons.search_rounded, color: gold),
                 suffixIcon: _query.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.close_rounded, size: 18),
                         onPressed: () {
                           _searchCtrl.clear();
-                          setState(() => _query = '');
+                          _query = '';
+                          _loadSalesmen();
                         },
                       )
                     : null,
@@ -71,20 +92,12 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
                 filled: true,
                 fillColor: Colors.white,
                 contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none),
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: Colors.grey.shade200)),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: gold)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.grey.shade200)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: gold)),
               ),
             ),
           ),
-
-          // Hint
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: Row(
@@ -98,24 +111,26 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
               ],
             ),
           ),
-
-          // List
           Expanded(
-            child: filtered.isEmpty
-                ? _emptyState()
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 8),
-                    itemBuilder: (context, i) {
-                      final s = filtered[i];
-                      return _SalesmanCard(
-                        salesman: s,
-                        onDoubleTap: () =>
-                            context.push('/area-assign/${s['id']}', extra: s),
-                      );
-                    },
-                  ),
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(color: gold))
+                : _salesmen.isEmpty
+                    ? _emptyState()
+                    : RefreshIndicator(
+                        onRefresh: _loadSalesmen,
+                        child: ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                          itemCount: _salesmen.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          itemBuilder: (context, i) {
+                            final s = _salesmen[i];
+                            return _SalesmanCard(
+                              salesman: s,
+                              onDoubleTap: () => context.push('/area-assign/${s['id']}', extra: s),
+                            );
+                          },
+                        ),
+                      ),
           ),
         ],
       ),
@@ -126,16 +141,10 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              _query.isNotEmpty
-                  ? Icons.search_off_rounded
-                  : Icons.person_off_rounded,
-              size: 64,
-              color: Colors.grey.shade300,
-            ),
+            Icon(_query.isNotEmpty ? Icons.search_off_rounded : Icons.person_off_rounded, size: 64, color: Colors.grey.shade300),
             const SizedBox(height: 12),
             Text(
-              _query.isNotEmpty ? 'No results for "$_query"' : 'No salesmen found',
+              _query.isNotEmpty ? 'No salesman results for "$_query"' : 'No salesman found',
               style: TextStyle(fontSize: 15, color: Colors.grey.shade500),
             ),
           ],
@@ -176,10 +185,7 @@ class _SalesmanCard extends StatelessWidget {
                 backgroundColor: gold.withValues(alpha: 0.15),
                 child: Text(
                   _initials,
-                  style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: gold),
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: gold),
                 ),
               ),
               const SizedBox(width: 12),
@@ -189,8 +195,7 @@ class _SalesmanCard extends StatelessWidget {
                   children: [
                     Text(
                       salesman['name'] as String,
-                      style: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w600),
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -200,8 +205,7 @@ class _SalesmanCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded,
-                  color: Colors.grey, size: 20),
+              const Icon(Icons.chevron_right_rounded, color: Colors.grey, size: 20),
             ],
           ),
         ),
