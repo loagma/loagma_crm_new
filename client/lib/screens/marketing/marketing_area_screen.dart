@@ -207,7 +207,7 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
                             return _AreaCard(
                               area: area,
                               pincodeCount: pins,
-                              onDoubleTap: () async {
+                              onTap: () async {
                                 final changed = await context.push('/marketing-area/${_idOf(area)}', extra: area);
                                 if (changed == true) _loadAreas();
                               },
@@ -246,14 +246,14 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
 class _AreaCard extends StatelessWidget {
   final Map<String, dynamic> area;
   final int pincodeCount;
-  final VoidCallback onDoubleTap;
+  final VoidCallback onTap;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   const _AreaCard({
     required this.area,
     required this.pincodeCount,
-    required this.onDoubleTap,
+    required this.onTap,
     required this.onEdit,
     required this.onDelete,
   });
@@ -264,7 +264,7 @@ class _AreaCard extends StatelessWidget {
     final id = (area['id'] ?? '').toString();
 
     return GestureDetector(
-      onDoubleTap: onDoubleTap,
+      onTap: onTap,
       child: Card(
         color: Colors.white,
         margin: EdgeInsets.zero,

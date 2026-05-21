@@ -69,16 +69,13 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
         title: Text(name),
         backgroundColor: gold,
         foregroundColor: Colors.white,
-        actions: [
-          TextButton.icon(
-            onPressed: _assign,
-            icon: const Icon(Icons.assignment_turned_in_rounded, color: Colors.white, size: 18),
-            label: const Text(
-              'Assign',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _assign,
+        backgroundColor: gold,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.assignment_turned_in_rounded),
+        label: const Text('Assign', style: TextStyle(fontWeight: FontWeight.w600)),
       ),
       body: Column(
         children: [
@@ -127,7 +124,7 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
                 : RefreshIndicator(
                     onRefresh: _loadAreas,
                     child: ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
                       itemCount: _areas.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 8),
                       itemBuilder: (context, i) {

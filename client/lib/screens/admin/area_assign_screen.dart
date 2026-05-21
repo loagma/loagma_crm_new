@@ -45,9 +45,10 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
         'role': role,
       };
     }).where((e) {
-      final isSalesman = e['role'] == 'salesman';
+      final role = e['role'].toString();
+      final isStaff = role == 'salesman' || role == 'deli_staff';
       final hasIdentity = e['name'].toString().isNotEmpty || e['mobile'].toString().isNotEmpty;
-      return isSalesman && hasIdentity;
+      return isStaff && hasIdentity;
     }).toList();
 
     setState(() {
@@ -76,7 +77,7 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
                 _loadSalesmen();
               },
               decoration: InputDecoration(
-                hintText: 'Search salesman by name or mobile...',
+                hintText: 'Search staff by name or mobile...',
                 prefixIcon: const Icon(Icons.search_rounded, color: gold),
                 suffixIcon: _query.isNotEmpty
                     ? IconButton(
@@ -105,7 +106,7 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
                 Icon(Icons.info_outline_rounded, size: 13, color: Colors.grey.shade400),
                 const SizedBox(width: 6),
                 Text(
-                  'Double-tap a salesman to assign areas',
+                  'Tap a staff member to assign areas',
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
                 ),
               ],
@@ -126,7 +127,7 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
                             final s = _salesmen[i];
                             return _SalesmanCard(
                               salesman: s,
-                              onDoubleTap: () => context.push('/area-assign/${s['id']}', extra: s),
+                              onTap: () => context.push('/area-assign/${s['id']}', extra: s),
                             );
                           },
                         ),
@@ -144,7 +145,7 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
             Icon(_query.isNotEmpty ? Icons.search_off_rounded : Icons.person_off_rounded, size: 64, color: Colors.grey.shade300),
             const SizedBox(height: 12),
             Text(
-              _query.isNotEmpty ? 'No salesman results for "$_query"' : 'No salesman found',
+              _query.isNotEmpty ? 'No staff results for "$_query"' : 'No staff found',
               style: TextStyle(fontSize: 15, color: Colors.grey.shade500),
             ),
           ],
@@ -154,9 +155,9 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
 
 class _SalesmanCard extends StatelessWidget {
   final Map<String, dynamic> salesman;
-  final VoidCallback onDoubleTap;
+  final VoidCallback onTap;
 
-  const _SalesmanCard({required this.salesman, required this.onDoubleTap});
+  const _SalesmanCard({required this.salesman, required this.onTap});
 
   static const gold = Color(0xFFD7BE69);
 
@@ -170,7 +171,7 @@ class _SalesmanCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onDoubleTap: onDoubleTap,
+      onTap: onTap,
       child: Card(
         color: Colors.white,
         margin: EdgeInsets.zero,
@@ -193,13 +194,37 @@ class _SalesmanCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      salesman['name'] as String,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            salesman['name'] as String,
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: salesman['role'] == 'deli_staff'
+                                ? Colors.blue.shade50
+                                : gold.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            salesman['role'] == 'deli_staff' ? 'Deli Staff' : 'Salesman',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: salesman['role'] == 'deli_staff' ? Colors.blue.shade700 : const Color(0xFFB89A3E),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${salesman['mobile']}  •  Double-tap to assign areas',
+                      salesman['mobile'] as String,
                       style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
                     ),
                   ],
