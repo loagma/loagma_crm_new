@@ -556,4 +556,70 @@ class ApiService {
       return false;
     }
   }
+
+  // ── Area Assign ───────────────────────────────────────────────────────────
+
+  static Future<List<Map<String, dynamic>>> getAllAreaAssigns() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/area-assign');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = decoded['data'];
+        if (data is List) {
+          return List<Map<String, dynamic>>.from(data.map((e) => Map<String, dynamic>.from(e as Map)));
+        }
+      }
+    } catch (e) {
+      print('getAllAreaAssigns failed for $url: $e');
+    }
+    return [];
+  }
+
+  static Future<Map<String, dynamic>?> getAreaAssign(String employeeId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/area-assign/$employeeId');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('getAreaAssign failed for $url: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> saveAreaAssign(
+      String employeeId, List<int> areaIds, List<String> areaNames) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/area-assign/$employeeId');
+    try {
+      final body = {'area_ids': areaIds, 'area_names': areaNames};
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      final status = response.statusCode;
+      if (status >= 200 && status < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      if (status == 422) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
+      }
+      print('saveAreaAssign unexpected status $status: ${response.body}');
+    } catch (e) {
+      print('saveAreaAssign failed for $url: $e');
+    }
+    return null;
+  }
+
+  static Future<bool> deleteAreaAssign(String employeeId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/area-assign/$employeeId');
+    try {
+      final response = await http.delete(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('deleteAreaAssign failed for $url: $e');
+      return false;
+    }
+  }
 }

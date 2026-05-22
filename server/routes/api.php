@@ -6,6 +6,7 @@ use App\Http\Controllers\Auth\OtpAuthController;
 use App\Http\Controllers\MastersController;
 use App\Http\Controllers\LeadsAccountController;
 use App\Http\Controllers\AreaController;
+use App\Http\Controllers\AreaAssignController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -54,4 +55,14 @@ Route::prefix('areas')->group(function () {
     Route::post('/{id}/pincodes', [AreaController::class, 'addPincodes']);
     Route::put('/{id}/pincodes/{pincode}', [AreaController::class, 'updatePincode']);
     Route::delete('/{id}/pincodes/{pincode}', [AreaController::class, 'deletePincode']);
+});
+
+// ---------------------------------------------------------------------------
+// Area Assign (per employee: get / save / delete)
+// ---------------------------------------------------------------------------
+Route::prefix('area-assign')->group(function () {
+    Route::get('/',                [AreaAssignController::class, 'index']);
+    Route::get('/{employeeId}',    [AreaAssignController::class, 'show']);
+    Route::post('/{employeeId}',   [AreaAssignController::class, 'save']);
+    Route::delete('/{employeeId}', [AreaAssignController::class, 'destroy']);
 });

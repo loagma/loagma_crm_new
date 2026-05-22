@@ -17,50 +17,91 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
 
   final Set<int> _assignedIds = {};
   bool _loading = false;
+  bool _saving = false;
   List<Map<String, dynamic>> _areas = [];
+
+  String get _employeeId => (widget.salesman['id'] ?? widget.salesman['deli_id'] ?? '').toString();
 
   @override
   void initState() {
     super.initState();
-    _loadAreas();
+    _loadAll();
   }
 
-  Future<void> _loadAreas() async {
+  Future<void> _loadAll() async {
     setState(() => _loading = true);
-    final result = await ApiService.getAreas(perPage: 200);
+
+    final areaFuture = ApiService.getAreas(perPage: 200);
+    final assignFuture = ApiService.getAreaAssign(_employeeId);
+    final areaResult = await areaFuture;
+    final assignResult = await assignFuture;
+
     if (!mounted) return;
-    final raw = result['data'];
+
+    final raw = areaResult['data'];
     final list = raw is List
         ? raw.map((e) => Map<String, dynamic>.from(e as Map)).toList()
         : <Map<String, dynamic>>[];
+
+    final Set<int> preSelected = {};
+    if (assignResult != null && assignResult['data'] is Map) {
+      final data = assignResult['data'] as Map;
+      final ids = data['area_ids'];
+      if (ids is List) {
+        for (final id in ids) {
+          final n = int.tryParse(id.toString());
+          if (n != null) preSelected.add(n);
+        }
+      }
+    }
+
     setState(() {
       _areas = list;
+      _assignedIds
+        ..clear()
+        ..addAll(preSelected);
       _loading = false;
     });
   }
 
   int _idOf(Map<String, dynamic> area) => int.tryParse((area['id'] ?? '').toString()) ?? 0;
 
-  void _assign() {
-    final assigned = _areas
-        .where((a) => _assignedIds.contains(_idOf(a)))
-        .map((a) => (a['area_name'] ?? '').toString())
-        .toList();
-    Fluttertoast.showToast(
-      msg: assigned.isEmpty ? 'No areas selected' : 'Assigned: ${assigned.join(', ')}',
-    );
+  Future<void> _assign() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+
+    final selectedAreas = _areas.where((a) => _assignedIds.contains(_idOf(a))).toList();
+    final areaIds = selectedAreas.map((a) => _idOf(a)).toList();
+    final areaNames = selectedAreas.map((a) => (a['area_name'] ?? '').toString()).toList();
+
+    final res = await ApiService.saveAreaAssign(_employeeId, areaIds, areaNames);
+
+    if (!mounted) return;
+    setState(() => _saving = false);
+
+    if (res == null || res.containsKey('errors')) {
+      Fluttertoast.showToast(msg: 'Failed to save assignment');
+    } else {
+      Fluttertoast.showToast(
+        msg: areaIds.isEmpty
+            ? 'Assignment cleared'
+            : '${areaIds.length} area(s) assigned successfully',
+        backgroundColor: Colors.green,
+        textColor: Colors.white,
+      );
+    }
   }
 
   String get _initials {
     final name = (widget.salesman['name'] as String? ?? '').trim();
-    final parts = name.split(' ');
+    final parts = name.split(' ').where((p) => p.isNotEmpty).toList();
     if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
     return name.isNotEmpty ? name[0].toUpperCase() : '?';
   }
 
   @override
   Widget build(BuildContext context) {
-    final name = widget.salesman['name'] as String? ?? 'Salesman';
+    final name = widget.salesman['name'] as String? ?? 'Staff';
     final mobile = widget.salesman['mobile'] as String? ?? '';
 
     return Scaffold(
@@ -70,12 +111,14 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
         backgroundColor: gold,
         foregroundColor: Colors.white,
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _assign,
+      floatingActionButton: FloatingActionButton(
+        onPressed: _saving ? null : _assign,
         backgroundColor: gold,
         foregroundColor: Colors.white,
-        icon: const Icon(Icons.assignment_turned_in_rounded),
-        label: const Text('Assign', style: TextStyle(fontWeight: FontWeight.w600)),
+        tooltip: 'Assign',
+        child: _saving
+            ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+            : const Icon(Icons.assignment_turned_in_rounded, size: 26),
       ),
       body: Column(
         children: [
@@ -122,7 +165,7 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator(color: gold))
                 : RefreshIndicator(
-                    onRefresh: _loadAreas,
+                    onRefresh: _loadAll,
                     child: ListView.separated(
                       padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
                       itemCount: _areas.length,
