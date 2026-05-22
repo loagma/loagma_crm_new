@@ -19,6 +19,24 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
   bool _loading = false;
   bool _saving = false;
   List<Map<String, dynamic>> _areas = [];
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  List<Map<String, dynamic>> get _filteredAreas {
+    if (_searchQuery.isEmpty) return _areas;
+    final q = _searchQuery.toLowerCase();
+    return _areas.where((a) {
+      if ((a['area_name'] ?? '').toString().toLowerCase().contains(q)) return true;
+      if ((a['city'] ?? '').toString().toLowerCase().contains(q)) return true;
+      if ((a['district'] ?? '').toString().toLowerCase().contains(q)) return true;
+      if ((a['state'] ?? '').toString().toLowerCase().contains(q)) return true;
+      final pins = a['pincodes'];
+      if (pins is List) {
+        return pins.any((p) => p.toString().toLowerCase().contains(q));
+      }
+      return false;
+    }).toList();
+  }
 
   String get _employeeId => (widget.salesman['id'] ?? widget.salesman['deli_id'] ?? '').toString();
 
@@ -26,6 +44,12 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
   void initState() {
     super.initState();
     _loadAll();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadAll() async {
@@ -161,17 +185,63 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
               ],
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+            child: TextField(
+              controller: _searchController,
+              onChanged: (v) => setState(() => _searchQuery = v.trim()),
+              decoration: InputDecoration(
+                hintText: 'Search by area, pincode, city, district, state...',
+                hintStyle: const TextStyle(fontSize: 13),
+                prefixIcon: const Icon(Icons.search_rounded, color: gold),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear_rounded, size: 18),
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() => _searchQuery = '');
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: gold),
+                ),
+              ),
+            ),
+          ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator(color: gold))
                 : RefreshIndicator(
                     onRefresh: _loadAll,
                     child: ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
-                      itemCount: _areas.length,
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
+                      itemCount: _filteredAreas.isEmpty && _searchQuery.isNotEmpty
+                          ? 1
+                          : _filteredAreas.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 8),
                       itemBuilder: (context, i) {
-                        final area = _areas[i];
+                        if (_filteredAreas.isEmpty && _searchQuery.isNotEmpty) {
+                          return const Center(
+                            child: Padding(
+                              padding: EdgeInsets.only(top: 40),
+                              child: Text('No areas found', style: TextStyle(color: Colors.grey)),
+                            ),
+                          );
+                        }
+                        final area = _filteredAreas[i];
                         final id = _idOf(area);
                         final assigned = _assignedIds.contains(id);
 
