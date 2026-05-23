@@ -159,7 +159,7 @@ class _EmployeeListScreenState extends State<EmployeeListScreen> {
 											subtitle: Text(role.isNotEmpty ? '$role • $mobile' : mobile),
 											leading: const CircleAvatar(child: Icon(Icons.person)),
 											onTap: () async {
-												final res = await context.push('/employee/${it['id']}', extra: it);
+												final res = await context.push('/employee/${it['mobile'] ?? it['deli_id'] ?? it['id']}', extra: it);
 												if (res == true) _refresh();
 											},
 										),

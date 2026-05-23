@@ -39,6 +39,7 @@ class AppDrawer extends StatelessWidget {
       },
       {
         'title': 'Area Assign',
+        'subtitle': 'Sales Team',
         'icon': Icons.location_history_rounded,
         'route': '/area-assign'
       },
@@ -96,7 +97,7 @@ class AppDrawer extends StatelessWidget {
       {'title': 'Employee List', 'icon': Icons.people_alt_rounded, 'route': '/employee-list'},
       {'title': 'Lead Account', 'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts'},
       {'title': 'Marketing Area (pincode allotment)', 'icon': Icons.location_on, 'route': '/marketing-area'},
-      {'title': 'Area Assign', 'icon': Icons.location_history_rounded, 'route': '/area-assign'},
+      {'title': 'Area Assign', 'subtitle': 'Sales Team', 'icon': Icons.location_history_rounded, 'route': '/area-assign'},
       // {'title': 'Users', 'icon': Icons.people, 'route': '/admin/users'},
       {'title': 'Settings', 'icon': Icons.settings, 'route': '/admin/settings'},
     ];
@@ -312,6 +313,16 @@ class AppDrawer extends StatelessWidget {
                             fontWeight: FontWeight.w600,
                           ),
                         ),
+                        subtitle: it['subtitle'] != null
+                            ? Text(
+                                it['subtitle'] as String,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Color(0xFFB89A3E),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              )
+                            : null,
 
                         trailing: const Icon(
                           Icons.arrow_forward_ios_rounded,

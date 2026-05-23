@@ -270,7 +270,15 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: (shopImg != null && shopImg.startsWith('http'))
-                    ? Image.network(shopImg, fit: BoxFit.cover)
+                    ? Image.network(
+                        shopImg,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, e, stack) =>
+                            const Icon(Icons.store_rounded, color: gold, size: 26),
+                        loadingBuilder: (_, child, progress) => progress == null
+                            ? child
+                            : const Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: gold))),
+                      )
                     : const Icon(Icons.store_rounded, color: gold, size: 26),
               ),
               const SizedBox(width: 12),

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'api_config.dart';
 import 'user_service.dart';
 
@@ -357,13 +358,20 @@ class ApiService {
   static Future<Map<String, dynamic>?> lookupIndianPincode(String pincode) async {
     final url = Uri.parse('https://api.postalpincode.in/pincode/$pincode');
     try {
-      final response = await http.get(url).timeout(const Duration(seconds: 12));
+      // api.postalpincode.in has an expired TLS cert — bypass only for this host
+      final inner = HttpClient()
+        ..badCertificateCallback = (cert, host, port) => host == 'api.postalpincode.in';
+      final client = IOClient(inner);
+      final response = await client.get(url).timeout(const Duration(seconds: 12));
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
 
       final decoded = jsonDecode(response.body);
       if (decoded is! List || decoded.isEmpty) return null;
       final first = decoded.first;
       if (first is! Map) return null;
+
+      // API returns Status: "Error" when pincode not found
+      if ((first['Status'] ?? '').toString().toLowerCase() == 'error') return null;
 
       final postOfficesRaw = first['PostOffice'];
       if (postOfficesRaw is! List || postOfficesRaw.isEmpty) return null;
@@ -376,6 +384,13 @@ class ApiService {
       if (postOffices.isEmpty) return null;
       final top = postOffices.first;
 
+      // Helper: treat "NA", "N/A", "" as absent
+      String? clean(dynamic raw) {
+        final s = raw?.toString().trim() ?? '';
+        if (s.isEmpty || s.toUpperCase() == 'NA' || s.toUpperCase() == 'N/A') return null;
+        return s;
+      }
+
       final areas = postOffices
           .map((e) => (e['Name'] ?? '').toString().trim())
           .where((e) => e.isNotEmpty)
@@ -383,12 +398,18 @@ class ApiService {
           .toList()
         ..sort();
 
+      // City: prefer Block → Division → District → first area name
+      final city = clean(top['Block'])
+          ?? clean(top['Division'])
+          ?? clean(top['District'])
+          ?? (areas.isNotEmpty ? areas.first : '');
+
       return {
-        'country': (top['Country'] ?? 'India').toString().trim(),
-        'state': (top['State'] ?? '').toString().trim(),
-        'district': (top['District'] ?? '').toString().trim(),
-        'city': (top['Block'] ?? top['Division'] ?? '').toString().trim(),
-        'areas': areas,
+        'country'  : clean(top['Country'])  ?? 'India',
+        'state'    : clean(top['State'])    ?? '',
+        'district' : clean(top['District']) ?? '',
+        'city'     : city,
+        'areas'    : areas,
       };
     } catch (e) {
       print('lookupIndianPincode failed for $url: $e');

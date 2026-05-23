@@ -163,6 +163,18 @@ class RoleDashboardTemplate extends StatelessWidget {
                               ),
                             ),
                           ),
+                          if (it['subtitle'] != null) ...[
+                            const SizedBox(height: 3),
+                            Text(
+                              it['subtitle'] as String,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w500,
+                                color: Color(0xFFB89A3E),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),

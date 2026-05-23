@@ -29,7 +29,8 @@ class MastersController extends Controller
 
         $query = DeliStaff::select(
             'deli_id', 'mobile', 'name', 'role',
-            'city', 'state', 'pincode', 'is_locked'
+            'city', 'state', 'pincode', 'is_locked',
+            'lat', 'lng', 'admin_id'
         )->orderBy('name');
 
         if ($q) {
@@ -79,6 +80,7 @@ class MastersController extends Controller
             'name', 'mobile', 'role',
             'pincode', 'city', 'state',
             'is_locked', 'admin_id',
+            'lat', 'lng', 'password',
         ]);
 
         $validated = validator($data, [
@@ -90,7 +92,16 @@ class MastersController extends Controller
             'state'     => 'nullable|string|max:100',
             'is_locked' => 'nullable|boolean',
             'admin_id'  => 'nullable|integer',
+            'lat'       => 'nullable|numeric|between:-90,90',
+            'lng'       => 'nullable|numeric|between:-180,180',
+            'password'  => 'nullable|string|min:6|max:100',
         ])->validate();
+
+        if (!empty($validated['password'])) {
+            $validated['password'] = bcrypt($validated['password']);
+        } else {
+            unset($validated['password']);
+        }
 
         $staff = DeliStaff::updateOrCreate(
             ['mobile' => $validated['mobile']],
@@ -105,7 +116,8 @@ class MastersController extends Controller
         $data = request()->only([
             'name', 'role',
             'pincode', 'city', 'state',
-            'is_locked',
+            'is_locked', 'admin_id',
+            'lat', 'lng', 'password',
         ]);
 
         $validated = validator($data, [
@@ -115,7 +127,17 @@ class MastersController extends Controller
             'city'      => 'nullable|string|max:100',
             'state'     => 'nullable|string|max:100',
             'is_locked' => 'nullable|boolean',
+            'admin_id'  => 'nullable|integer',
+            'lat'       => 'nullable|numeric|between:-90,90',
+            'lng'       => 'nullable|numeric|between:-180,180',
+            'password'  => 'nullable|string|min:6|max:100',
         ])->validate();
+
+        if (!empty($validated['password'])) {
+            $validated['password'] = bcrypt($validated['password']);
+        } else {
+            unset($validated['password']);
+        }
 
         $staff = DeliStaff::where('mobile', $id)->first();
         if (!$staff) {
