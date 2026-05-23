@@ -35,6 +35,7 @@ class _EmployeeListScreenState extends State<EmployeeListScreen> {
 	int _page = 1;
 	bool _isLoading = false;
 	bool _hasMore = true;
+	String? _error;
 
 	@override
 	void dispose() {
@@ -55,15 +56,25 @@ class _EmployeeListScreenState extends State<EmployeeListScreen> {
 		if (_isLoading) return;
 		_isLoading = true;
 		final q = _searchController.text.trim();
-		final result = await ApiService.getEmployees(q: q.isEmpty ? null : q, page: _page, perPage: 20);
-		if (mounted) {
-			setState(() {
-				if (_page == 1) _items = result;
-				else _items.addAll(result);
-				_isLoading = false;
-				_page += 1;
-				_hasMore = result.length >= 20;
-			});
+		try {
+			final result = await ApiService.getEmployees(q: q.isEmpty ? null : q, page: _page, perPage: 20);
+			if (mounted) {
+				setState(() {
+					_error = null;
+					if (_page == 1) { _items = result; } else { _items.addAll(result); }
+					_isLoading = false;
+					_page += 1;
+					_hasMore = result.length >= 20;
+				});
+			}
+		} catch (e) {
+			if (mounted) {
+				setState(() {
+					_error = 'Unable to connect to server';
+					_isLoading = false;
+					_hasMore = false;
+				});
+			}
 		}
 	}
 
@@ -92,14 +103,11 @@ class _EmployeeListScreenState extends State<EmployeeListScreen> {
 						padding: const EdgeInsets.all(12.0),
 						child: Column(
 							children: [
-								if (ApiService.usedMockEmployees)
-									Container(
-										width: double.infinity,
-										padding: const EdgeInsets.all(8),
-										decoration: BoxDecoration(color: Colors.amber.shade100, borderRadius: BorderRadius.circular(6)),
-										child: const Text('Showing mock data (backend unreachable)', style: TextStyle(color: Colors.black87)),
+								if (_error != null)
+									Padding(
+										padding: const EdgeInsets.only(bottom: 8),
+										child: Text(_error!, style: const TextStyle(color: Colors.red)),
 									),
-								const SizedBox(height: 8),
 								TextField(
 									controller: _searchController,
 									decoration: const InputDecoration(

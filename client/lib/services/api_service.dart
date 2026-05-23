@@ -15,9 +15,6 @@ class ApiService {
         'Authorization': 'Bearer ${UserService.token}',
       };
 
-  // Indicates whether last employees fetch used mocked fallback data
-  static bool usedMockEmployees = false;
-
   static Future<Map<String, dynamic>> sendOtp(String mobile) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/auth/send-otp');
     int attempts = 0;
@@ -91,39 +88,25 @@ class ApiService {
   /// Supports optional server-side search (`q`) and pagination (`page`, `perPage`).
   /// Returns a list of employee maps.
   static Future<List<Map<String, dynamic>>> getEmployees({String? q, int? page, int? perPage}) async {
-    usedMockEmployees = false;
     final uri = Uri.parse('${ApiConfig.baseUrl}/api/employees').replace(queryParameters: {
       if (q != null && q.isNotEmpty) 'q': q,
       if (page != null) 'page': page.toString(),
       if (perPage != null) 'per_page': perPage.toString(),
     });
 
-    try {
-      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
-      final decoded = jsonDecode(response.body);
+    final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+    final decoded = jsonDecode(response.body);
 
-      if (decoded is Map && decoded.containsKey('data')) {
-        final data = decoded['data'];
-        if (data is List) {
-          return List<Map<String, dynamic>>.from(data.map((e) => Map<String, dynamic>.from(e as Map)));
-        }
-      } else if (decoded is List) {
-        return List<Map<String, dynamic>>.from(decoded.map((e) => Map<String, dynamic>.from(e as Map)));
+    if (decoded is Map && decoded.containsKey('data')) {
+      final data = decoded['data'];
+      if (data is List) {
+        return List<Map<String, dynamic>>.from(data.map((e) => Map<String, dynamic>.from(e as Map)));
       }
-
-      return <Map<String, dynamic>>[];
-    } catch (e) {
-      // Backend may be down or unreachable (timeout). Return mocked data so UI remains usable.
-      usedMockEmployees = true;
-      print('getEmployees failed for $uri: $e');
-
-      // Sample mock employees
-      return [
-        {'id': '1', 'name': 'Alice Johnson', 'role': 'Admin', 'mobile': '555-0100'},
-        {'id': '2', 'name': 'Bob Patel', 'role': 'Manager', 'mobile': '555-0101'},
-        {'id': '3', 'name': 'Carol Singh', 'role': 'Sales', 'mobile': '555-0102'},
-      ];
+    } else if (decoded is List) {
+      return List<Map<String, dynamic>>.from(decoded.map((e) => Map<String, dynamic>.from(e as Map)));
     }
+
+    return <Map<String, dynamic>>[];
   }
 
   /// Fetch a single employee by id (mobile)

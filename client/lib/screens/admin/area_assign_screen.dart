@@ -15,6 +15,7 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
 
   final _searchCtrl = TextEditingController();
   String _query = '';
+  String _filter = 'all'; // 'all' | 'assigned' | 'not_assigned'
   bool _loading = false;
   List<Map<String, dynamic>> _staff = [];
 
@@ -74,6 +75,12 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
     });
   }
 
+  List<Map<String, dynamic>> get _filteredStaff {
+    if (_filter == 'assigned') return _staff.where((s) => (_assignMap[s['id']] ?? []).isNotEmpty).toList();
+    if (_filter == 'not_assigned') return _staff.where((s) => (_assignMap[s['id']] ?? []).isEmpty).toList();
+    return _staff;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -124,31 +131,42 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
             child: Row(
               children: [
-                Icon(Icons.info_outline_rounded, size: 13, color: Colors.grey.shade400),
-                const SizedBox(width: 6),
-                Text(
-                  'Tap a staff member to assign areas',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
-                ),
+                for (final f in [('all', 'All'), ('assigned', 'Assigned'), ('not_assigned', 'Not Assigned')])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ChoiceChip(
+                      label: Text(f.$2),
+                      selected: _filter == f.$1,
+                      onSelected: (_) => setState(() => _filter = f.$1),
+                      selectedColor: gold,
+                      labelStyle: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: _filter == f.$1 ? Colors.white : Colors.grey.shade700,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
               ],
             ),
           ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator(color: gold))
-                : _staff.isEmpty
+                : _filteredStaff.isEmpty
                     ? _emptyState()
                     : RefreshIndicator(
                         onRefresh: _loadAll,
                         child: ListView.separated(
                           padding: const EdgeInsets.fromLTRB(12, 6, 12, 80),
-                          itemCount: _staff.length,
+                          itemCount: _filteredStaff.length,
                           separatorBuilder: (_, _) => const SizedBox(height: 8),
                           itemBuilder: (context, i) {
-                            final s = _staff[i];
+                            final s = _filteredStaff[i];
                             final areas = _assignMap[s['id']] ?? [];
                             return _StaffCard(
                               staff: s,
