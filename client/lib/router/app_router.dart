@@ -5,6 +5,7 @@ import '../screens/auth/otp_screen.dart';
 import '../screens/auth/no_role_screen.dart';
 import '../screens/auth/splash_screen.dart';
 import '../screens/dashboard/role_dashboard_template.dart';
+import '../screens/employee/employee_home_screen.dart';
 import '../screens/admin/employee_list_screen.dart';
 import '../screens/admin/employee_detail_screen.dart';
 import '../screens/admin/employee_create_screen.dart';
@@ -49,6 +50,10 @@ final appRouter = GoRouter(
       redirect: roleGuard,
       builder: (context, state) {
         final role = state.pathParameters['role'] ?? '';
+        final normalized = role.toLowerCase().trim();
+        if (normalized == 'salesman' || normalized == 'telecaller') {
+          return EmployeeHomeScreen(role: role);
+        }
         return RoleDashboardTemplate(role: role);
       },
     ),
