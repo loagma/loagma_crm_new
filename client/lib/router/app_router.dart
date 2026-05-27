@@ -11,6 +11,9 @@ import '../screens/admin/employee_detail_screen.dart';
 import '../screens/admin/employee_create_screen.dart';
 import '../screens/admin/area_assign_screen.dart';
 import '../screens/admin/salesman_area_assign_screen.dart';
+import '../screens/admin/attendance_manage_screen.dart';
+import '../screens/admin/attendance_employee_screen.dart';
+import '../screens/admin/attendance_settings_screen.dart';
 import '../screens/lead/lead_account_screen.dart';
 import '../screens/lead/lead_account_list_screen.dart';
 import '../screens/lead/lead_account_detail_screen.dart';
@@ -51,7 +54,7 @@ final appRouter = GoRouter(
       builder: (context, state) {
         final role = state.pathParameters['role'] ?? '';
         final normalized = role.toLowerCase().trim();
-        if (normalized == 'salesman' || normalized == 'telecaller') {
+        if (normalized == 'salesman' || normalized == 'telecaller' || normalized == 'manager') {
           return EmployeeHomeScreen(role: role);
         }
         return RoleDashboardTemplate(role: role);
@@ -117,6 +120,26 @@ final appRouter = GoRouter(
         final id = state.pathParameters['id'] ?? '';
         final extra = state.extra as Map<String, dynamic>?;
         return EmployeeDetailScreen(employee: extra, id: id);
+      },
+    ),
+    GoRoute(
+      path: '/attendance-manage',
+      builder: (context, state) => const AttendanceManageScreen(),
+    ),
+    GoRoute(
+      path: '/attendance-manage/:id',
+      builder: (context, state) {
+        final mobile = state.pathParameters['id'] ?? '';
+        final extra  = state.extra as Map<String, dynamic>?;
+        return AttendanceEmployeeScreen(employeeMobile: mobile, initialEmployee: extra);
+      },
+    ),
+    GoRoute(
+      path: '/attendance-manage/:id/settings',
+      builder: (context, state) {
+        final mobile = state.pathParameters['id'] ?? '';
+        final extra  = state.extra as Map<String, dynamic>?;
+        return AttendanceSettingsScreen(employeeMobile: mobile, initialEmployee: extra);
       },
     ),
     GoRoute(

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 
+import '../services/api_service.dart';
+
 class AppDrawer extends StatelessWidget {
   final String role;
   final String userName;
@@ -30,6 +32,7 @@ class AppDrawer extends StatelessWidget {
           {'title': 'Lead Account', 'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts'},
           {'title': 'Marketing Area','icon': Icons.location_on_rounded,           'route': '/marketing-area', 'subtitle': 'Pincode allotment'},
           {'title': 'Area Assign',  'icon': Icons.location_history_rounded,       'route': '/area-assign',    'subtitle': 'Sales Team'},
+          {'title': 'Attendance',   'icon': Icons.fact_check_outlined,            'route': '/attendance-manage'},
           {'title': 'Settings',     'icon': Icons.settings_rounded,               'route': '/admin/settings'},
         ];
       case 'manager':
@@ -59,6 +62,7 @@ class AppDrawer extends StatelessWidget {
           {'title': 'Lead Account', 'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts'},
           {'title': 'Marketing Area','icon': Icons.location_on_rounded,           'route': '/marketing-area', 'subtitle': 'Pincode allotment'},
           {'title': 'Area Assign',  'icon': Icons.location_history_rounded,       'route': '/area-assign',    'subtitle': 'Sales Team'},
+          {'title': 'Attendance',   'icon': Icons.fact_check_outlined,            'route': '/attendance-manage'},
           {'title': 'Settings',     'icon': Icons.settings_rounded,               'route': '/admin/settings'},
         ];
       case 'manager':
@@ -112,7 +116,7 @@ return [
 
   bool get _showAttendance {
     final r = role.toLowerCase().trim();
-    return r == 'salesman' || r == 'telecaller';
+    return r == 'salesman' || r == 'telecaller' || r == 'manager';
   }
 
   @override
@@ -330,15 +334,31 @@ class _AttendanceDrawerCard extends StatefulWidget {
 }
 
 class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
-  bool     _isPunchedIn  = false;
-  Duration _workDuration = Duration.zero;
+  // ── Local timer state ─────────────────────────────────────────────────────
+  bool     _isPunchedIn   = false;
+  bool     _isPunchedOut  = false;
+  Duration _workDuration  = Duration.zero;
   Duration _breakDuration = Duration.zero;
   String?  _currentBreak; // 'tea' | 'lunch' | 'emergency'
-  bool     _lunchTaken   = false;
+  bool     _lunchTaken    = false;
   Timer?   _timer;
 
-  static const _green  = Color(0xFF43A047);
-  static const _amber  = Color(0xFFF59E0B);
+  // ── API / server state ────────────────────────────────────────────────────
+  String   _attendanceStatus = 'on_time';
+  TimeOfDay? _shiftPunchIn;
+  TimeOfDay? _shiftPunchOut;
+  int      _graceMinutes  = 15;
+  bool     _initLoading   = true;
+  bool     _actionLoading = false;
+
+  static const _green = Color(0xFF43A047);
+  static const _amber = Color(0xFFF59E0B);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTodayRecord();
+  }
 
   @override
   void dispose() {
@@ -346,30 +366,239 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
     super.dispose();
   }
 
-  void _togglePunch() {
-    setState(() {
-      if (_isPunchedIn) {
-        _isPunchedIn = false;
-        _currentBreak = null;
-        _timer?.cancel();
-        _timer = null;
-      } else {
-        _isPunchedIn = true;
-        _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-          if (!mounted) return;
-          setState(() {
-            if (_currentBreak != null) {
-              _breakDuration += const Duration(seconds: 1);
-            } else {
-              _workDuration += const Duration(seconds: 1);
-            }
-          });
-        });
+  // ── Load today's attendance from API ──────────────────────────────────────
+
+  Future<void> _loadTodayRecord() async {
+    if (!mounted) return;
+    setState(() => _initLoading = true);
+    try {
+      final res = await ApiService.attendanceToday();
+      if (!mounted) return;
+
+      final settings = res?['settings'] as Map<String, dynamic>?;
+      if (settings != null) {
+        _shiftPunchIn  = _parseTimeStr(settings['punch_in_time']  as String?);
+        _shiftPunchOut = _parseTimeStr(settings['punch_out_time'] as String?);
+        _graceMinutes  = (settings['grace_minutes'] as int?) ?? 15;
       }
+
+      final record = res?['data'];
+      if (record != null && record is Map) {
+        _attendanceStatus = record['status'] as String? ?? 'on_time';
+
+        final punchInStr  = record['punch_in_time']  as String?;
+        final punchOutStr = record['punch_out_time'] as String?;
+
+        if (punchInStr != null) {
+          final punchInAt = DateTime.tryParse(punchInStr)?.toLocal();
+
+          if (punchOutStr != null) {
+            // Already punched out today
+            _isPunchedOut  = true;
+            _workDuration  = Duration(minutes: (record['total_work_minutes']  as int?) ?? 0);
+            _breakDuration = Duration(minutes: (record['total_break_minutes'] as int?) ?? 0);
+          } else if (punchInAt != null) {
+            // Still punched in — restore timer
+            _isPunchedIn = true;
+
+            final breaks = (record['break_details'] as List?) ?? [];
+            _lunchTaken = breaks.any((b) => (b as Map?)?['type'] == 'lunch');
+
+            Map? openBreak;
+            for (final b in breaks.reversed) {
+              final bMap = b as Map?;
+              if (bMap?['end'] == null) { openBreak = bMap; break; }
+            }
+            _currentBreak = openBreak?['type'] as String?;
+
+            final now               = DateTime.now();
+            final elapsed           = now.difference(punchInAt);
+            final recordedBreakMins = (record['total_break_minutes'] as int?) ?? 0;
+            var   totalBreak        = Duration(minutes: recordedBreakMins);
+
+            if (openBreak != null && openBreak['start'] != null) {
+              final breakStart = DateTime.tryParse(openBreak['start'] as String)?.toLocal();
+              if (breakStart != null) totalBreak += now.difference(breakStart);
+            }
+
+            _breakDuration = totalBreak;
+            _workDuration  = elapsed - totalBreak;
+            if (_workDuration.isNegative) _workDuration = Duration.zero;
+
+            _startTimer();
+          }
+        }
+      }
+    } catch (_) {
+      // Silently fall through — card still shows, just not restored
+    } finally {
+      if (mounted) setState(() => _initLoading = false);
+    }
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {
+        if (_currentBreak != null) {
+          _breakDuration += const Duration(seconds: 1);
+        } else {
+          _workDuration += const Duration(seconds: 1);
+        }
+      });
     });
   }
 
-  void _onBreakTap(String type) {
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  TimeOfDay? _parseTimeStr(String? raw) {
+    if (raw == null) return null;
+    try {
+      final parts = raw.split(':');
+      return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _isLateNow() {
+    if (_shiftPunchIn == null) return false;
+    final now      = TimeOfDay.now();
+    final limit    = _shiftPunchIn!.hour * 60 + _shiftPunchIn!.minute + _graceMinutes;
+    return now.hour * 60 + now.minute > limit;
+  }
+
+  bool _isEarlyNow() {
+    if (_shiftPunchOut == null) return false;
+    final now      = TimeOfDay.now();
+    final expected = _shiftPunchOut!.hour * 60 + _shiftPunchOut!.minute;
+    return now.hour * 60 + now.minute < expected;
+  }
+
+  Future<String?> _showReasonDialog(String message) async {
+    final ctrl = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reason Required',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(message,
+                style: const TextStyle(fontSize: 12.5, color: Colors.black54)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              decoration: const InputDecoration(
+                hintText: 'Enter your reason...',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              maxLines: 3,
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, null),
+              child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+              if (ctrl.text.trim().isEmpty) {
+                Fluttertoast.showToast(msg: 'Please enter a reason');
+                return;
+              }
+              Navigator.pop(ctx, ctrl.text.trim());
+            },
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Punch In / Out ────────────────────────────────────────────────────────
+
+  Future<void> _togglePunch() async {
+    if (_actionLoading) return;
+
+    if (_isPunchedIn) {
+      // ── Punch Out ─────────────────────────────────────────────────────────
+      String? reason;
+      if (_isEarlyNow()) {
+        reason = await _showReasonDialog(
+            'You are punching out early. Please provide a reason.');
+        if (reason == null) return;
+      }
+      setState(() => _actionLoading = true);
+      try {
+        final res = await ApiService.attendancePunchOut(
+          earlyReason:  reason,
+          workMinutes:  _workDuration.inMinutes,
+          breakMinutes: _breakDuration.inMinutes,
+        );
+        if (!mounted) return;
+        if (res != null && res['success'] == true) {
+          _timer?.cancel();
+          _timer = null;
+          final data = res['data'] as Map<String, dynamic>?;
+          setState(() {
+            _isPunchedIn      = false;
+            _isPunchedOut     = true;
+            _currentBreak     = null;
+            _attendanceStatus = (data?['status'] as String?) ?? _attendanceStatus;
+          });
+          Fluttertoast.showToast(msg: 'Punched out successfully');
+        } else {
+          Fluttertoast.showToast(msg: 'Punch out failed. Please try again.');
+        }
+      } catch (e) {
+        if (mounted) Fluttertoast.showToast(msg: 'Error: $e');
+      } finally {
+        if (mounted) setState(() => _actionLoading = false);
+      }
+    } else {
+      // ── Punch In ──────────────────────────────────────────────────────────
+      String? reason;
+      if (_isLateNow()) {
+        reason = await _showReasonDialog(
+            'You are late. Please provide a reason for the late punch-in.');
+        if (reason == null) return;
+      }
+      setState(() => _actionLoading = true);
+      try {
+        final res = await ApiService.attendancePunchIn(lateReason: reason);
+        if (!mounted) return;
+        if (res != null && res['success'] == true) {
+          final data = res['data'] as Map<String, dynamic>?;
+          setState(() {
+            _attendanceStatus = (data?['status'] as String?) ?? 'on_time';
+            _isPunchedIn      = true;
+            _workDuration     = Duration.zero;
+            _breakDuration    = Duration.zero;
+          });
+          _startTimer();
+          Fluttertoast.showToast(msg: 'Punched in successfully');
+        } else {
+          final msg = (res?['message'] as String?) ?? 'Punch in failed. Please try again.';
+          Fluttertoast.showToast(msg: msg);
+        }
+      } catch (e) {
+        if (mounted) Fluttertoast.showToast(msg: 'Error: $e');
+      } finally {
+        if (mounted) setState(() => _actionLoading = false);
+      }
+    }
+  }
+
+  // ── Break ─────────────────────────────────────────────────────────────────
+
+  Future<void> _onBreakTap(String type) async {
     if (!_isPunchedIn) {
       Fluttertoast.showToast(msg: 'Please punch in first');
       return;
@@ -378,6 +607,7 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
       Fluttertoast.showToast(msg: 'Only one lunch break allowed per day');
       return;
     }
+    final action = _currentBreak == type ? 'end' : 'start';
     setState(() {
       if (_currentBreak == type) {
         _currentBreak = null;
@@ -386,6 +616,8 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
         if (type == 'lunch') _lunchTaken = true;
       }
     });
+    // Optimistic — sync in background
+    ApiService.attendanceBreak(type: type, action: action).catchError((_) => null);
   }
 
   String _fmt(Duration d) {
@@ -395,17 +627,33 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
     return '$h:$m:$s';
   }
 
+  // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
+    if (_initLoading) {
+      return Container(
+        margin: const EdgeInsets.fromLTRB(10, 10, 10, 0),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 2))],
+        ),
+        child: const Center(
+            child: SizedBox(
+                width: 24, height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2))),
+      );
+    }
+
     return Container(
       margin: const EdgeInsets.fromLTRB(10, 10, 10, 0),
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: const [
-          BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 2)),
-        ],
+        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 2))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -417,7 +665,54 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Colors.black87),
           ),
 
-          if (!_isPunchedIn) ...[
+          // ── Pending approval banner ─────────────────────────────────────
+          if (_attendanceStatus == 'pending') ...[
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+              decoration: BoxDecoration(
+                color: _amber.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: _amber.withValues(alpha: 0.3)),
+              ),
+              child: const Text(
+                '⏳ Awaiting admin approval',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 10.5, color: Color(0xFFF59E0B), fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+
+          // ── Approved banner ─────────────────────────────────────────────
+          if (_attendanceStatus == 'approved') ...[
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+              decoration: BoxDecoration(
+                color: _green.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                '✓ Approved by admin',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 10.5, color: Color(0xFF43A047), fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+
+          // ── Punched out message ─────────────────────────────────────────
+          if (_isPunchedOut) ...[
+            const SizedBox(height: 6),
+            const Text(
+              'You have completed your shift for today.',
+              style: TextStyle(fontSize: 10.5, color: Colors.grey),
+            ),
+          ],
+
+          // ── Not yet punched in ──────────────────────────────────────────
+          if (!_isPunchedIn && !_isPunchedOut) ...[
             const SizedBox(height: 4),
             const Text(
               'Tap Punch In to start your day.',
@@ -427,11 +722,12 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
 
           const SizedBox(height: 10),
 
-          // Stats row
+          // ── Stats row ───────────────────────────────────────────────────
           Row(
             children: [
-              _Stat(icon: Icons.login_rounded, label: 'Punch In',
-                    value: _isPunchedIn ? _fmt(_workDuration + _breakDuration) : '—',
+              _Stat(icon: Icons.login_rounded, label: 'Elapsed',
+                    value: _isPunchedIn || _isPunchedOut
+                        ? _fmt(_workDuration + _breakDuration) : '—',
                     color: _amber),
               _divider(),
               _Stat(icon: Icons.timer_outlined, label: 'Work',
@@ -442,76 +738,84 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             ],
           ),
 
-          const SizedBox(height: 10),
-          const Divider(height: 1, color: Color(0xFFEEEEEE)),
-          const SizedBox(height: 10),
+          // ── Break buttons (only while punched in) ───────────────────────
+          if (_isPunchedIn) ...[
+            const SizedBox(height: 10),
+            const Divider(height: 1, color: Color(0xFFEEEEEE)),
+            const SizedBox(height: 10),
 
-          // Break buttons
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _BreakBtn(icon: Icons.emoji_food_beverage_outlined, label: 'Tea',
-                        active: _currentBreak == 'tea',
-                        enabled: _isPunchedIn,
-                        onTap: () => _onBreakTap('tea')),
-              _BreakBtn(icon: Icons.restaurant_outlined, label: 'Lunch',
-                        active: _currentBreak == 'lunch',
-                        enabled: _isPunchedIn && (!_lunchTaken || _currentBreak == 'lunch'),
-                        onTap: () => _onBreakTap('lunch')),
-              _BreakBtn(icon: Icons.emergency_outlined, label: 'Emergency',
-                        active: _currentBreak == 'emergency',
-                        enabled: _isPunchedIn,
-                        onTap: () => _onBreakTap('emergency')),
-            ],
-          ),
-
-          const SizedBox(height: 6),
-          const Center(
-            child: Text(
-              'You can take one lunch break per day',
-              style: TextStyle(fontSize: 9.5, color: Colors.grey, fontStyle: FontStyle.italic),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _BreakBtn(icon: Icons.emoji_food_beverage_outlined, label: 'Tea',
+                          active: _currentBreak == 'tea',
+                          enabled: true,
+                          onTap: () => _onBreakTap('tea')),
+                _BreakBtn(icon: Icons.restaurant_outlined, label: 'Lunch',
+                          active: _currentBreak == 'lunch',
+                          enabled: !_lunchTaken || _currentBreak == 'lunch',
+                          onTap: () => _onBreakTap('lunch')),
+                _BreakBtn(icon: Icons.emergency_outlined, label: 'Emergency',
+                          active: _currentBreak == 'emergency',
+                          enabled: true,
+                          onTap: () => _onBreakTap('emergency')),
+              ],
             ),
-          ),
 
-          // Active break banner
-          if (_currentBreak != null) ...[
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
-              decoration: BoxDecoration(
-                color: Colors.orange.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
+            const SizedBox(height: 6),
+            const Center(
               child: Text(
-                'On ${_currentBreak![0].toUpperCase()}${_currentBreak!.substring(1)} break — tap to resume',
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 10.5, color: Colors.orange, fontWeight: FontWeight.w600),
+                'You can take one lunch break per day',
+                style: TextStyle(fontSize: 9.5, color: Colors.grey, fontStyle: FontStyle.italic),
               ),
             ),
+
+            // Active break banner
+            if (_currentBreak != null) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'On ${_currentBreak![0].toUpperCase()}${_currentBreak!.substring(1)} break — tap to end',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 10.5, color: Colors.orange, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
           ],
 
           const SizedBox(height: 12),
 
-          // Punch In / Out button
-          SizedBox(
-            width: double.infinity,
-            height: 42,
-            child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _isPunchedIn ? Colors.red.shade600 : _green,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                elevation: 1,
+          // ── Punch In / Out button ───────────────────────────────────────
+          if (!_isPunchedOut)
+            SizedBox(
+              width: double.infinity,
+              height: 42,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isPunchedIn ? Colors.red.shade600 : _green,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  elevation: 1,
+                ),
+                icon: _actionLoading
+                    ? const SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : Icon(_isPunchedIn ? Icons.logout_rounded : Icons.login_rounded, size: 18),
+                label: Text(
+                  _isPunchedIn ? 'Punch Out' : 'Punch In',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                ),
+                onPressed: _actionLoading ? null : _togglePunch,
               ),
-              icon: Icon(_isPunchedIn ? Icons.logout_rounded : Icons.login_rounded, size: 18),
-              label: Text(
-                _isPunchedIn ? 'Punch Out' : 'Punch In',
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-              ),
-              onPressed: _togglePunch,
             ),
-          ),
+
         ],
       ),
     );

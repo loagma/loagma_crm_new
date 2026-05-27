@@ -626,4 +626,181 @@ class ApiService {
       return false;
     }
   }
+
+  // ── Attendance (employee) ─────────────────────────────────────────────────
+
+  static Future<Map<String, dynamic>?> attendancePunchIn({String? lateReason}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/punch-in');
+    try {
+      final body = <String, dynamic>{
+        if (lateReason != null) 'late_reason': lateReason,
+      };
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('attendancePunchIn failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('attendancePunchIn error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> attendancePunchOut({
+    String? earlyReason,
+    int workMinutes = 0,
+    int breakMinutes = 0,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/punch-out');
+    try {
+      final body = <String, dynamic>{
+        'total_work_minutes':  workMinutes,
+        'total_break_minutes': breakMinutes,
+        if (earlyReason != null) 'early_out_reason': earlyReason,
+      };
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('attendancePunchOut failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('attendancePunchOut error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> attendanceBreak({
+    required String type,
+    required String action,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/break');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'type': type, 'action': action}))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('attendanceBreak failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('attendanceBreak error: $e');
+    }
+    return null;
+  }
+
+  /// Returns {'success', 'data': attendance_record|null, 'settings': {punch_in_time, punch_out_time, grace_minutes}}
+  static Future<Map<String, dynamic>?> attendanceToday() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/today');
+    try {
+      final response = await http
+          .get(url, headers: _authHeaders)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('attendanceToday error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>> attendanceHistory({int page = 1}) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/attendance/history')
+        .replace(queryParameters: {'page': page.toString()});
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('attendanceHistory error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  // ── Attendance (admin) ────────────────────────────────────────────────────
+
+  static Future<Map<String, dynamic>> adminAttendanceForEmployee(
+    String employeeMobile, {
+    int page = 1,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/$employeeMobile')
+        .replace(queryParameters: {'page': page.toString()});
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('adminAttendanceForEmployee error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  static Future<bool> adminAttendanceApprove(int id, {String? notes}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/$id/approve');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'admin_notes': notes ?? ''}))
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('adminAttendanceApprove error: $e');
+      return false;
+    }
+  }
+
+  static Future<bool> adminAttendanceReject(int id, {String? notes}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/$id/reject');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'admin_notes': notes ?? ''}))
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('adminAttendanceReject error: $e');
+      return false;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> adminGetAttendanceSettings(String employeeMobile) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/settings/$employeeMobile');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
+      }
+    } catch (e) {
+      print('adminGetAttendanceSettings error: $e');
+    }
+    return null;
+  }
+
+  static Future<bool> adminUpdateAttendanceSettings(
+    String employeeMobile, {
+    required String punchIn,
+    required String punchOut,
+    required int graceMinutes,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/settings/$employeeMobile');
+    try {
+      final body = {
+        'punch_in_time':  punchIn,
+        'punch_out_time': punchOut,
+        'grace_minutes':  graceMinutes,
+      };
+      final response = await http
+          .put(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('adminUpdateAttendanceSettings error: $e');
+      return false;
+    }
+  }
 }

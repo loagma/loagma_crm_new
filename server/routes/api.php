@@ -7,6 +7,7 @@ use App\Http\Controllers\MastersController;
 use App\Http\Controllers\LeadsAccountController;
 use App\Http\Controllers\AreaController;
 use App\Http\Controllers\AreaAssignController;
+use App\Http\Controllers\AttendanceController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -55,6 +56,28 @@ Route::prefix('areas')->group(function () {
     Route::post('/{id}/pincodes', [AreaController::class, 'addPincodes']);
     Route::put('/{id}/pincodes/{pincode}', [AreaController::class, 'updatePincode']);
     Route::delete('/{id}/pincodes/{pincode}', [AreaController::class, 'deletePincode']);
+});
+
+// ---------------------------------------------------------------------------
+// Attendance (employee actions)
+// ---------------------------------------------------------------------------
+Route::prefix('attendance')->group(function () {
+    Route::post('/punch-in',  [AttendanceController::class, 'punchIn']);
+    Route::post('/punch-out', [AttendanceController::class, 'punchOut']);
+    Route::post('/break',     [AttendanceController::class, 'updateBreak']);
+    Route::get('/today',      [AttendanceController::class, 'today']);
+    Route::get('/history',    [AttendanceController::class, 'myHistory']);
+});
+
+// ---------------------------------------------------------------------------
+// Attendance (admin management)
+// ---------------------------------------------------------------------------
+Route::prefix('admin/attendance')->group(function () {
+    Route::get('/settings/{employeeMobile}', [AttendanceController::class, 'getSettings']);
+    Route::put('/settings/{employeeMobile}', [AttendanceController::class, 'updateSettings']);
+    Route::post('/{id}/approve',             [AttendanceController::class, 'approve']);
+    Route::post('/{id}/reject',              [AttendanceController::class, 'reject']);
+    Route::get('/{employeeMobile}',          [AttendanceController::class, 'adminEmployeeAttendance']);
 });
 
 // ---------------------------------------------------------------------------

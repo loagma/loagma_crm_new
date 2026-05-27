@@ -26,6 +26,9 @@ class DeliStaff extends Authenticatable implements JWTSubject
         'lat',
         'lng',
         'is_locked',
+        'punch_in_time',
+        'punch_out_time',
+        'grace_minutes',
     ];
 
     protected $hidden = ['password', 'sess_id', 'otp', 'otp_expires_at'];
