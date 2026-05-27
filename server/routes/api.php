@@ -62,17 +62,21 @@ Route::prefix('areas')->group(function () {
 // Attendance (employee actions)
 // ---------------------------------------------------------------------------
 Route::prefix('attendance')->group(function () {
-    Route::post('/punch-in',  [AttendanceController::class, 'punchIn']);
-    Route::post('/punch-out', [AttendanceController::class, 'punchOut']);
-    Route::post('/break',     [AttendanceController::class, 'updateBreak']);
-    Route::get('/today',      [AttendanceController::class, 'today']);
-    Route::get('/history',    [AttendanceController::class, 'myHistory']);
+    Route::post('/upload-photo',  [AttendanceController::class, 'uploadPhoto']);
+    Route::post('/punch-in',      [AttendanceController::class, 'punchIn']);
+    Route::post('/punch-out',     [AttendanceController::class, 'punchOut']);
+    Route::post('/confirm-punch', [AttendanceController::class, 'confirmPunch']);
+    Route::post('/break',         [AttendanceController::class, 'updateBreak']);
+    Route::get('/today',          [AttendanceController::class, 'today']);
+    Route::get('/history',        [AttendanceController::class, 'myHistory']);
 });
 
 // ---------------------------------------------------------------------------
 // Attendance (admin management)
 // ---------------------------------------------------------------------------
 Route::prefix('admin/attendance')->group(function () {
+    Route::get('/pending',                   [AttendanceController::class, 'pendingList']);
+    Route::get('/pending-count',             [AttendanceController::class, 'pendingCount']);
     Route::get('/settings/{employeeMobile}', [AttendanceController::class, 'getSettings']);
     Route::put('/settings/{employeeMobile}', [AttendanceController::class, 'updateSettings']);
     Route::post('/{id}/approve',             [AttendanceController::class, 'approve']);

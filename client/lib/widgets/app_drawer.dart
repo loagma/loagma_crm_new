@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../services/api_service.dart';
 
@@ -350,6 +352,11 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
   int      _graceMinutes  = 15;
   bool     _initLoading   = true;
   bool     _actionLoading = false;
+  // True when approved but employee hasn't yet confirmed with photo+location
+  bool     _needsConfirmIn  = false;
+  bool     _needsConfirmOut = false;
+  DateTime? _punchInAt; // original punch-in time, used to restore timer after confirm
+  Timer?   _pollTimer; // polls for approval when status is pending
 
   static const _green = Color(0xFF43A047);
   static const _amber = Color(0xFFF59E0B);
@@ -358,11 +365,18 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
   void initState() {
     super.initState();
     _loadTodayRecord();
+    // Poll every 30 s while pending so employee sees approval without reopening drawer
+    _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted && _attendanceStatus == 'pending') {
+        _loadTodayRecord();
+      }
+    });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _pollTimer?.cancel();
     super.dispose();
   }
 
@@ -370,7 +384,8 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
 
   Future<void> _loadTodayRecord() async {
     if (!mounted) return;
-    setState(() => _initLoading = true);
+    final firstLoad = _initLoading;
+    if (firstLoad) setState(() => _initLoading = true);
     try {
       final res = await ApiService.attendanceToday();
       if (!mounted) return;
@@ -388,17 +403,23 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
 
         final punchInStr  = record['punch_in_time']  as String?;
         final punchOutStr = record['punch_out_time'] as String?;
+        final isLate      = record['is_late']     == true;
+        final isEarlyOut  = record['is_early_out'] == true;
+        final isApproved  = _attendanceStatus == 'approved';
+
+        // Needs confirmation: approved late punch-in with no photo yet
+        _needsConfirmIn  = isApproved && isLate    && record['punch_in_photo']  == null;
+        _needsConfirmOut = isApproved && isEarlyOut && record['punch_out_photo'] == null;
 
         if (punchInStr != null) {
-          final punchInAt = DateTime.tryParse(punchInStr)?.toLocal();
+          _punchInAt = DateTime.tryParse(punchInStr)?.toLocal();
+          _timer?.cancel(); // cancel any running timer before re-computing
 
           if (punchOutStr != null) {
-            // Already punched out today
             _isPunchedOut  = true;
             _workDuration  = Duration(minutes: (record['total_work_minutes']  as int?) ?? 0);
             _breakDuration = Duration(minutes: (record['total_break_minutes'] as int?) ?? 0);
-          } else if (punchInAt != null) {
-            // Still punched in — restore timer
+          } else if (_punchInAt != null) {
             _isPunchedIn = true;
 
             final breaks = (record['break_details'] as List?) ?? [];
@@ -411,21 +432,27 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             }
             _currentBreak = openBreak?['type'] as String?;
 
-            final now               = DateTime.now();
-            final elapsed           = now.difference(punchInAt);
-            final recordedBreakMins = (record['total_break_minutes'] as int?) ?? 0;
-            var   totalBreak        = Duration(minutes: recordedBreakMins);
+            // Only run timer if on_time or fully confirmed after approval
+            final timerShouldRun = _attendanceStatus == 'on_time' ||
+                (_attendanceStatus == 'approved' && !_needsConfirmIn);
 
-            if (openBreak != null && openBreak['start'] != null) {
-              final breakStart = DateTime.tryParse(openBreak['start'] as String)?.toLocal();
-              if (breakStart != null) totalBreak += now.difference(breakStart);
+            if (timerShouldRun) {
+              final now               = DateTime.now();
+              final elapsed           = now.difference(_punchInAt!);
+              final recordedBreakMins = (record['total_break_minutes'] as int?) ?? 0;
+              var   totalBreak        = Duration(minutes: recordedBreakMins);
+
+              if (openBreak != null && openBreak['start'] != null) {
+                final breakStart = DateTime.tryParse(openBreak['start'] as String)?.toLocal();
+                if (breakStart != null) totalBreak += now.difference(breakStart);
+              }
+
+              _breakDuration = totalBreak;
+              _workDuration  = elapsed - totalBreak;
+              if (_workDuration.isNegative) _workDuration = Duration.zero;
+
+              _startTimer();
             }
-
-            _breakDuration = totalBreak;
-            _workDuration  = elapsed - totalBreak;
-            if (_workDuration.isNegative) _workDuration = Duration.zero;
-
-            _startTimer();
           }
         }
       }
@@ -522,6 +549,79 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
     );
   }
 
+  // ── Location capture (best-effort) ───────────────────────────────────────
+
+  Future<Map<String, dynamic>?> _captureLocation() async {
+    try {
+      final perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        await Geolocator.requestPermission();
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      ).timeout(const Duration(seconds: 10));
+      return {'lat': pos.latitude, 'lng': pos.longitude};
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── Confirm punch after admin approval ───────────────────────────────────
+
+  Future<void> _confirmPunch(String type) async {
+    if (_actionLoading) return;
+    setState(() => _actionLoading = true);
+    try {
+      // Photo
+      String? photoUrl;
+      try {
+        final picked = await ImagePicker().pickImage(
+          source: ImageSource.camera, imageQuality: 70, maxWidth: 1280);
+        if (picked != null && mounted) {
+          Fluttertoast.showToast(msg: 'Uploading photo…');
+          photoUrl = await ApiService.uploadAttendancePhoto(picked.path);
+        }
+      } catch (_) {}
+
+      // Location
+      final location = await _captureLocation();
+
+      if (!mounted) return;
+
+      final res = await ApiService.attendanceConfirmPunch(
+        type: type, photo: photoUrl, location: location);
+
+      if (!mounted) return;
+      if (res != null && res['success'] == true) {
+        _pollTimer?.cancel(); // no longer need to poll once confirmed
+        setState(() {
+          if (type == 'in') {
+            _needsConfirmIn = false;
+            // Start timer from original punch-in time
+            if (_punchInAt != null) {
+              final elapsed  = DateTime.now().difference(_punchInAt!);
+              _workDuration  = (elapsed.isNegative ? Duration.zero : elapsed);
+              _breakDuration = Duration.zero;
+            }
+            _startTimer();
+          } else {
+            _needsConfirmOut = false;
+          }
+        });
+        Fluttertoast.showToast(msg: type == 'in'
+            ? 'Punch-in confirmed! Timer started.'
+            : 'Punch-out confirmed!');
+      } else {
+        final msg = (res?['message'] as String?) ?? 'Confirmation failed. Try again.';
+        Fluttertoast.showToast(msg: msg);
+      }
+    } catch (e) {
+      if (mounted) Fluttertoast.showToast(msg: 'Error: $e');
+    } finally {
+      if (mounted) setState(() => _actionLoading = false);
+    }
+  }
+
   // ── Punch In / Out ────────────────────────────────────────────────────────
 
   Future<void> _togglePunch() async {
@@ -529,18 +629,38 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
 
     if (_isPunchedIn) {
       // ── Punch Out ─────────────────────────────────────────────────────────
+      final isEarly = _isEarlyNow();
       String? reason;
-      if (_isEarlyNow()) {
+      if (isEarly) {
         reason = await _showReasonDialog(
             'You are punching out early. Please provide a reason.');
         if (reason == null) return;
       }
+
+      // Only capture photo + location for on-time punch-outs
+      String? photoUrl;
+      Map<String, dynamic>? location;
+      if (!isEarly) {
+        try {
+          final picked = await ImagePicker().pickImage(
+            source: ImageSource.camera, imageQuality: 70, maxWidth: 1280);
+          if (picked != null && mounted) {
+            Fluttertoast.showToast(msg: 'Uploading photo…');
+            photoUrl = await ApiService.uploadAttendancePhoto(picked.path);
+          }
+        } catch (_) {}
+        location = await _captureLocation();
+      }
+
+      if (!mounted) return;
       setState(() => _actionLoading = true);
       try {
         final res = await ApiService.attendancePunchOut(
-          earlyReason:  reason,
-          workMinutes:  _workDuration.inMinutes,
-          breakMinutes: _breakDuration.inMinutes,
+          earlyReason:      reason,
+          workMinutes:      _workDuration.inMinutes,
+          breakMinutes:     _breakDuration.inMinutes,
+          punchOutPhoto:    photoUrl,
+          punchOutLocation: location,
         );
         if (!mounted) return;
         if (res != null && res['success'] == true) {
@@ -552,8 +672,11 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             _isPunchedOut     = true;
             _currentBreak     = null;
             _attendanceStatus = (data?['status'] as String?) ?? _attendanceStatus;
+            _needsConfirmOut  = isEarly && _attendanceStatus == 'pending';
           });
-          Fluttertoast.showToast(msg: 'Punched out successfully');
+          Fluttertoast.showToast(msg: isEarly
+              ? 'Punched out — awaiting admin approval'
+              : 'Punched out successfully');
         } else {
           Fluttertoast.showToast(msg: 'Punch out failed. Please try again.');
         }
@@ -564,26 +687,54 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
       }
     } else {
       // ── Punch In ──────────────────────────────────────────────────────────
+      final isLate = _isLateNow();
       String? reason;
-      if (_isLateNow()) {
+      if (isLate) {
         reason = await _showReasonDialog(
             'You are late. Please provide a reason for the late punch-in.');
         if (reason == null) return;
       }
+
+      // Only capture photo + location for on-time punch-ins
+      String? photoUrl;
+      Map<String, dynamic>? location;
+      if (!isLate) {
+        try {
+          final picked = await ImagePicker().pickImage(
+            source: ImageSource.camera, imageQuality: 70, maxWidth: 1280);
+          if (picked != null && mounted) {
+            Fluttertoast.showToast(msg: 'Uploading photo…');
+            photoUrl = await ApiService.uploadAttendancePhoto(picked.path);
+          }
+        } catch (_) {}
+        location = await _captureLocation();
+      }
+
+      if (!mounted) return;
       setState(() => _actionLoading = true);
       try {
-        final res = await ApiService.attendancePunchIn(lateReason: reason);
+        final res = await ApiService.attendancePunchIn(
+          lateReason:      reason,
+          punchInPhoto:    photoUrl,
+          punchInLocation: location,
+        );
         if (!mounted) return;
         if (res != null && res['success'] == true) {
-          final data = res['data'] as Map<String, dynamic>?;
+          final data       = res['data'] as Map<String, dynamic>?;
+          final newStatus  = (data?['status'] as String?) ?? 'on_time';
+          _punchInAt = DateTime.now();
           setState(() {
-            _attendanceStatus = (data?['status'] as String?) ?? 'on_time';
+            _attendanceStatus = newStatus;
             _isPunchedIn      = true;
+            _needsConfirmIn   = false;
             _workDuration     = Duration.zero;
             _breakDuration    = Duration.zero;
           });
-          _startTimer();
-          Fluttertoast.showToast(msg: 'Punched in successfully');
+          // Start timer only for on-time punch-ins
+          if (newStatus == 'on_time') _startTimer();
+          Fluttertoast.showToast(msg: isLate
+              ? 'Punched in — awaiting admin approval'
+              : 'Punched in successfully');
         } else {
           final msg = (res?['message'] as String?) ?? 'Punch in failed. Please try again.';
           Fluttertoast.showToast(msg: msg);
@@ -659,10 +810,24 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
 
-          // Title
-          const Text(
-            "Today's Attendance",
-            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Colors.black87),
+          // Title row with refresh button
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  "Today's Attendance",
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Colors.black87),
+                ),
+              ),
+              GestureDetector(
+                onTap: _initLoading ? null : _loadTodayRecord,
+                child: _initLoading
+                    ? const SizedBox(
+                        width: 14, height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 1.5))
+                    : const Icon(Icons.refresh_rounded, size: 16, color: Colors.black45),
+              ),
+            ],
           ),
 
           // ── Pending approval banner ─────────────────────────────────────
@@ -684,7 +849,7 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             ),
           ],
 
-          // ── Approved banner ─────────────────────────────────────────────
+          // ── Approved banner + confirm buttons ────────────────────────────
           if (_attendanceStatus == 'approved') ...[
             const SizedBox(height: 6),
             Container(
@@ -700,6 +865,50 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
                 style: TextStyle(fontSize: 10.5, color: Color(0xFF43A047), fontWeight: FontWeight.w600),
               ),
             ),
+            // Confirm punch-in with photo + location
+            if (_needsConfirmIn) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                height: 40,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _green,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  icon: _actionLoading
+                      ? const SizedBox(width: 14, height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.camera_alt_rounded, size: 16),
+                  label: const Text('Confirm Punch-In (Photo + Location)',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                  onPressed: _actionLoading ? null : () => _confirmPunch('in'),
+                ),
+              ),
+            ],
+            // Confirm punch-out with photo + location
+            if (_needsConfirmOut) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                height: 40,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange.shade700,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  icon: _actionLoading
+                      ? const SizedBox(width: 14, height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.camera_alt_rounded, size: 16),
+                  label: const Text('Confirm Punch-Out (Photo + Location)',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                  onPressed: _actionLoading ? null : () => _confirmPunch('out'),
+                ),
+              ),
+            ],
           ],
 
           // ── Punched out message ─────────────────────────────────────────

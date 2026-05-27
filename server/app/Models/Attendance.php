@@ -13,7 +13,11 @@ class Attendance extends Model
         'employee_mobile',
         'date',
         'punch_in_time',
+        'punch_in_photo',
+        'punch_in_location',
         'punch_out_time',
+        'punch_out_photo',
+        'punch_out_location',
         'break_details',
         'total_work_minutes',
         'total_break_minutes',
@@ -28,13 +32,15 @@ class Attendance extends Model
     ];
 
     protected $casts = [
-        'break_details'  => 'array',
-        'is_late'        => 'boolean',
-        'is_early_out'   => 'boolean',
-        'punch_in_time'  => 'datetime',
-        'punch_out_time' => 'datetime',
-        'approved_at'    => 'datetime',
-        'date'           => 'date',
+        'break_details'      => 'array',
+        'punch_in_location'  => 'array',
+        'punch_out_location' => 'array',
+        'is_late'            => 'boolean',
+        'is_early_out'       => 'boolean',
+        'punch_in_time'      => 'datetime',
+        'punch_out_time'     => 'datetime',
+        'approved_at'        => 'datetime',
+        'date'               => 'date',
     ];
 
     public function employee(): BelongsTo

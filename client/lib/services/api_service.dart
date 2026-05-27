@@ -629,11 +629,40 @@ class ApiService {
 
   // ── Attendance (employee) ─────────────────────────────────────────────────
 
-  static Future<Map<String, dynamic>?> attendancePunchIn({String? lateReason}) async {
+  static Future<String?> uploadAttendancePhoto(String filePath) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/upload-photo');
+    try {
+      final req = http.MultipartRequest('POST', url)
+        ..headers['Accept'] = 'application/json'
+        ..headers['Authorization'] = 'Bearer ${UserService.token}'
+        ..files.add(await http.MultipartFile.fromPath('image', filePath));
+
+      final streamed = await req.send().timeout(const Duration(seconds: 30));
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['path'] != null) {
+          return decoded['path'].toString();
+        }
+      }
+      print('uploadAttendancePhoto unexpected status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('uploadAttendancePhoto error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> attendancePunchIn({
+    String? lateReason,
+    String? punchInPhoto,
+    Map<String, dynamic>? punchInLocation,
+  }) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/punch-in');
     try {
       final body = <String, dynamic>{
-        if (lateReason != null) 'late_reason': lateReason,
+        if (lateReason != null)      'late_reason':        lateReason,
+        if (punchInPhoto != null)    'punch_in_photo':     punchInPhoto,
+        if (punchInLocation != null) 'punch_in_location':  punchInLocation,
       };
       final response = await http
           .post(url, headers: _authHeaders, body: jsonEncode(body))
@@ -652,13 +681,17 @@ class ApiService {
     String? earlyReason,
     int workMinutes = 0,
     int breakMinutes = 0,
+    String? punchOutPhoto,
+    Map<String, dynamic>? punchOutLocation,
   }) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/punch-out');
     try {
       final body = <String, dynamic>{
         'total_work_minutes':  workMinutes,
         'total_break_minutes': breakMinutes,
-        if (earlyReason != null) 'early_out_reason': earlyReason,
+        if (earlyReason != null)      'early_out_reason':    earlyReason,
+        if (punchOutPhoto != null)    'punch_out_photo':     punchOutPhoto,
+        if (punchOutLocation != null) 'punch_out_location':  punchOutLocation,
       };
       final response = await http
           .post(url, headers: _authHeaders, body: jsonEncode(body))
@@ -669,6 +702,31 @@ class ApiService {
       print('attendancePunchOut failed ${response.statusCode}: ${response.body}');
     } catch (e) {
       print('attendancePunchOut error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> attendanceConfirmPunch({
+    required String type, // 'in' | 'out'
+    String? photo,
+    Map<String, dynamic>? location,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/confirm-punch');
+    try {
+      final body = <String, dynamic>{
+        'type': type,
+        if (photo != null)    'photo':    photo,
+        if (location != null) 'location': location,
+      };
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('attendanceConfirmPunch failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('attendanceConfirmPunch error: $e');
     }
     return null;
   }
@@ -802,5 +860,33 @@ class ApiService {
       print('adminUpdateAttendanceSettings error: $e');
       return false;
     }
+  }
+
+  static Future<int> adminPendingCount() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/pending-count');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        return (decoded['count'] as int?) ?? 0;
+      }
+    } catch (e) {
+      print('adminPendingCount error: $e');
+    }
+    return 0;
+  }
+
+  static Future<Map<String, dynamic>> adminPendingList({int page = 1}) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/pending')
+        .replace(queryParameters: {'page': page.toString()});
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('adminPendingList error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
   }
 }

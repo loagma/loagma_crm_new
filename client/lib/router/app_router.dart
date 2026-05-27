@@ -14,6 +14,7 @@ import '../screens/admin/salesman_area_assign_screen.dart';
 import '../screens/admin/attendance_manage_screen.dart';
 import '../screens/admin/attendance_employee_screen.dart';
 import '../screens/admin/attendance_settings_screen.dart';
+import '../screens/admin/admin_notifications_screen.dart';
 import '../screens/lead/lead_account_screen.dart';
 import '../screens/lead/lead_account_list_screen.dart';
 import '../screens/lead/lead_account_detail_screen.dart';
@@ -141,6 +142,10 @@ final appRouter = GoRouter(
         final extra  = state.extra as Map<String, dynamic>?;
         return AttendanceSettingsScreen(employeeMobile: mobile, initialEmployee: extra);
       },
+    ),
+    GoRoute(
+      path: '/admin-notifications',
+      builder: (context, state) => const AdminNotificationsScreen(),
     ),
     GoRoute(
       path: '/area-assign',

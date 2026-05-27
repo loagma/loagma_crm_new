@@ -7,7 +7,7 @@ use App\Models\DeliStaff;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Tymon\JWTAuth\Facades\JWTAuth;
+use Illuminate\Support\Str;
 
 class AttendanceController extends Controller
 {
@@ -15,7 +15,7 @@ class AttendanceController extends Controller
 
     private function authMobile(): string
     {
-        return JWTAuth::parseToken()->authenticate()->mobile;
+        return auth('api')->userOrFail()->mobile;
     }
 
     private function isLate(DeliStaff $staff): bool
@@ -31,6 +31,21 @@ class AttendanceController extends Controller
         if (!$staff->punch_out_time) return false;
         $expected = Carbon::today()->setTimeFromTimeString($staff->punch_out_time);
         return Carbon::now()->lt($expected);
+    }
+
+    // ─── Employee: Upload punch photo ─────────────────────────────────────────
+
+    public function uploadPhoto(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'image' => 'required|image|mimes:jpg,jpeg,png,webp|max:5120',
+        ]);
+
+        $file = $validated['image'];
+        $name = 'att_' . Str::uuid() . '.' . $file->getClientOriginalExtension();
+        $path = $file->storeAs('attendance', $name, 'public');
+
+        return response()->json(['success' => true, 'path' => '/storage/' . $path]);
     }
 
     // ─── Employee: Punch In ───────────────────────────────────────────────────
@@ -49,14 +64,17 @@ class AttendanceController extends Controller
         $staff  = DeliStaff::where('mobile', $mobile)->first();
         $isLate = $this->isLate($staff);
 
+        // Only accept photo/location for on-time punch-ins
         $data = [
-            'employee_mobile' => $mobile,
-            'date'            => $today,
-            'punch_in_time'   => Carbon::now(),
-            'is_late'         => $isLate,
-            'late_reason'     => $isLate ? $request->input('late_reason') : null,
-            'status'          => $isLate ? 'pending' : 'on_time',
-            'break_details'   => [],
+            'employee_mobile'   => $mobile,
+            'date'              => $today,
+            'punch_in_time'     => Carbon::now(),
+            'is_late'           => $isLate,
+            'late_reason'       => $isLate ? $request->input('late_reason') : null,
+            'punch_in_photo'    => $isLate ? null : $request->input('punch_in_photo'),
+            'punch_in_location' => $isLate ? null : $request->input('punch_in_location'),
+            'status'            => $isLate ? 'pending' : 'on_time',
+            'break_details'     => [],
         ];
 
         $record = Attendance::updateOrCreate(
@@ -89,7 +107,6 @@ class AttendanceController extends Controller
         $workMinutes  = (int) $request->input('total_work_minutes', 0);
         $breakMinutes = (int) $request->input('total_break_minutes', 0);
 
-        // If previously on_time but now early out, bump to pending
         $status = $record->status;
         if ($isEarlyOut && $status === 'on_time') {
             $status = 'pending';
@@ -97,12 +114,55 @@ class AttendanceController extends Controller
 
         $record->update([
             'punch_out_time'      => Carbon::now(),
+            'punch_out_photo'     => $isEarlyOut ? null : $request->input('punch_out_photo'),
+            'punch_out_location'  => $isEarlyOut ? null : $request->input('punch_out_location'),
             'is_early_out'        => $isEarlyOut,
             'early_out_reason'    => $isEarlyOut ? $request->input('early_out_reason') : null,
             'total_work_minutes'  => $workMinutes,
             'total_break_minutes' => $breakMinutes,
             'status'              => $status,
         ]);
+
+        return response()->json(['success' => true, 'data' => $record->fresh()]);
+    }
+
+    // ─── Employee: Confirm punch after approval ───────────────────────────────
+    // Called after admin approves a late/early record. Employee provides
+    // photo + location to confirm they are actually present.
+
+    public function confirmPunch(Request $request): JsonResponse
+    {
+        $request->validate([
+            'type' => 'required|in:in,out',
+        ]);
+
+        $mobile = $this->authMobile();
+        $today  = Carbon::today()->toDateString();
+
+        $record = Attendance::where('employee_mobile', $mobile)->where('date', $today)->first();
+
+        if (!$record) {
+            return response()->json(['success' => false, 'message' => 'No attendance record for today'], 422);
+        }
+        if ($record->status !== 'approved') {
+            return response()->json(['success' => false, 'message' => 'Attendance not yet approved'], 422);
+        }
+
+        $type = $request->input('type');
+        $photo    = $request->input('photo');
+        $location = $request->input('location'); // array {lat, lng}
+
+        if ($type === 'in') {
+            $record->update([
+                'punch_in_photo'    => $photo,
+                'punch_in_location' => $location,
+            ]);
+        } else {
+            $record->update([
+                'punch_out_photo'    => $photo,
+                'punch_out_location' => $location,
+            ]);
+        }
 
         return response()->json(['success' => true, 'data' => $record->fresh()]);
     }
@@ -133,7 +193,6 @@ class AttendanceController extends Controller
         if ($action === 'start') {
             $breaks[] = ['type' => $type, 'start' => $now, 'end' => null];
         } else {
-            // End the most recent open break of this type
             for ($i = count($breaks) - 1; $i >= 0; $i--) {
                 if ($breaks[$i]['type'] === $type && $breaks[$i]['end'] === null) {
                     $breaks[$i]['end'] = $now;
@@ -156,7 +215,6 @@ class AttendanceController extends Controller
 
         $record = Attendance::where('employee_mobile', $mobile)->where('date', $today)->first();
 
-        // Also return the employee's shift settings
         $staff = DeliStaff::where('mobile', $mobile)
             ->select('punch_in_time', 'punch_out_time', 'grace_minutes')
             ->first();
@@ -177,6 +235,38 @@ class AttendanceController extends Controller
         $page    = (int) request()->query('page', 1);
 
         $p = Attendance::where('employee_mobile', $mobile)
+            ->orderByDesc('date')
+            ->paginate($perPage, ['*'], 'page', $page);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $p->items(),
+            'meta'    => [
+                'current_page' => $p->currentPage(),
+                'last_page'    => $p->lastPage(),
+                'per_page'     => $p->perPage(),
+                'total'        => $p->total(),
+            ],
+        ]);
+    }
+
+    // ─── Admin: Pending count (for notification badge) ────────────────────────
+
+    public function pendingCount(): JsonResponse
+    {
+        $count = Attendance::where('status', 'pending')->count();
+        return response()->json(['success' => true, 'count' => $count]);
+    }
+
+    // ─── Admin: Pending list (notification screen) ────────────────────────────
+
+    public function pendingList(): JsonResponse
+    {
+        $perPage = (int) request()->query('per_page', 50);
+        $page    = (int) request()->query('page', 1);
+
+        $p = Attendance::with('employee:mobile,name,role')
+            ->where('status', 'pending')
             ->orderByDesc('date')
             ->paginate($perPage, ['*'], 'page', $page);
 

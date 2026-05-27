@@ -6,10 +6,30 @@ import '../../services/api_service.dart';
 import '../../services/user_service.dart';
 import '../../widgets/app_drawer.dart';
 
-class RoleDashboardTemplate extends StatelessWidget {
+class RoleDashboardTemplate extends StatefulWidget {
   final String role;
 
   const RoleDashboardTemplate({super.key, required this.role});
+
+  @override
+  State<RoleDashboardTemplate> createState() => _RoleDashboardTemplateState();
+}
+
+class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
+  int _pendingCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.role.toLowerCase() == 'admin') {
+      _loadPendingCount();
+    }
+  }
+
+  Future<void> _loadPendingCount() async {
+    final count = await ApiService.adminPendingCount();
+    if (mounted) setState(() => _pendingCount = count);
+  }
 
   Future<void> _logout(BuildContext context) async {
     showDialog(
@@ -31,12 +51,8 @@ class RoleDashboardTemplate extends StatelessWidget {
                   await ApiService.logout();
                   await UserService.logout();
                   Fluttertoast.showToast(msg: 'Logged out successfully');
-                  if (context.mounted) {
-                    context.go('/login');
-                  }
+                  if (context.mounted) context.go('/login');
                 } catch (e) {
-                  print('Logout error: $e');
-                  // Always clear local data and navigate, even if API fails
                   await UserService.logout();
                   if (context.mounted) {
                     Fluttertoast.showToast(msg: 'Logged out');
@@ -44,7 +60,8 @@ class RoleDashboardTemplate extends StatelessWidget {
                   }
                 }
               },
-              child: const Text('Yes', style: TextStyle(color: Color.fromARGB(255, 225, 85, 30))),
+              child: const Text('Yes',
+                  style: TextStyle(color: Color.fromARGB(255, 225, 85, 30))),
             ),
           ],
         );
@@ -53,13 +70,16 @@ class RoleDashboardTemplate extends StatelessWidget {
   }
 
   Widget _buildDrawer(BuildContext context) {
-    // Use the centralized AppDrawer so menu changes based on `role`.
-    return AppDrawer(role: role, userName: UserService.currentName ?? '', onLogout: _logout);
+    return AppDrawer(
+        role: widget.role,
+        userName: UserService.currentName ?? '',
+        onLogout: _logout);
   }
 
   @override
   Widget build(BuildContext context) {
-    final menuItems = AppDrawer.menuForRole(role);
+    final isAdmin    = widget.role.toLowerCase() == 'admin';
+    final menuItems  = AppDrawer.menuForRole(widget.role);
     final featureItems = menuItems.where((m) {
       final t = (m['title'] as String).toLowerCase();
       return t != 'dashboard' && t != 'home' && t != 'settings';
@@ -75,7 +95,7 @@ class RoleDashboardTemplate extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${role[0].toUpperCase()}${role.substring(1)} Dashboard',
+              '${widget.role[0].toUpperCase()}${widget.role.substring(1)} Dashboard',
               style: const TextStyle(
                   color: Colors.white, fontWeight: FontWeight.bold),
             ),
@@ -86,14 +106,51 @@ class RoleDashboardTemplate extends StatelessWidget {
             ),
           ],
         ),
+        actions: [
+          if (isAdmin)
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.notifications_outlined,
+                      color: Colors.white),
+                  tooltip: 'Pending Approvals',
+                  onPressed: () async {
+                    await context.push('/admin-notifications');
+                    if (mounted) _loadPendingCount();
+                  },
+                ),
+                if (_pendingCount > 0)
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints:
+                          const BoxConstraints(minWidth: 16, minHeight: 16),
+                      child: Text(
+                        _pendingCount > 99 ? '99+' : '$_pendingCount',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-          
-            // Feature icons grid (built from drawer nav links)
             Expanded(
               flex: 3,
               child: GridView.builder(
