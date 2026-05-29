@@ -7,12 +7,15 @@ use App\Http\Controllers\MastersController;
 use App\Http\Controllers\LeadsAccountController;
 use App\Http\Controllers\AreaController;
 use App\Http\Controllers\AreaAssignController;
+use App\Http\Controllers\InchargeAssignController;
 use App\Http\Controllers\AttendanceController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
-// Public: used by Flutter dev-mode role picker
-Route::get('/masters/roles', [MastersController::class, 'roles']);
+// Roles CRUD (role_crm table)
+Route::get('/masters/roles',         [MastersController::class, 'roles']);
+Route::post('/masters/roles',        [MastersController::class, 'storeRole']);
+Route::delete('/masters/roles/{id}', [MastersController::class, 'destroyRole']);
 // List staff/employees (simple public endpoint for dashboards)
 Route::get('/employees', [MastersController::class, 'employees']);
 Route::post('/employees', [MastersController::class, 'store']);
@@ -85,11 +88,21 @@ Route::prefix('admin/attendance')->group(function () {
 });
 
 // ---------------------------------------------------------------------------
-// Area Assign (per employee: get / save / delete)
+// Area Assign (salesman + incharge: get / save / delete)
 // ---------------------------------------------------------------------------
 Route::prefix('area-assign')->group(function () {
     Route::get('/',                [AreaAssignController::class, 'index']);
     Route::get('/{employeeId}',    [AreaAssignController::class, 'show']);
     Route::post('/{employeeId}',   [AreaAssignController::class, 'save']);
     Route::delete('/{employeeId}', [AreaAssignController::class, 'destroy']);
+});
+
+// ---------------------------------------------------------------------------
+// Incharge Assign (head_incharge → incharge mapping: get / save / delete)
+// ---------------------------------------------------------------------------
+Route::prefix('incharge-assign')->group(function () {
+    Route::get('/',                    [InchargeAssignController::class, 'index']);
+    Route::get('/{headInchargeId}',    [InchargeAssignController::class, 'show']);
+    Route::post('/{headInchargeId}',   [InchargeAssignController::class, 'save']);
+    Route::delete('/{headInchargeId}', [InchargeAssignController::class, 'destroy']);
 });

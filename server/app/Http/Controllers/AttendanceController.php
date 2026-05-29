@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AreaAssign;
 use App\Models\Attendance;
 use App\Models\DeliStaff;
 use Carbon\Carbon;
@@ -31,6 +32,60 @@ class AttendanceController extends Controller
         if (!$staff->punch_out_time) return false;
         $expected = Carbon::today()->setTimeFromTimeString($staff->punch_out_time);
         return Carbon::now()->lt($expected);
+    }
+
+    // Returns the area IDs assigned to a staff member (empty array if none).
+    private function getAreaIds(int $staffId): array
+    {
+        $assign = AreaAssign::where('employee_id', $staffId)->first();
+        return $assign ? array_map('intval', $assign->area_ids ?? []) : [];
+    }
+
+    // Returns the role-aware approver staff, or null if not found.
+    private function approverStaff(): ?DeliStaff
+    {
+        return DeliStaff::where('mobile', $this->authMobile())->first();
+    }
+
+    // True if the approver has authority to approve/reject the given attendance record.
+    private function authorizeApproval(Attendance $record): bool
+    {
+        $approver = $this->approverStaff();
+        if (!$approver) return false;
+
+        $approverRole = strtolower($approver->role ?? '');
+        if ($approverRole === 'admin') return true;
+
+        $employee = DeliStaff::where('mobile', $record->employee_mobile)->first();
+        if (!$employee) return false;
+
+        $employeeRole = strtolower($employee->role ?? '');
+
+        $roleAllowed = match ($approverRole) {
+            'head_incharge' => $employeeRole === 'incharge',
+            'incharge'      => $employeeRole === 'salesman',
+            default         => false,
+        };
+        if (!$roleAllowed) return false;
+
+        $approverAreas = $this->getAreaIds($approver->id);
+        if (empty($approverAreas)) return false;
+
+        $employeeAreas = $this->getAreaIds($employee->id);
+        return !empty(array_intersect($approverAreas, $employeeAreas));
+    }
+
+    // Returns mobile numbers of employees (of $targetRole) whose areas overlap with $approver.
+    private function overlappingMobiles(DeliStaff $approver, string $targetRole): array
+    {
+        $approverAreas = $this->getAreaIds($approver->id);
+        if (empty($approverAreas)) return [];
+
+        return DeliStaff::where('role', $targetRole)
+            ->get(['id', 'mobile'])
+            ->filter(fn($s) => !empty(array_intersect($approverAreas, $this->getAreaIds($s->id))))
+            ->pluck('mobile')
+            ->toArray();
     }
 
     // ─── Employee: Upload punch photo ─────────────────────────────────────────
@@ -254,7 +309,26 @@ class AttendanceController extends Controller
 
     public function pendingCount(): JsonResponse
     {
-        $count = Attendance::where('status', 'pending')->count();
+        $approver = $this->approverStaff();
+        if (!$approver) return response()->json(['success' => true, 'count' => 0]);
+
+        $role = strtolower($approver->role ?? '');
+
+        if ($role === 'admin') {
+            return response()->json(['success' => true, 'count' => Attendance::where('status', 'pending')->count()]);
+        }
+
+        $targetRole = match ($role) {
+            'head_incharge' => 'incharge',
+            'incharge'      => 'salesman',
+            default         => null,
+        };
+
+        if ($targetRole === null) return response()->json(['success' => true, 'count' => 0]);
+
+        $mobiles = $this->overlappingMobiles($approver, $targetRole);
+        $count = empty($mobiles) ? 0 : Attendance::where('status', 'pending')->whereIn('employee_mobile', $mobiles)->count();
+
         return response()->json(['success' => true, 'count' => $count]);
     }
 
@@ -262,13 +336,36 @@ class AttendanceController extends Controller
 
     public function pendingList(): JsonResponse
     {
+        $approver = $this->approverStaff();
+        if (!$approver) return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+
+        $role = strtolower($approver->role ?? '');
+
+        $query = Attendance::with('employee:mobile,name,role')->where('status', 'pending');
+
+        if ($role !== 'admin') {
+            $targetRole = match ($role) {
+                'head_incharge' => 'incharge',
+                'incharge'      => 'salesman',
+                default         => null,
+            };
+
+            if ($targetRole === null) {
+                return response()->json(['success' => true, 'data' => [], 'meta' => ['current_page' => 1, 'last_page' => 1, 'per_page' => 50, 'total' => 0]]);
+            }
+
+            $mobiles = $this->overlappingMobiles($approver, $targetRole);
+            if (empty($mobiles)) {
+                return response()->json(['success' => true, 'data' => [], 'meta' => ['current_page' => 1, 'last_page' => 1, 'per_page' => 50, 'total' => 0]]);
+            }
+
+            $query->whereIn('employee_mobile', $mobiles);
+        }
+
         $perPage = (int) request()->query('per_page', 50);
         $page    = (int) request()->query('page', 1);
 
-        $p = Attendance::with('employee:mobile,name,role')
-            ->where('status', 'pending')
-            ->orderByDesc('date')
-            ->paginate($perPage, ['*'], 'page', $page);
+        $p = $query->orderByDesc('date')->paginate($perPage, ['*'], 'page', $page);
 
         return response()->json([
             'success' => true,
@@ -314,11 +411,13 @@ class AttendanceController extends Controller
             return response()->json(['success' => false, 'message' => 'Record not found'], 404);
         }
 
-        $adminMobile = $this->authMobile();
+        if (!$this->authorizeApproval($record)) {
+            return response()->json(['success' => false, 'message' => 'You are not authorized to approve this record'], 403);
+        }
 
         $record->update([
             'status'      => 'approved',
-            'approved_by' => $adminMobile,
+            'approved_by' => $this->authMobile(),
             'approved_at' => Carbon::now(),
             'admin_notes' => request()->input('admin_notes'),
         ]);
@@ -333,6 +432,10 @@ class AttendanceController extends Controller
         $record = Attendance::find((int) $id);
         if (!$record) {
             return response()->json(['success' => false, 'message' => 'Record not found'], 404);
+        }
+
+        if (!$this->authorizeApproval($record)) {
+            return response()->json(['success' => false, 'message' => 'You are not authorized to reject this record'], 403);
         }
 
         $record->update([

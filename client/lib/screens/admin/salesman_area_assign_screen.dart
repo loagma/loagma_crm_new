@@ -38,7 +38,7 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
     }).toList();
   }
 
-  String get _employeeId => (widget.salesman['id'] ?? widget.salesman['deli_id'] ?? '').toString();
+  String get _employeeId => (widget.salesman['mobile'] ?? widget.salesman['id'] ?? '').toString();
 
   @override
   void initState() {

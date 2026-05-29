@@ -85,6 +85,24 @@ class ApiService {
     }
   }
 
+  /// Fetch roles from role_crm table. Returns list of {id, name, label}.
+  static Future<List<Map<String, dynamic>>> getRoles() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/masters/roles');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['data'] is List) {
+          return List<Map<String, dynamic>>.from(
+            (decoded['data'] as List).map((e) => Map<String, dynamic>.from(e as Map)));
+        }
+      }
+    } catch (e) {
+      print('getRoles error: $e');
+    }
+    return [];
+  }
+
   /// Fetch list of employees from the API.
   /// Supports optional server-side search (`q`) and pagination (`page`, `perPage`).
   /// Returns a list of employee maps.
@@ -623,6 +641,71 @@ class ApiService {
       return response.statusCode >= 200 && response.statusCode < 300;
     } catch (e) {
       print('deleteAreaAssign failed for $url: $e');
+      return false;
+    }
+  }
+
+  // ── Incharge Assign (head_incharge → incharge mapping) ───────────────────
+
+  static Future<List<Map<String, dynamic>>> getAllInchargeAssigns() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/incharge-assign');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = decoded['data'];
+        if (data is List) {
+          return List<Map<String, dynamic>>.from(data.map((e) => Map<String, dynamic>.from(e as Map)));
+        }
+      }
+    } catch (e) {
+      print('getAllInchargeAssigns failed: $e');
+    }
+    return [];
+  }
+
+  static Future<Map<String, dynamic>?> getInchargeAssign(String headInchargeId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/incharge-assign/$headInchargeId');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('getInchargeAssign failed: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> saveInchargeAssign(
+      String headInchargeId, List<int> inchargeIds, List<String> inchargeNames) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/incharge-assign/$headInchargeId');
+    try {
+      final body = {'incharge_ids': inchargeIds, 'incharge_names': inchargeNames};
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      final status = response.statusCode;
+      if (status >= 200 && status < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      if (status == 422) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
+      }
+    } catch (e) {
+      print('saveInchargeAssign failed: $e');
+    }
+    return null;
+  }
+
+  static Future<bool> deleteInchargeAssign(String headInchargeId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/incharge-assign/$headInchargeId');
+    try {
+      final response = await http.delete(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('deleteInchargeAssign failed: $e');
       return false;
     }
   }

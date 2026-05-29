@@ -15,6 +15,11 @@ import '../screens/admin/attendance_manage_screen.dart';
 import '../screens/admin/attendance_employee_screen.dart';
 import '../screens/admin/attendance_settings_screen.dart';
 import '../screens/admin/admin_notifications_screen.dart';
+import '../screens/admin/admin_incharge_assign_screen.dart';
+import '../screens/admin/head_incharge_assign_screen.dart';
+import '../screens/employee/my_assigned_areas_screen.dart';
+import '../screens/employee/my_team_screen.dart';
+import '../screens/employee/my_incharges_screen.dart';
 import '../screens/lead/lead_account_screen.dart';
 import '../screens/lead/lead_account_list_screen.dart';
 import '../screens/lead/lead_account_detail_screen.dart';
@@ -55,7 +60,9 @@ final appRouter = GoRouter(
       builder: (context, state) {
         final role = state.pathParameters['role'] ?? '';
         final normalized = role.toLowerCase().trim();
-        if (normalized == 'salesman' || normalized == 'telecaller' || normalized == 'manager') {
+        if (normalized == 'salesman' || normalized == 'telecaller' ||
+            normalized == 'manager'  || normalized == 'incharge'   ||
+            normalized == 'head_incharge') {
           return EmployeeHomeScreen(role: role);
         }
         return RoleDashboardTemplate(role: role);
@@ -146,6 +153,30 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/admin-notifications',
       builder: (context, state) => const AdminNotificationsScreen(),
+    ),
+    GoRoute(
+      path: '/incharge-assign',
+      builder: (context, state) => const AdminInchargeAssignScreen(),
+    ),
+    GoRoute(
+      path: '/incharge-assign/:id',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ??
+            {'id': state.pathParameters['id'] ?? '', 'name': '', 'mobile': ''};
+        return HeadInchargeAssignScreen(headIncharge: extra);
+      },
+    ),
+    GoRoute(
+      path: '/my-areas',
+      builder: (context, state) => const MyAssignedAreasScreen(),
+    ),
+    GoRoute(
+      path: '/my-team',
+      builder: (context, state) => const MyTeamScreen(),
+    ),
+    GoRoute(
+      path: '/my-incharges',
+      builder: (context, state) => const MyInchargesScreen(),
     ),
     GoRoute(
       path: '/area-assign',

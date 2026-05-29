@@ -25,56 +25,41 @@ class AppDrawer extends StatelessWidget {
 
   // ── Role-based nav items ─────────────────────────────────────────────────
 
-  List<Map<String, dynamic>> _menuForRole(String r) {
-    switch (r.toLowerCase().trim()) {
-      case 'admin':
-        return [
-          {'title': 'Dashboard',    'icon': Icons.dashboard_rounded,              'route': '/admin/dashboard'},
-          {'title': 'Employee List','icon': Icons.people_alt_rounded,             'route': '/employee-list'},
-          {'title': 'Lead Account', 'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts'},
-          {'title': 'Marketing Area','icon': Icons.location_on_rounded,           'route': '/marketing-area', 'subtitle': 'Pincode allotment'},
-          {'title': 'Area Assign',  'icon': Icons.location_history_rounded,       'route': '/area-assign',    'subtitle': 'Sales Team'},
-          {'title': 'Attendance',   'icon': Icons.fact_check_outlined,            'route': '/attendance-manage'},
-          {'title': 'Settings',     'icon': Icons.settings_rounded,               'route': '/admin/settings'},
-        ];
-      case 'manager':
-        return [
-          {'title': 'Team',    'icon': Icons.groups_rounded,   'route': '/manager/team'},
-          {'title': 'Reports', 'icon': Icons.bar_chart_rounded, 'route': '/manager/reports'},
-        ];
-      case 'salesman':
-      case 'telecaller':
-        return [];
-      case 'user':
-        return [
-          {'title': 'Profile',  'icon': Icons.person_rounded,   'route': '/profile'},
-          {'title': 'Requests', 'icon': Icons.list_alt_rounded,  'route': '/requests'},
-        ];
-      default:
-        return [];
-    }
-  }
+  List<Map<String, dynamic>> _menuForRole(String r) => menuForRole(r);
 
   static List<Map<String, dynamic>> menuForRole(String r) {
     switch (r.toLowerCase().trim()) {
       case 'admin':
         return [
-          {'title': 'Dashboard',    'icon': Icons.dashboard_rounded,              'route': '/admin/dashboard'},
-          {'title': 'Employee List','icon': Icons.people_alt_rounded,             'route': '/employee-list'},
-          {'title': 'Lead Account', 'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts'},
-          {'title': 'Marketing Area','icon': Icons.location_on_rounded,           'route': '/marketing-area', 'subtitle': 'Pincode allotment'},
-          {'title': 'Area Assign',  'icon': Icons.location_history_rounded,       'route': '/area-assign',    'subtitle': 'Sales Team'},
-          {'title': 'Attendance',   'icon': Icons.fact_check_outlined,            'route': '/attendance-manage'},
-          {'title': 'Settings',     'icon': Icons.settings_rounded,               'route': '/admin/settings'},
+          {'title': 'Dashboard',       'icon': Icons.dashboard_rounded,              'route': '/admin/dashboard'},
+          {'title': 'Employee List',   'icon': Icons.people_alt_rounded,             'route': '/employee-list'},
+          {'title': 'Lead Account',    'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts'},
+          {'title': 'Marketing Area',  'icon': Icons.location_on_rounded,            'route': '/marketing-area',  'subtitle': 'Pincode allotment'},
+          {'title': 'Area Assign',     'icon': Icons.location_history_rounded,       'route': '/area-assign',     'subtitle': 'Salesman & Incharge'},
+          {'title': 'Incharge Assign', 'icon': Icons.supervisor_account_rounded,     'route': '/incharge-assign', 'subtitle': 'Head Incharge team'},
+          {'title': 'Attendance',      'icon': Icons.fact_check_outlined,            'route': '/attendance-manage'},
+          {'title': 'Settings',        'icon': Icons.settings_rounded,               'route': '/admin/settings'},
         ];
       case 'manager':
         return [
-          {'title': 'Team',    'icon': Icons.groups_rounded,   'route': '/manager/team'},
+          {'title': 'Team',    'icon': Icons.groups_rounded,    'route': '/manager/team'},
           {'title': 'Reports', 'icon': Icons.bar_chart_rounded, 'route': '/manager/reports'},
+        ];
+      case 'incharge':
+        return [
+          {'title': 'My Areas',     'icon': Icons.location_on_rounded,          'route': '/my-areas', 'subtitle': 'Assigned areas'},
+          {'title': 'My Team',      'icon': Icons.groups_rounded,               'route': '/my-team',  'subtitle': 'Salesmen in my areas'},
+          {'title': 'Lead Accounts','icon': Icons.account_balance_wallet_rounded,'route': '/lead-accounts'},
+        ];
+      case 'head_incharge':
+        return [
+          {'title': 'My Incharges', 'icon': Icons.supervisor_account_rounded,   'route': '/my-incharges', 'subtitle': 'Assigned incharges'},
+          {'title': 'Employee List','icon': Icons.people_alt_rounded,            'route': '/employee-list'},
         ];
       case 'salesman':
         return [
-          {'title': 'Lead Accounts', 'icon': Icons.account_balance_wallet_rounded,  'route': '/lead-accounts'},
+          {'title': 'My Areas',     'icon': Icons.location_on_rounded,           'route': '/my-areas', 'subtitle': 'Assigned areas'},
+          {'title': 'Lead Accounts','icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts'},
         ];
       case 'telecaller':
 return [
@@ -118,7 +103,7 @@ return [
 
   bool get _showAttendance {
     final r = role.toLowerCase().trim();
-    return r == 'salesman' || r == 'telecaller' || r == 'manager';
+    return r == 'salesman' || r == 'telecaller' || r == 'manager' || r == 'incharge' || r == 'head_incharge';
   }
 
   @override

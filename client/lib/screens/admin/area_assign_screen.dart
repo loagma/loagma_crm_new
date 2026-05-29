@@ -55,9 +55,10 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
       }
     }
 
+    // Only salesman and incharge get area assignments
     final normalized = staffList.map((e) {
       final role = (e['role'] ?? '').toString().trim().toLowerCase();
-      final id   = (e['deli_id'] ?? e['mobile'] ?? '').toString();
+      final id   = (e['mobile'] ?? e['deli_id'] ?? '').toString();
       return <String, dynamic>{
         'id':     id,
         'name':   (e['name'] ?? '').toString(),
@@ -65,7 +66,9 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
         'role':   role,
       };
     }).where((e) {
-      return e['name'].toString().isNotEmpty || e['mobile'].toString().isNotEmpty;
+      final r = e['role'] as String;
+      return (r == 'salesman' || r == 'incharge') &&
+          (e['name'].toString().isNotEmpty || e['mobile'].toString().isNotEmpty);
     }).toList();
 
     setState(() {
@@ -89,6 +92,14 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
         title: const Text('Area Assign'),
         backgroundColor: gold,
         foregroundColor: Colors.white,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(20),
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text('Salesman & Incharge only',
+                style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.8))),
+          ),
+        ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _loadAll,
