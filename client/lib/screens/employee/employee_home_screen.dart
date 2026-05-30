@@ -5,12 +5,35 @@ import '../../services/api_service.dart';
 import '../../services/user_service.dart';
 import '../../widgets/app_drawer.dart';
 
-class EmployeeHomeScreen extends StatelessWidget {
+class EmployeeHomeScreen extends StatefulWidget {
   final String role;
   const EmployeeHomeScreen({super.key, required this.role});
 
+  @override
+  State<EmployeeHomeScreen> createState() => _EmployeeHomeScreenState();
+}
+
+class _EmployeeHomeScreenState extends State<EmployeeHomeScreen> {
   static const _accent1 = Color(0xFFD7BE69);
   static const _accent2 = Color(0xFFC09E3E);
+
+  int _pendingCount = 0;
+
+  bool get _showBell {
+    final r = widget.role.toLowerCase();
+    return r == 'incharge' || r == 'head_incharge';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (_showBell) _loadPendingCount();
+  }
+
+  Future<void> _loadPendingCount() async {
+    final count = await ApiService.adminPendingCount();
+    if (mounted) setState(() => _pendingCount = count);
+  }
 
   Future<void> _logout(BuildContext context) async {
     showDialog(
@@ -22,17 +45,17 @@ class EmployeeHomeScreen extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(dialogContext);  // close dialog
-              Navigator.of(context).pop();  // close drawer
+              Navigator.pop(dialogContext);
+              Navigator.of(context).pop();
             },
             child: const Text('No', style: TextStyle(color: Colors.grey)),
           ),
           TextButton(
             onPressed: () async {
-              Navigator.pop(dialogContext);  // close dialog
-              Navigator.of(context).pop();  // close drawer
+              Navigator.pop(dialogContext);
+              Navigator.of(context).pop();
               try { await ApiService.logout(); } catch (_) {}
-              await UserService.logout();    // GoRouter auto-navigates to /login
+              await UserService.logout();
             },
             child: const Text('Yes', style: TextStyle(color: Colors.red)),
           ),
@@ -44,16 +67,15 @@ class EmployeeHomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final name      = UserService.currentName ?? 'Employee';
-    final id        = UserService.currentId;
-    final roleLabel = role[0].toUpperCase() + role.substring(1).toLowerCase();
-    final menuItems = AppDrawer.menuForRole(role).where((m) {
+    final roleLabel = widget.role[0].toUpperCase() + widget.role.substring(1).toLowerCase();
+    final menuItems = AppDrawer.menuForRole(widget.role).where((m) {
       final t = (m['title'] as String).toLowerCase();
       return t != 'home' && t != 'dashboard' && t != 'profile' && t != 'settings';
     }).toList();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      drawer: AppDrawer(role: role, userName: name, onLogout: _logout),
+      drawer: AppDrawer(role: widget.role, userName: name, onLogout: _logout),
       appBar: AppBar(
         backgroundColor: _accent1,
         elevation: 0,
@@ -74,21 +96,50 @@ class EmployeeHomeScreen extends StatelessWidget {
           ],
         ),
         iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          if (_showBell)
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.notifications_outlined, color: Colors.white),
+                  tooltip: 'Pending Approvals',
+                  onPressed: () async {
+                    await context.push('/admin-notifications');
+                    if (mounted) _loadPendingCount();
+                  },
+                ),
+                if (_pendingCount > 0)
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                      child: Text(
+                        _pendingCount > 99 ? '99+' : '$_pendingCount',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-
-          
-
-        
-
-            // ── Feature grid ─────────────────────────────────────────
-            if (menuItems.isNotEmpty) ...[
-             
-          
+            if (menuItems.isNotEmpty)
               GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -152,10 +203,7 @@ class EmployeeHomeScreen extends StatelessWidget {
                   );
                 },
               ),
-              const SizedBox(height: 20),
-            ],
-
-                 ],
+          ],
         ),
       ),
     );

@@ -18,12 +18,15 @@ class RoleDashboardTemplate extends StatefulWidget {
 class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
   int _pendingCount = 0;
 
+  bool get _showBell {
+    final r = widget.role.toLowerCase();
+    return r == 'admin' || r == 'incharge' || r == 'head_incharge';
+  }
+
   @override
   void initState() {
     super.initState();
-    if (widget.role.toLowerCase() == 'admin') {
-      _loadPendingCount();
-    }
+    if (_showBell) _loadPendingCount();
   }
 
   Future<void> _loadPendingCount() async {
@@ -78,7 +81,6 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
 
   @override
   Widget build(BuildContext context) {
-    final isAdmin    = widget.role.toLowerCase() == 'admin';
     final menuItems  = AppDrawer.menuForRole(widget.role);
     final featureItems = menuItems.where((m) {
       final t = (m['title'] as String).toLowerCase();
@@ -107,7 +109,7 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
           ],
         ),
         actions: [
-          if (isAdmin)
+          if (_showBell)
             Stack(
               clipBehavior: Clip.none,
               children: [

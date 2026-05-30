@@ -340,8 +340,32 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
   // True when approved but employee hasn't yet confirmed with photo+location
   bool     _needsConfirmIn  = false;
   bool     _needsConfirmOut = false;
-  DateTime? _punchInAt; // original punch-in time, used to restore timer after confirm
+  DateTime? _punchInAt; // punch-in anchor time (set to confirm-tap time after approval)
   Timer?   _pollTimer; // polls for approval when status is pending
+
+  // ── Computed state getters ─────────────────────────────────────────────────
+  // Timer running: employee is actively working
+  bool get _isWorking =>
+      _isPunchedIn && !_isPunchedOut &&
+      (_attendanceStatus == 'on_time' ||
+       (_attendanceStatus == 'approved' && !_needsConfirmIn));
+
+  // Late punch-in submitted, waiting for admin to approve
+  bool get _isPunchInPending =>
+      _isPunchedIn && !_isPunchedOut && _attendanceStatus == 'pending';
+
+  // Early punch-out submitted, waiting for admin to approve
+  bool get _isPunchOutPending =>
+      _isPunchedOut && _attendanceStatus == 'pending';
+
+  // Shift fully complete (punch-out confirmed)
+  bool get _isShiftComplete =>
+      _isPunchedOut &&
+      (_attendanceStatus == 'on_time' ||
+       (_attendanceStatus == 'approved' && !_needsConfirmOut));
+
+  // Record rejected by admin
+  bool get _isRejected => _attendanceStatus == 'rejected';
 
   static const _green = Color(0xFF43A047);
   static const _amber = Color(0xFFF59E0B);
@@ -582,12 +606,10 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
         setState(() {
           if (type == 'in') {
             _needsConfirmIn = false;
-            // Start timer from original punch-in time
-            if (_punchInAt != null) {
-              final elapsed  = DateTime.now().difference(_punchInAt!);
-              _workDuration  = (elapsed.isNegative ? Duration.zero : elapsed);
-              _breakDuration = Duration.zero;
-            }
+            // Timer starts from the moment the employee taps Confirm
+            _punchInAt     = DateTime.now();
+            _workDuration  = Duration.zero;
+            _breakDuration = Duration.zero;
             _startTimer();
           } else {
             _needsConfirmOut = false;
@@ -896,8 +918,8 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             ],
           ],
 
-          // ── Punched out message ─────────────────────────────────────────
-          if (_isPunchedOut) ...[
+          // ── Punched out message (only when fully confirmed) ────────────
+          if (_isShiftComplete) ...[
             const SizedBox(height: 6),
             const Text(
               'You have completed your shift for today.',
@@ -906,7 +928,7 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
           ],
 
           // ── Not yet punched in ──────────────────────────────────────────
-          if (!_isPunchedIn && !_isPunchedOut) ...[
+          if (!_isPunchedIn && !_isPunchedOut && !_isRejected) ...[
             const SizedBox(height: 4),
             const Text(
               'Tap Punch In to start your day.',
@@ -932,8 +954,8 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             ],
           ),
 
-          // ── Break buttons (only while punched in) ───────────────────────
-          if (_isPunchedIn) ...[
+          // ── Break buttons (only while actively working) ─────────────────
+          if (_isWorking) ...[
             const SizedBox(height: 10),
             const Divider(height: 1, color: Color(0xFFEEEEEE)),
             const SizedBox(height: 10),
@@ -985,14 +1007,72 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
 
           const SizedBox(height: 12),
 
-          // ── Punch In / Out button ───────────────────────────────────────
-          if (!_isPunchedOut)
+          // ── Rejected: show card, no button ─────────────────────────────
+          if (_isRejected)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.red.withValues(alpha: 0.30)),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.block_rounded, size: 16, color: Colors.red),
+                  SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      'Attendance rejected — contact your admin',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: 11, color: Colors.red, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          // ── Pending punch-in or punch-out: lock card ────────────────────
+          else if (_isPunchInPending || _isPunchOutPending)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+              decoration: BoxDecoration(
+                color: _amber.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _amber.withValues(alpha: 0.35)),
+              ),
+              child: Column(
+                children: [
+                  const Icon(Icons.lock_clock_outlined, size: 22, color: _amber),
+                  const SizedBox(height: 6),
+                  Text(
+                    _isPunchInPending
+                        ? 'Punch-in pending approval'
+                        : 'Punch-out pending approval',
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w700, color: _amber),
+                  ),
+                  const SizedBox(height: 3),
+                  const Text(
+                    'You will be notified once approved',
+                    style: TextStyle(fontSize: 10, color: Colors.black45),
+                  ),
+                ],
+              ),
+            )
+          // ── Normal Punch In / Punch Out button ──────────────────────────
+          // Hidden when: rejected, pending, awaiting confirm, or shift done
+          else if (!_isShiftComplete &&
+                   !(_attendanceStatus == 'approved' &&
+                     (_needsConfirmIn || _needsConfirmOut)))
             SizedBox(
               width: double.infinity,
               height: 42,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _isPunchedIn ? Colors.red.shade600 : _green,
+                  backgroundColor: _isWorking ? Colors.red.shade600 : _green,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   elevation: 1,
@@ -1001,9 +1081,9 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
                     ? const SizedBox(
                         width: 16, height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : Icon(_isPunchedIn ? Icons.logout_rounded : Icons.login_rounded, size: 18),
+                    : Icon(_isWorking ? Icons.logout_rounded : Icons.login_rounded, size: 18),
                 label: Text(
-                  _isPunchedIn ? 'Punch Out' : 'Punch In',
+                  _isWorking ? 'Punch Out' : 'Punch In',
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
                 ),
                 onPressed: _actionLoading ? null : _togglePunch,

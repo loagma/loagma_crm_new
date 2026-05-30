@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AreaAssign;
 use App\Models\Attendance;
 use App\Models\DeliStaff;
+use App\Models\InchargeAssign;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,11 +35,21 @@ class AttendanceController extends Controller
         return Carbon::now()->lt($expected);
     }
 
-    // Returns the area IDs assigned to a staff member (empty array if none).
-    private function getAreaIds(int $staffId): array
+    // Returns the area IDs assigned to a staff member.
+    // employee_id in area_assign_crm is the mobile number stored as int.
+    private function getAreaIds(string $mobile): array
     {
-        $assign = AreaAssign::where('employee_id', $staffId)->first();
+        $assign = AreaAssign::where('employee_id', (int) $mobile)->first();
         return $assign ? array_map('intval', $assign->area_ids ?? []) : [];
+    }
+
+    // Returns mobile strings of incharges explicitly assigned to this head_incharge.
+    private function getAssignedInchargeMobiles(string $headInchargeMobile): array
+    {
+        $assign = InchargeAssign::where('head_incharge_id', (int) $headInchargeMobile)->first();
+        if (!$assign || empty($assign->incharge_ids)) return [];
+        // incharge_ids are mobile numbers stored as integers
+        return array_map('strval', $assign->incharge_ids);
     }
 
     // Returns the role-aware approver staff, or null if not found.
@@ -68,22 +79,37 @@ class AttendanceController extends Controller
         };
         if (!$roleAllowed) return false;
 
-        $approverAreas = $this->getAreaIds($approver->id);
+        // head_incharge authority is defined by incharge_assign_crm, not areas
+        if ($approverRole === 'head_incharge') {
+            $assignedMobiles = $this->getAssignedInchargeMobiles($approver->mobile);
+            return in_array($employee->mobile, $assignedMobiles);
+        }
+
+        // incharge → salesman: authority defined by shared area assignments
+        $approverAreas = $this->getAreaIds($approver->mobile);
         if (empty($approverAreas)) return false;
 
-        $employeeAreas = $this->getAreaIds($employee->id);
+        $employeeAreas = $this->getAreaIds($employee->mobile);
         return !empty(array_intersect($approverAreas, $employeeAreas));
     }
 
-    // Returns mobile numbers of employees (of $targetRole) whose areas overlap with $approver.
+    // Returns mobile numbers of employees (of $targetRole) visible to $approver for approval.
     private function overlappingMobiles(DeliStaff $approver, string $targetRole): array
     {
-        $approverAreas = $this->getAreaIds($approver->id);
+        $approverRole = strtolower($approver->role ?? '');
+
+        // head_incharge sees only their explicitly assigned incharges
+        if ($approverRole === 'head_incharge') {
+            return $this->getAssignedInchargeMobiles($approver->mobile);
+        }
+
+        // incharge sees salesmen in overlapping areas
+        $approverAreas = $this->getAreaIds($approver->mobile);
         if (empty($approverAreas)) return [];
 
         return DeliStaff::where('role', $targetRole)
-            ->get(['id', 'mobile'])
-            ->filter(fn($s) => !empty(array_intersect($approverAreas, $this->getAreaIds($s->id))))
+            ->get(['mobile'])
+            ->filter(fn($s) => !empty(array_intersect($approverAreas, $this->getAreaIds($s->mobile))))
             ->pluck('mobile')
             ->toArray();
     }
