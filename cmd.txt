@@ -1,0 +1,19 @@
+exe 
+-----------
+1. Update code changes
+2. flutter build windows --release
+3. Copy build/windows/x64/runner/Release/*
+4. Paste into installeroutput/Release/
+5. Update MyAppVersion in setup.iss
+6. Keep AppId unchanged
+7. Open setup.iss in Inno Setup
+8. Press Ctrl + F9
+9. Get installer from windows/installer/output/
+10. Share latest setup.exe only
+11. Old version will auto-update
+
+
+----------
+
+
+flutter build web --release
