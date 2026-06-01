@@ -20,6 +20,9 @@ import '../screens/admin/head_incharge_assign_screen.dart';
 import '../screens/employee/my_assigned_areas_screen.dart';
 import '../screens/employee/my_team_screen.dart';
 import '../screens/employee/my_incharges_screen.dart';
+import '../screens/employee/allotted_customer_accounts_screen.dart';
+import '../screens/employee/todays_beat_plan_screen.dart';
+import '../screens/employee/all_beat_plan_screen.dart';
 import '../screens/lead/lead_account_screen.dart';
 import '../screens/lead/lead_account_list_screen.dart';
 import '../screens/lead/lead_account_detail_screen.dart';
@@ -189,6 +192,18 @@ final appRouter = GoRouter(
             {'id': int.tryParse(state.pathParameters['id'] ?? '') ?? 0, 'name': '', 'mobile': ''};
         return SalesmanAreaAssignScreen(salesman: salesman);
       },
+    ),
+    GoRoute(
+      path: '/allotted-customer-accounts',
+      builder: (context, state) => const AllottedCustomerAccountsScreen(),
+    ),
+    GoRoute(
+      path: '/todays-beat-plan',
+      builder: (context, state) => const TodaysBeatPlanScreen(),
+    ),
+    GoRoute(
+      path: '/all-beat-plan',
+      builder: (context, state) => const AllBeatPlanScreen(),
     ),
   ],
 );

@@ -23,76 +23,57 @@ class AppDrawer extends StatelessWidget {
   static const _accent2 = Color(0xFFC09E3E);
   static const _bg      = Color(0xFFF7F7F7);
 
-  // ── Role-based nav items ─────────────────────────────────────────────────
-
-  List<Map<String, dynamic>> _menuForRole(String r) => menuForRole(r);
 
   static List<Map<String, dynamic>> menuForRole(String r) {
     switch (r.toLowerCase().trim()) {
       case 'admin':
         return [
-          {'title': 'Dashboard',       'icon': Icons.dashboard_rounded,              'route': '/admin/dashboard'},
-          {'title': 'Employee List',   'icon': Icons.people_alt_rounded,             'route': '/employee-list'},
-          {'title': 'Lead Account',    'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts'},
-          {'title': 'Marketing Area',  'icon': Icons.location_on_rounded,            'route': '/marketing-area',  'subtitle': 'Pincode allotment'},
-          {'title': 'Area Assign',     'icon': Icons.location_history_rounded,       'route': '/area-assign',     'subtitle': 'Salesman & Incharge'},
-          {'title': 'Incharge Assign', 'icon': Icons.supervisor_account_rounded,     'route': '/incharge-assign', 'subtitle': 'Head Incharge team'},
-          {'title': 'Attendance',      'icon': Icons.fact_check_outlined,            'route': '/attendance-manage'},
-          {'title': 'Settings',        'icon': Icons.settings_rounded,               'route': '/admin/settings'},
+          {'title': 'Dashboard',       'icon': Icons.dashboard_rounded,              'route': '/admin/dashboard',   'color': const Color(0xFF5C6BC0)},
+          {'title': 'Employee List',   'icon': Icons.people_alt_rounded,             'route': '/employee-list',     'color': const Color(0xFF26A69A)},
+          {'title': 'Lead Account',    'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts',     'color': const Color(0xFF42A5F5)},
+          {'title': 'Marketing Area',  'icon': Icons.location_on_rounded,            'route': '/marketing-area',    'color': const Color(0xFFEF5350), 'subtitle': 'Pincode allotment'},
+          {'title': 'Area Assign',     'icon': Icons.location_history_rounded,       'route': '/area-assign',       'color': const Color(0xFFFF7043), 'subtitle': 'Salesman & Incharge'},
+          {'title': 'Incharge Assign', 'icon': Icons.supervisor_account_rounded,     'route': '/incharge-assign',   'color': const Color(0xFFAB47BC), 'subtitle': 'Head Incharge team'},
+          {'title': 'Attendance',      'icon': Icons.fact_check_outlined,            'route': '/attendance-manage', 'color': const Color(0xFF66BB6A)},
+          {'title': 'Settings',        'icon': Icons.settings_rounded,               'route': '/admin/settings',    'color': const Color(0xFF78909C)},
         ];
       case 'manager':
         return [
-          {'title': 'Team',    'icon': Icons.groups_rounded,    'route': '/manager/team'},
-          {'title': 'Reports', 'icon': Icons.bar_chart_rounded, 'route': '/manager/reports'},
+          {'title': 'Team',    'icon': Icons.groups_rounded,    'route': '/manager/team',    'color': const Color(0xFF26A69A)},
+          {'title': 'Reports', 'icon': Icons.bar_chart_rounded, 'route': '/manager/reports', 'color': const Color(0xFF5C6BC0)},
         ];
       case 'incharge':
         return [
-          {'title': 'My Areas',     'icon': Icons.location_on_rounded,          'route': '/my-areas', 'subtitle': 'Assigned areas'},
-          {'title': 'My Team',      'icon': Icons.groups_rounded,               'route': '/my-team',  'subtitle': 'Salesmen in my areas'},
-          {'title': 'Lead Accounts','icon': Icons.account_balance_wallet_rounded,'route': '/lead-accounts'},
+          {'title': 'My Areas',     'icon': Icons.location_on_rounded,           'route': '/my-areas',      'color': const Color(0xFFEF5350), 'subtitle': 'Assigned areas'},
+          {'title': 'My Team',      'icon': Icons.groups_rounded,                'route': '/my-team',       'color': const Color(0xFF26A69A), 'subtitle': 'Salesmen in my areas'},
+          {'title': 'Lead Accounts','icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts', 'color': const Color(0xFF42A5F5)},
         ];
       case 'head_incharge':
         return [
-          {'title': 'My Incharges', 'icon': Icons.supervisor_account_rounded,   'route': '/my-incharges', 'subtitle': 'Assigned incharges'},
-          {'title': 'Employee List','icon': Icons.people_alt_rounded,            'route': '/employee-list'},
+          {'title': 'My Incharges', 'icon': Icons.supervisor_account_rounded, 'route': '/my-incharges', 'color': const Color(0xFFAB47BC), 'subtitle': 'Assigned incharges'},
+          {'title': 'Employee List','icon': Icons.people_alt_rounded,          'route': '/employee-list', 'color': const Color(0xFF26A69A)},
         ];
       case 'salesman':
         return [
-          {'title': 'My Areas',     'icon': Icons.location_on_rounded,           'route': '/my-areas', 'subtitle': 'Assigned areas'},
-          {'title': 'Lead Accounts','icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts'},
+          {'title': 'Lead Accounts',        'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts',             'color': const Color(0xFF42A5F5)},
+          {'title': 'My Areas',             'icon': Icons.location_on_rounded,            'route': '/my-areas',                  'color': const Color(0xFFEF5350), 'subtitle': 'Assigned areas'},
+          {'title': 'Alloted Customers',    'icon': Icons.people_alt_rounded,             'route': '/allotted-customer-accounts', 'color': const Color(0xFF26A69A)},
+          {'title': 'Todays Beat Plan',     'icon': Icons.today_rounded,                  'route': '/todays-beat-plan',           'color': const Color(0xFF66BB6A)},
+          {'title': 'All Beat Plan',        'icon': Icons.calendar_month_rounded,         'route': '/all-beat-plan',             'color': const Color(0xFF5C6BC0)},
+          {'title': 'Apply  Leave',      'icon': Icons.beach_access_rounded,          'route': '/apply-leave',              'color': const Color(0xFFFF7043)},
         ];
       case 'telecaller':
-return [
-  {
-    'title': 'Home',
-    'icon': Icons.home_rounded,
-    'route': '/dashboard/telecaller'
-  },
-  {
-    'title': 'Lead Accounts',
-    'icon': Icons.people_alt_rounded,
-    'route': '/lead-accounts'
-  },
-  {
-    'title': 'Allotted Customer Accounts',
-    'icon': Icons.assignment_ind_rounded,
-    'route': '/allotted-customer-accounts'
-  },
-  {
-    'title': 'Verify Lead Accounts',
-    'icon': Icons.verified_user_rounded,
-    'route': '/verify-lead-accounts'
-  },
-  {
-    'title': 'Profile',
-    'icon': Icons.person_rounded,
-    'route': '/profile'
-  },
-];
+        return [
+          {'title': 'Home',                      'icon': Icons.home_rounded,           'route': '/dashboard/telecaller',       'color': const Color(0xFF5C6BC0)},
+          {'title': 'Lead Accounts',             'icon': Icons.people_alt_rounded,     'route': '/lead-accounts',              'color': const Color(0xFF42A5F5)},
+          {'title': 'Allotted Customer Accounts','icon': Icons.assignment_ind_rounded,  'route': '/allotted-customer-accounts', 'color': const Color(0xFF26A69A)},
+          {'title': 'Verify Lead Accounts',      'icon': Icons.verified_user_rounded,   'route': '/verify-lead-accounts',       'color': const Color(0xFF66BB6A)},
+          {'title': 'Profile',                   'icon': Icons.person_rounded,          'route': '/profile',                    'color': const Color(0xFF78909C)},
+        ];
       case 'user':
         return [
-          {'title': 'Profile',  'icon': Icons.person_rounded,   'route': '/profile'},
-          {'title': 'Requests', 'icon': Icons.list_alt_rounded,  'route': '/requests'},
+          {'title': 'Profile',  'icon': Icons.person_rounded,  'route': '/profile',   'color': const Color(0xFF78909C)},
+          {'title': 'Requests', 'icon': Icons.list_alt_rounded, 'route': '/requests',  'color': const Color(0xFF42A5F5)},
         ];
       default:
         return [];
@@ -108,8 +89,6 @@ return [
 
   @override
   Widget build(BuildContext context) {
-    final items = _menuForRole(role);
-
     return Drawer(
       backgroundColor: _bg,
       child: SafeArea(
@@ -215,58 +194,7 @@ return [
             if (_showAttendance)
               const _AttendanceDrawerCard(),
 
-            // ── Navigation items ──────────────────────────────────────────
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                itemCount: items.length,
-                itemBuilder: (ctx, i) {
-                  final it = items[i];
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Material(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      elevation: 0.5,
-                      child: ListTile(
-                        dense: true,
-                        visualDensity: const VisualDensity(vertical: -1.5),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        leading: Container(
-                          padding: const EdgeInsets.all(7),
-                          decoration: BoxDecoration(
-                            color: _accent1.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(it['icon'] as IconData, color: _accent2, size: 19),
-                        ),
-                        title: Text(
-                          it['title'] as String,
-                          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: it['subtitle'] != null
-                            ? Text(
-                                it['subtitle'] as String,
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  color: Color(0xFFB89A3E),
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              )
-                            : null,
-                        trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: Colors.grey),
-                        onTap: () {
-                          Navigator.of(ctx).pop();
-                          final route = it['route'] as String?;
-                          if (route != null && route.isNotEmpty) context.go(route);
-                        },
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
+            const Spacer(),
 
             // ── Footer ────────────────────────────────────────────────────
             Padding(

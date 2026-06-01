@@ -157,49 +157,48 @@ class _EmployeeHomeScreenState extends State<EmployeeHomeScreen> {
                       final route = it['route'] as String?;
                       if (route != null && route.isNotEmpty) context.push(route);
                     },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Colors.white, Color(0xFFFFFCF4)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
+                    child: Builder(builder: (ctx) {
+                      final ic = (it['color'] as Color?) ?? _accent2;
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFEEEEEE)),
+                          boxShadow: const [
+                            BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 3)),
+                          ],
                         ),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0xFFF1E3B2)),
-                        boxShadow: const [
-                          BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 3)),
-                        ],
-                      ),
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            height: 50,
-                            width: 50,
-                            decoration: BoxDecoration(
-                              color: _accent1.withValues(alpha: 0.14),
-                              shape: BoxShape.circle,
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              height: 50,
+                              width: 50,
+                              decoration: BoxDecoration(
+                                color: ic.withValues(alpha: 0.14),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(it['icon'] as IconData, size: 26, color: ic),
                             ),
-                            child: Icon(it['icon'] as IconData, size: 26, color: _accent2),
-                          ),
-                          const SizedBox(height: 8),
-                          Flexible(
-                            child: Text(
-                              it['title'] as String,
-                              textAlign: TextAlign.center,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.black87,
+                            const SizedBox(height: 8),
+                            Flexible(
+                              child: Text(
+                                it['title'] as String,
+                                textAlign: TextAlign.center,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black87,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
+                          ],
+                        ),
+                      );
+                    }),
                   );
                 },
               ),

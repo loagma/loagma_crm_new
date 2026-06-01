@@ -158,9 +158,19 @@ class _MyAssignedAreasScreenState extends State<MyAssignedAreasScreen> {
                               _expanded.add(id);
                             }
                           }),
+                          onTap: () => _showPincodes(context, _myAreas[i]),
                         ),
                       ),
                     ),
+    );
+  }
+
+  void _showPincodes(BuildContext context, Map<String, dynamic> area) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _PincodeSheet(areaId: area['id'] as int, areaName: area['name'] as String),
     );
   }
 
@@ -186,6 +196,7 @@ class _AreaCard extends StatelessWidget {
   final bool isIncharge;
   final bool expanded;
   final VoidCallback onToggle;
+  final VoidCallback onTap;
 
   const _AreaCard({
     required this.area,
@@ -193,6 +204,7 @@ class _AreaCard extends StatelessWidget {
     required this.isIncharge,
     required this.expanded,
     required this.onToggle,
+    required this.onTap,
   });
 
   static const gold      = Color(0xFFD7BE69);
@@ -207,7 +219,11 @@ class _AreaCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       elevation: 1.5,
-      child: Column(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Area header
@@ -318,6 +334,150 @@ class _AreaCard extends StatelessWidget {
             ),
           ],
         ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Pincode bottom sheet (read-only) ─────────────────────────────────────────
+
+class _PincodeSheet extends StatefulWidget {
+  final int    areaId;
+  final String areaName;
+  const _PincodeSheet({required this.areaId, required this.areaName});
+
+  @override
+  State<_PincodeSheet> createState() => _PincodeSheetState();
+}
+
+class _PincodeSheetState extends State<_PincodeSheet> {
+  static const gold = Color(0xFFD7BE69);
+
+  bool           _loading = true;
+  List<String>   _pincodes = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final data = await ApiService.getArea(widget.areaId);
+    if (!mounted) return;
+    final raw = data?['pincodes'];
+    setState(() {
+      _pincodes = raw is List ? raw.map((e) => e.toString()).toList() : [];
+      _loading  = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.55,
+      minChildSize: 0.35,
+      maxChildSize: 0.85,
+      builder: (ctx, scroll) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          children: [
+            // Handle
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: gold.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.location_on_rounded, color: gold, size: 18),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(widget.areaName,
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                        Text(
+                          _loading ? 'Loading…' : '${_pincodes.length} pincode${_pincodes.length == 1 ? '' : 's'}',
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // Body
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: gold))
+                  : _pincodes.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.pin_drop_outlined, size: 52, color: Colors.grey.shade300),
+                              const SizedBox(height: 10),
+                              Text('No pincodes for this area',
+                                  style: TextStyle(fontSize: 14, color: Colors.grey.shade500)),
+                            ],
+                          ),
+                        )
+                      : ListView.separated(
+                          controller: scroll,
+                          padding: const EdgeInsets.all(14),
+                          itemCount: _pincodes.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          itemBuilder: (_, i) => Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF9F9F9),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.grey.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(7),
+                                  decoration: BoxDecoration(
+                                    color: gold.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(Icons.pin_drop_rounded, color: gold, size: 16),
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  _pincodes[i],
+                                  style: const TextStyle(
+                                      fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: 1),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -166,6 +166,7 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
                 itemCount: featureItems.length,
                 itemBuilder: (context, index) {
                   final it = featureItems[index];
+                  final ic = (it['color'] as Color?) ?? const Color(0xFFC09E3E);
                   return GestureDetector(
                     onTap: () {
                       final route = it['route'] as String?;
@@ -175,13 +176,9 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
                     },
                     child: Container(
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Colors.white, Color(0xFFFFFCF4)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
+                        color: Colors.white,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0xFFF1E3B2)),
+                        border: Border.all(color: const Color(0xFFEEEEEE)),
                         boxShadow: const [
                           BoxShadow(
                             color: Colors.black12,
@@ -199,13 +196,13 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
                             height: 52,
                             width: 52,
                             decoration: BoxDecoration(
-                              color: const Color(0xFFD7BE69).withValues(alpha: 0.14),
+                              color: ic.withValues(alpha: 0.14),
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
                               it['icon'] as IconData,
                               size: 28,
-                              color: const Color(0xFFC09E3E),
+                              color: ic,
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -230,7 +227,7 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
                               style: const TextStyle(
                                 fontSize: 9.5,
                                 fontWeight: FontWeight.w500,
-                                color: Color(0xFFB89A3E),
+                                color: Colors.black45,
                               ),
                             ),
                           ],
