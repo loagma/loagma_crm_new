@@ -217,10 +217,13 @@ class _AttendanceCard extends StatelessWidget {
   static const _orange = Color(0xFFF59E0B);
   static const _blue   = Color(0xFF1E88E5);
 
+  static const _teal = Color(0xFF00ACC1);
+
   Color _statusColor(String s) => switch (s) {
     'approved' => _blue,
     'rejected' => _red,
     'pending'  => _orange,
+    'early_in' => _teal,
     _          => _green,
   };
 
@@ -228,6 +231,7 @@ class _AttendanceCard extends StatelessWidget {
     'approved' => 'Approved',
     'rejected' => 'Rejected',
     'pending'  => 'Pending',
+    'early_in' => 'Early In',
     _          => 'On Time',
   };
 
@@ -235,6 +239,7 @@ class _AttendanceCard extends StatelessWidget {
     'approved' => Icons.check_circle_outline,
     'rejected' => Icons.cancel_outlined,
     'pending'  => Icons.hourglass_empty_rounded,
+    'early_in' => Icons.alarm_rounded,
     _          => Icons.check_circle_outline,
   };
 
@@ -244,6 +249,7 @@ class _AttendanceCard extends StatelessWidget {
     final status     = (r['status'] as String?) ?? 'on_time';
     final isLate     = r['is_late']      == true;
     final isEarly    = r['is_early_out'] == true;
+    final isEarlyIn  = r['is_early_in']  == true;
     final workMins   = r['total_work_minutes']  as int?;
     final breakMins  = r['total_break_minutes'] as int?;
     final inPhoto    = r['punch_in_photo']  as String?;
@@ -251,9 +257,10 @@ class _AttendanceCard extends StatelessWidget {
     final inLoc      = r['punch_in_location']  as Map?;
     final outLoc     = r['punch_out_location'] as Map?;
     final breaks     = r['break_details']  as List?;
-    final lateReason = r['late_reason']       as String?;
-    final earlyReason= r['early_out_reason']  as String?;
-    final adminNotes = r['admin_notes']       as String?;
+    final lateReason    = r['late_reason']       as String?;
+    final earlyReason   = r['early_out_reason']  as String?;
+    final earlyInReason = r['early_in_reason']   as String?;
+    final adminNotes    = r['admin_notes']        as String?;
 
     final sc = _statusColor(status);
 
@@ -327,8 +334,8 @@ class _AttendanceCard extends StatelessWidget {
                       icon: Icons.login_rounded,
                       label: 'Punch In',
                       time: fmtTime(r['punch_in_time'] as String?),
-                      flag: isLate ? 'LATE' : null,
-                      flagColor: _red,
+                      flag: isLate ? 'LATE' : (isEarlyIn ? 'EARLY' : null),
+                      flagColor: isLate ? _red : _teal,
                       location: inLoc,
                     )),
                     Container(width: 1, height: 56, color: const Color(0xFFEEEEEE)),
@@ -361,6 +368,10 @@ class _AttendanceCard extends StatelessWidget {
                 if (isLate && (lateReason?.isNotEmpty ?? false)) ...[
                   const SizedBox(height: 8),
                   _ReasonRow(Icons.schedule_rounded, 'Late reason', lateReason!, _red),
+                ],
+                if (isEarlyIn && (earlyInReason?.isNotEmpty ?? false)) ...[
+                  const SizedBox(height: 6),
+                  _ReasonRow(Icons.alarm_rounded, 'Early-in reason', earlyInReason!, _teal),
                 ],
                 if (isEarly && (earlyReason?.isNotEmpty ?? false)) ...[
                   const SizedBox(height: 6),
@@ -657,7 +668,7 @@ class _PhotoThumb extends StatelessWidget {
                 width: double.infinity,
                 height: 64,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
+                errorBuilder: (ctx, e, st) => Container(
                     width: double.infinity,
                     height: 64,
                     color: Colors.grey.shade100,

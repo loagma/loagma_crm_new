@@ -334,8 +334,9 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
   String   _attendanceStatus = 'on_time';
   TimeOfDay? _shiftPunchIn;
   TimeOfDay? _shiftPunchOut;
-  int      _graceMinutes  = 15;
-  bool     _initLoading   = true;
+  int      _graceMinutes     = 15;
+  bool     _approvalRequired = true;
+  bool     _initLoading      = true;
   bool     _actionLoading = false;
   // True when approved but employee hasn't yet confirmed with photo+location
   bool     _needsConfirmIn  = false;
@@ -347,7 +348,8 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
   // Timer running: employee is actively working
   bool get _isWorking =>
       _isPunchedIn && !_isPunchedOut &&
-      (_attendanceStatus == 'on_time' ||
+      (_attendanceStatus == 'on_time'  ||
+       _attendanceStatus == 'early_in' ||
        (_attendanceStatus == 'approved' && !_needsConfirmIn));
 
   // Late punch-in submitted, waiting for admin to approve
@@ -361,7 +363,8 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
   // Shift fully complete (punch-out confirmed)
   bool get _isShiftComplete =>
       _isPunchedOut &&
-      (_attendanceStatus == 'on_time' ||
+      (_attendanceStatus == 'on_time'  ||
+       _attendanceStatus == 'early_in' ||
        (_attendanceStatus == 'approved' && !_needsConfirmOut));
 
   // Record rejected by admin
@@ -374,11 +377,10 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
   void initState() {
     super.initState();
     _loadTodayRecord();
-    // Poll every 30 s while pending so employee sees approval without reopening drawer
+    // Poll every 30 s — keeps settings (approval_required, shift times) and
+    // pending approval state in sync without restarting the app.
     _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted && _attendanceStatus == 'pending') {
-        _loadTodayRecord();
-      }
+      if (mounted) _loadTodayRecord();
     });
   }
 
@@ -401,9 +403,12 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
 
       final settings = res?['settings'] as Map<String, dynamic>?;
       if (settings != null) {
-        _shiftPunchIn  = _parseTimeStr(settings['punch_in_time']  as String?);
-        _shiftPunchOut = _parseTimeStr(settings['punch_out_time'] as String?);
-        _graceMinutes  = (settings['grace_minutes'] as int?) ?? 15;
+        _shiftPunchIn      = _parseTimeStr(settings['punch_in_time']  as String?);
+        _shiftPunchOut     = _parseTimeStr(settings['punch_out_time'] as String?);
+        _graceMinutes      = (settings['grace_minutes']     as int?)  ?? 15;
+        // Use == true to safely handle int 0/1 and null from older DB rows
+        final ar = settings['approval_required'];
+        _approvalRequired = (ar == null) ? true : (ar == true || ar == 1);
       }
 
       final record = res?['data'];
@@ -441,19 +446,33 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             }
             _currentBreak = openBreak?['type'] as String?;
 
-            // Only run timer if on_time or fully confirmed after approval
-            final timerShouldRun = _attendanceStatus == 'on_time' ||
+            // Only run timer if on_time / early_in / fully confirmed after approval
+            final timerShouldRun = _attendanceStatus == 'on_time'  ||
+                _attendanceStatus == 'early_in' ||
                 (_attendanceStatus == 'approved' && !_needsConfirmIn);
 
             if (timerShouldRun) {
-              final now               = DateTime.now();
-              final elapsed           = now.difference(_punchInAt!);
-              final recordedBreakMins = (record['total_break_minutes'] as int?) ?? 0;
-              var   totalBreak        = Duration(minutes: recordedBreakMins);
+              final now = DateTime.now();
+              final elapsed = now.difference(_punchInAt!);
 
-              if (openBreak != null && openBreak['start'] != null) {
-                final breakStart = DateTime.tryParse(openBreak['start'] as String)?.toLocal();
-                if (breakStart != null) totalBreak += now.difference(breakStart);
+              // Build total break duration from break_details (not total_break_minutes
+              // which is only written to the server at punch-out, so it's 0 mid-session)
+              var totalBreak = Duration.zero;
+              for (final b in breaks) {
+                final bm       = b as Map?;
+                final startStr = bm?['start'] as String?;
+                final endStr   = bm?['end']   as String?;
+                if (startStr == null) continue;
+                final bStart = DateTime.tryParse(startStr)?.toLocal();
+                if (bStart == null) continue;
+                if (endStr != null) {
+                  // closed break — add full duration
+                  final bEnd = DateTime.tryParse(endStr)?.toLocal();
+                  if (bEnd != null) totalBreak += bEnd.difference(bStart);
+                } else {
+                  // open break (same as openBreak) — add elapsed so far
+                  totalBreak += now.difference(bStart);
+                }
               }
 
               _breakDuration = totalBreak;
@@ -510,6 +529,14 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
     final now      = TimeOfDay.now();
     final expected = _shiftPunchOut!.hour * 60 + _shiftPunchOut!.minute;
     return now.hour * 60 + now.minute < expected;
+  }
+
+  // True when punching in before scheduled shift start (no grace applied)
+  bool _isEarlyInNow() {
+    if (_shiftPunchIn == null) return false;
+    final now   = TimeOfDay.now();
+    final shift = _shiftPunchIn!.hour * 60 + _shiftPunchIn!.minute;
+    return now.hour * 60 + now.minute < shift;
   }
 
   Future<String?> _showReasonDialog(String message) async {
@@ -636,18 +663,21 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
 
     if (_isPunchedIn) {
       // ── Punch Out ─────────────────────────────────────────────────────────
-      final isEarly = _isEarlyNow();
+      final isEarly       = _isEarlyNow();                     // physical reality
+      final needsApproval = _approvalRequired && isEarly;      // requires admin approval
+
       String? reason;
       if (isEarly) {
+        // Always ask for reason when early — for records even if approval not required
         reason = await _showReasonDialog(
             'You are punching out early. Please provide a reason.');
         if (reason == null) return;
       }
 
-      // Only capture photo + location for on-time punch-outs
+      // Capture photo + location when no approval needed (on-time OR free-punch early)
       String? photoUrl;
       Map<String, dynamic>? location;
-      if (!isEarly) {
+      if (!needsApproval) {
         try {
           final picked = await ImagePicker().pickImage(
             source: ImageSource.camera, imageQuality: 70, maxWidth: 1280);
@@ -679,11 +709,17 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             _isPunchedOut     = true;
             _currentBreak     = null;
             _attendanceStatus = (data?['status'] as String?) ?? _attendanceStatus;
-            _needsConfirmOut  = isEarly && _attendanceStatus == 'pending';
+            _needsConfirmOut  = needsApproval && _attendanceStatus == 'pending';
           });
-          Fluttertoast.showToast(msg: isEarly
-              ? 'Punched out — awaiting admin approval'
-              : 'Punched out successfully');
+          String msg;
+          if (needsApproval) {
+            msg = 'Punched out — awaiting admin approval';
+          } else if (isEarly) {
+            msg = 'Punched out (approval not required)';
+          } else {
+            msg = 'Punched out successfully';
+          }
+          Fluttertoast.showToast(msg: msg);
         } else {
           Fluttertoast.showToast(msg: 'Punch out failed. Please try again.');
         }
@@ -694,18 +730,27 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
       }
     } else {
       // ── Punch In ──────────────────────────────────────────────────────────
-      final isLate = _isLateNow();
+      final isLate        = _isLateNow();                           // physically late
+      final isEarlyIn     = !isLate && _isEarlyInNow();            // early (mutually exclusive with late)
+      final needsApproval = _approvalRequired && isLate;           // early-in never needs approval
+
       String? reason;
       if (isLate) {
+        // Always ask reason when late (for records even if approval not required)
         reason = await _showReasonDialog(
             'You are late. Please provide a reason for the late punch-in.');
         if (reason == null) return;
+      } else if (isEarlyIn) {
+        // Always ask reason when early
+        reason = await _showReasonDialog(
+            'You are punching in early. Please provide a reason.');
+        if (reason == null) return;
       }
 
-      // Only capture photo + location for on-time punch-ins
+      // Capture photo + location: on-time, early-in, and free-punch-late all get it immediately
       String? photoUrl;
       Map<String, dynamic>? location;
-      if (!isLate) {
+      if (!needsApproval) {
         try {
           final picked = await ImagePicker().pickImage(
             source: ImageSource.camera, imageQuality: 70, maxWidth: 1280);
@@ -721,14 +766,15 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
       setState(() => _actionLoading = true);
       try {
         final res = await ApiService.attendancePunchIn(
-          lateReason:      reason,
+          lateReason:      isLate    ? reason : null,
+          earlyInReason:   isEarlyIn ? reason : null,
           punchInPhoto:    photoUrl,
           punchInLocation: location,
         );
         if (!mounted) return;
         if (res != null && res['success'] == true) {
-          final data       = res['data'] as Map<String, dynamic>?;
-          final newStatus  = (data?['status'] as String?) ?? 'on_time';
+          final data      = res['data'] as Map<String, dynamic>?;
+          final newStatus = (data?['status'] as String?) ?? 'on_time';
           _punchInAt = DateTime.now();
           setState(() {
             _attendanceStatus = newStatus;
@@ -737,11 +783,19 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             _workDuration     = Duration.zero;
             _breakDuration    = Duration.zero;
           });
-          // Start timer only for on-time punch-ins
-          if (newStatus == 'on_time') _startTimer();
-          Fluttertoast.showToast(msg: isLate
-              ? 'Punched in — awaiting admin approval'
-              : 'Punched in successfully');
+          // Start timer for on_time and early_in (both are immediate punch-ins)
+          if (newStatus == 'on_time' || newStatus == 'early_in') _startTimer();
+          final String msg;
+          if (needsApproval) {
+            msg = 'Punched in — awaiting admin approval';
+          } else if (isLate) {
+            msg = 'Punched in (approval not required)';
+          } else if (isEarlyIn) {
+            msg = 'Punched in early';
+          } else {
+            msg = 'Punched in successfully';
+          }
+          Fluttertoast.showToast(msg: msg);
         } else {
           final msg = (res?['message'] as String?) ?? 'Punch in failed. Please try again.';
           Fluttertoast.showToast(msg: msg);
@@ -817,15 +871,37 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
 
-          // Title row with refresh button
+          // Title row with optional Free Punch badge + refresh button
           Row(
             children: [
-              const Expanded(
-                child: Text(
-                  "Today's Attendance",
-                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Colors.black87),
-                ),
+              const Text(
+                "Today's Attendance",
+                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Colors.black87),
               ),
+              if (!_approvalRequired) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _green.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _green.withValues(alpha: 0.30)),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.verified_rounded, size: 10, color: _green),
+                      SizedBox(width: 3),
+                      Text('Free Punch',
+                          style: TextStyle(
+                              fontSize: 9,
+                              color: _green,
+                              fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              ],
+              const Spacer(),
               GestureDetector(
                 onTap: _initLoading ? null : _loadTodayRecord,
                 child: _initLoading
@@ -939,20 +1015,27 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
           const SizedBox(height: 10),
 
           // ── Stats row ───────────────────────────────────────────────────
-          Row(
-            children: [
-              _Stat(icon: Icons.login_rounded, label: 'Elapsed',
-                    value: _isPunchedIn || _isPunchedOut
-                        ? _fmt(_workDuration + _breakDuration) : '—',
-                    color: _amber),
-              _divider(),
-              _Stat(icon: Icons.timer_outlined, label: 'Work',
-                    value: _fmt(_workDuration), color: _amber),
-              _divider(),
-              _Stat(icon: Icons.local_cafe_outlined, label: 'Breaks',
-                    value: _fmt(_breakDuration), color: _amber),
-            ],
-          ),
+          // Show real numbers only when timer is running or shift is done.
+          // Pending/rejected/awaiting-confirm states show '—' to avoid 00:00:00.
+          Builder(builder: (context) {
+            final showStats = _isWorking || _isShiftComplete || _isPunchOutPending;
+            return Row(
+              children: [
+                _Stat(icon: Icons.login_rounded, label: 'Elapsed',
+                      value: showStats
+                          ? _fmt(_workDuration + _breakDuration) : '—',
+                      color: _amber),
+                _divider(),
+                _Stat(icon: Icons.timer_outlined, label: 'Work',
+                      value: showStats ? _fmt(_workDuration) : '—',
+                      color: _amber),
+                _divider(),
+                _Stat(icon: Icons.local_cafe_outlined, label: 'Breaks',
+                      value: showStats ? _fmt(_breakDuration) : '—',
+                      color: _amber),
+              ],
+            );
+          }),
 
           // ── Break buttons (only while actively working) ─────────────────
           if (_isWorking) ...[

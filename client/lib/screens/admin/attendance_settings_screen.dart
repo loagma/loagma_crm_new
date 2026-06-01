@@ -25,8 +25,9 @@ class _AttendanceSettingsScreenState extends State<AttendanceSettingsScreen> {
   bool _saving  = false;
   String? _error;
 
-  TimeOfDay _punchIn  = const TimeOfDay(hour: 9, minute: 0);
-  TimeOfDay _punchOut = const TimeOfDay(hour: 18, minute: 0);
+  TimeOfDay _punchIn        = const TimeOfDay(hour: 9, minute: 0);
+  TimeOfDay _punchOut       = const TimeOfDay(hour: 18, minute: 0);
+  bool      _approvalRequired = true;
   late final TextEditingController _graceCtrl;
 
   String get _name =>
@@ -55,9 +56,10 @@ class _AttendanceSettingsScreenState extends State<AttendanceSettingsScreen> {
           await ApiService.adminGetAttendanceSettings(widget.employeeMobile);
       if (!mounted) return;
       if (data != null) {
-        _punchIn  = _parseTime(data['punch_in_time']  as String?);
-        _punchOut = _parseTime(data['punch_out_time'] as String?);
-        _graceCtrl.text = (data['grace_minutes'] ?? 15).toString();
+        _punchIn          = _parseTime(data['punch_in_time']  as String?);
+        _punchOut         = _parseTime(data['punch_out_time'] as String?);
+        _graceCtrl.text   = (data['grace_minutes'] ?? 15).toString();
+        _approvalRequired = (data['approval_required'] as bool?) ?? true;
       }
     } catch (_) {
       if (mounted) _error = 'Failed to load settings';
@@ -117,9 +119,10 @@ class _AttendanceSettingsScreenState extends State<AttendanceSettingsScreen> {
     try {
       final ok = await ApiService.adminUpdateAttendanceSettings(
         widget.employeeMobile,
-        punchIn:      _fmtTimeOfDay(_punchIn),
-        punchOut:     _fmtTimeOfDay(_punchOut),
-        graceMinutes: grace,
+        punchIn:          _fmtTimeOfDay(_punchIn),
+        punchOut:         _fmtTimeOfDay(_punchOut),
+        graceMinutes:     grace,
+        approvalRequired: _approvalRequired,
       );
       if (!mounted) return;
       if (ok) {
@@ -165,7 +168,7 @@ class _AttendanceSettingsScreenState extends State<AttendanceSettingsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Set the expected punch-in/out times and grace period for this employee. Punches outside these windows will require admin approval.',
+                        'Set the expected punch-in/out times, grace period, and approval policy for this employee.',
                         style: TextStyle(
                             fontSize: 13, color: Colors.black54),
                       ),
@@ -206,7 +209,43 @@ class _AttendanceSettingsScreenState extends State<AttendanceSettingsScreen> {
                               'Punching in within this many minutes after the expected time is still considered on-time',
                         ),
                       ),
-                      const SizedBox(height: 36),
+                      const SizedBox(height: 24),
+
+                      // ── Approval required ────────────────────────────
+                      _SectionLabel(label: 'Approval Settings'),
+                      const SizedBox(height: 8),
+                      Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.black12),
+                          borderRadius: BorderRadius.circular(10),
+                          color: Colors.white,
+                        ),
+                        child: CheckboxListTile(
+                          value: _approvalRequired,
+                          onChanged: (v) =>
+                              setState(() => _approvalRequired = v ?? true),
+                          title: const Text(
+                            'Require approval for late / early punch',
+                            style: TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                          subtitle: Text(
+                            _approvalRequired
+                                ? 'Late punch-in and early punch-out will need admin approval'
+                                : 'Employee can punch in/out at any time without approval',
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: _approvalRequired
+                                    ? Colors.black54
+                                    : const Color(0xFF43A047)),
+                          ),
+                          activeColor: _gold,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 4),
+                        ),
+                      ),
+                      const SizedBox(height: 28),
 
                       // ── Save button ──────────────────────────────────
                       SizedBox(

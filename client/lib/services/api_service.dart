@@ -737,15 +737,17 @@ class ApiService {
 
   static Future<Map<String, dynamic>?> attendancePunchIn({
     String? lateReason,
+    String? earlyInReason,
     String? punchInPhoto,
     Map<String, dynamic>? punchInLocation,
   }) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/punch-in');
     try {
       final body = <String, dynamic>{
-        if (lateReason != null)      'late_reason':        lateReason,
-        if (punchInPhoto != null)    'punch_in_photo':     punchInPhoto,
-        if (punchInLocation != null) 'punch_in_location':  punchInLocation,
+        if (lateReason     != null) 'late_reason':       lateReason,
+        if (earlyInReason  != null) 'early_in_reason':   earlyInReason,
+        if (punchInPhoto   != null) 'punch_in_photo':    punchInPhoto,
+        if (punchInLocation != null) 'punch_in_location': punchInLocation,
       };
       final response = await http
           .post(url, headers: _authHeaders, body: jsonEncode(body))
@@ -927,13 +929,15 @@ class ApiService {
     required String punchIn,
     required String punchOut,
     required int graceMinutes,
+    bool approvalRequired = true,
   }) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/settings/$employeeMobile');
     try {
       final body = {
-        'punch_in_time':  punchIn,
-        'punch_out_time': punchOut,
-        'grace_minutes':  graceMinutes,
+        'punch_in_time':     punchIn,
+        'punch_out_time':    punchOut,
+        'grace_minutes':     graceMinutes,
+        'approval_required': approvalRequired,
       };
       final response = await http
           .put(url, headers: _authHeaders, body: jsonEncode(body))

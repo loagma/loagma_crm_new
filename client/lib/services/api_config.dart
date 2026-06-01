@@ -7,10 +7,10 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 class ApiConfig {
   /// Set to false for local development, true for production (Render).
   /// To switch: change to `true` for prod, `false` for local
-  static const bool useProduction = true;
+  static const bool useProduction = false;
 
   /// Optional override for local testing, for example:
-  /// `--dart-define=API_BASE_URL=http://192.168.1.27:8000`
+  /// `--dart-define=API_BASE_URL=http://192.168.1.14:8000`
   static const String _baseUrlOverride =
       String.fromEnvironment('API_BASE_URL', defaultValue: '');
 

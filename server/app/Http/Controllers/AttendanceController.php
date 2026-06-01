@@ -35,6 +35,13 @@ class AttendanceController extends Controller
         return Carbon::now()->lt($expected);
     }
 
+    private function isEarlyIn(DeliStaff $staff): bool
+    {
+        if (!$staff->punch_in_time) return false;
+        $shiftStart = Carbon::today()->setTimeFromTimeString($staff->punch_in_time);
+        return Carbon::now()->lt($shiftStart);
+    }
+
     // Returns the area IDs assigned to a staff member.
     // employee_id in area_assign_crm is the mobile number stored as int.
     private function getAreaIds(string $mobile): array
@@ -142,19 +149,23 @@ class AttendanceController extends Controller
             return response()->json(['success' => false, 'message' => 'Already punched in today'], 422);
         }
 
-        $staff  = DeliStaff::where('mobile', $mobile)->first();
-        $isLate = $this->isLate($staff);
+        $staff            = DeliStaff::where('mobile', $mobile)->first();
+        $isLate           = $this->isLate($staff);
+        $isEarlyIn        = !$isLate && $this->isEarlyIn($staff); // mutually exclusive with late
+        $approvalRequired = $staff->approval_required ?? true;
+        $needsApproval    = $isLate && $approvalRequired; // early-in never needs approval
 
-        // Only accept photo/location for on-time punch-ins
         $data = [
             'employee_mobile'   => $mobile,
             'date'              => $today,
             'punch_in_time'     => Carbon::now(),
             'is_late'           => $isLate,
-            'late_reason'       => $isLate ? $request->input('late_reason') : null,
-            'punch_in_photo'    => $isLate ? null : $request->input('punch_in_photo'),
-            'punch_in_location' => $isLate ? null : $request->input('punch_in_location'),
-            'status'            => $isLate ? 'pending' : 'on_time',
+            'is_early_in'       => $isEarlyIn,
+            'late_reason'       => $isLate    ? $request->input('late_reason')     : null,
+            'early_in_reason'   => $isEarlyIn ? $request->input('early_in_reason') : null,
+            'punch_in_photo'    => $needsApproval ? null : $request->input('punch_in_photo'),
+            'punch_in_location' => $needsApproval ? null : $request->input('punch_in_location'),
+            'status'            => $needsApproval ? 'pending' : ($isEarlyIn ? 'early_in' : 'on_time'),
             'break_details'     => [],
         ];
 
@@ -182,21 +193,24 @@ class AttendanceController extends Controller
             return response()->json(['success' => false, 'message' => 'Already punched out today'], 422);
         }
 
-        $staff      = DeliStaff::where('mobile', $mobile)->first();
-        $isEarlyOut = $this->isEarlyOut($staff);
+        $staff            = DeliStaff::where('mobile', $mobile)->first();
+        $isEarlyOut       = $this->isEarlyOut($staff);
+        $approvalRequired = $staff->approval_required ?? true;
+        $needsApproval    = $isEarlyOut && $approvalRequired;
 
         $workMinutes  = (int) $request->input('total_work_minutes', 0);
         $breakMinutes = (int) $request->input('total_break_minutes', 0);
 
         $status = $record->status;
-        if ($isEarlyOut && $status === 'on_time') {
+        // Also covers early_in: employee who punched in early can still punch out early
+        if ($needsApproval && \in_array($status, ['on_time', 'early_in'])) {
             $status = 'pending';
         }
 
         $record->update([
             'punch_out_time'      => Carbon::now(),
-            'punch_out_photo'     => $isEarlyOut ? null : $request->input('punch_out_photo'),
-            'punch_out_location'  => $isEarlyOut ? null : $request->input('punch_out_location'),
+            'punch_out_photo'     => $needsApproval ? null : $request->input('punch_out_photo'),
+            'punch_out_location'  => $needsApproval ? null : $request->input('punch_out_location'),
             'is_early_out'        => $isEarlyOut,
             'early_out_reason'    => $isEarlyOut ? $request->input('early_out_reason') : null,
             'total_work_minutes'  => $workMinutes,
@@ -297,7 +311,7 @@ class AttendanceController extends Controller
         $record = Attendance::where('employee_mobile', $mobile)->where('date', $today)->first();
 
         $staff = DeliStaff::where('mobile', $mobile)
-            ->select('punch_in_time', 'punch_out_time', 'grace_minutes')
+            ->select('punch_in_time', 'punch_out_time', 'grace_minutes', 'approval_required')
             ->first();
 
         return response()->json([
@@ -477,7 +491,7 @@ class AttendanceController extends Controller
     public function getSettings(string $employeeMobile): JsonResponse
     {
         $staff = DeliStaff::where('mobile', $employeeMobile)
-            ->select('mobile', 'name', 'punch_in_time', 'punch_out_time', 'grace_minutes')
+            ->select('mobile', 'name', 'punch_in_time', 'punch_out_time', 'grace_minutes', 'approval_required')
             ->first();
 
         if (!$staff) {
@@ -492,9 +506,10 @@ class AttendanceController extends Controller
     public function updateSettings(Request $request, string $employeeMobile): JsonResponse
     {
         $request->validate([
-            'punch_in_time'  => 'required|date_format:H:i',
-            'punch_out_time' => 'required|date_format:H:i',
-            'grace_minutes'  => 'required|integer|min:0|max:120',
+            'punch_in_time'     => 'required|date_format:H:i',
+            'punch_out_time'    => 'required|date_format:H:i',
+            'grace_minutes'     => 'required|integer|min:0|max:120',
+            'approval_required' => 'sometimes|boolean',
         ]);
 
         $staff = DeliStaff::where('mobile', $employeeMobile)->first();
@@ -503,13 +518,14 @@ class AttendanceController extends Controller
         }
 
         $staff->update([
-            'punch_in_time'  => $request->input('punch_in_time') . ':00',
-            'punch_out_time' => $request->input('punch_out_time') . ':00',
-            'grace_minutes'  => $request->input('grace_minutes'),
+            'punch_in_time'     => $request->input('punch_in_time') . ':00',
+            'punch_out_time'    => $request->input('punch_out_time') . ':00',
+            'grace_minutes'     => $request->input('grace_minutes'),
+            'approval_required' => $request->input('approval_required', true),
         ]);
 
         return response()->json(['success' => true, 'data' => $staff->only([
-            'mobile', 'name', 'punch_in_time', 'punch_out_time', 'grace_minutes'
+            'mobile', 'name', 'punch_in_time', 'punch_out_time', 'grace_minutes', 'approval_required'
         ])]);
     }
 }
