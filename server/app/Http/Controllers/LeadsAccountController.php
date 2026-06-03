@@ -73,6 +73,35 @@ class LeadsAccountController extends Controller
             });
         }
 
+        // Filter by single pincode
+        if (request()->has('pincode') && !request()->has('area_ids') && !request()->has('pincodes')) {
+            $query->where('pincode', request()->query('pincode'));
+        }
+
+        // Combined OR filter: match accounts by areaId OR by pincode list
+        // Handles accounts created before areaId was introduced (pincode-only)
+        // and accounts created with areaId set.
+        $areaIds = [];
+        $pins    = [];
+
+        if (request()->has('area_ids')) {
+            $areaIds = array_values(array_filter(array_map('intval', (array) request()->query('area_ids'))));
+        }
+        if (request()->has('pincodes')) {
+            $pins = array_values(array_filter((array) request()->query('pincodes')));
+        }
+
+        if (!empty($areaIds) || !empty($pins)) {
+            $query->where(function ($sub) use ($areaIds, $pins) {
+                if (!empty($areaIds)) {
+                    $sub->whereIn('areaId', $areaIds);
+                }
+                if (!empty($pins)) {
+                    $sub->orWhereIn('pincode', $pins);
+                }
+            });
+        }
+
         if (request()->has('page')) {
             $page = (int) request()->query('page', 1);
             $p    = $query->paginate($perPage, ['*'], 'page', $page);

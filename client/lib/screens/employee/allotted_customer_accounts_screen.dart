@@ -1,4 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../services/api_service.dart';
+import '../../services/user_service.dart';
+
+// Flow:
+//  1. getAreaAssign(mobile)  → salesman's area IDs
+//  2. getLeadAccounts(areaIds: [...]) → all accounts whose areaId is in that list
+//  3. Group client-side by account['pincode']
+// No dependency on area_crm having pincodes populated.
 
 class AllottedCustomerAccountsScreen extends StatefulWidget {
   const AllottedCustomerAccountsScreen({super.key});
@@ -13,160 +24,23 @@ class _AllottedCustomerAccountsScreenState
   static const _gold = Color(0xFFD7BE69);
 
   final _searchCtrl = TextEditingController();
-  String _query = '';
+  String _query     = '';
 
-  // Expanded pincode sections
-  final Set<String> _expanded = {'500001'};
+  bool   _loading = true;
+  String _error   = '';
 
-  // Selected customer codes
-  final Set<String> _selected = {};
+  // {pincode, accounts: [...]}
+  List<Map<String, dynamic>> _groups = [];
 
-  // ── Dummy data ──────────────────────────────────────────────────────────────
+  final Set<String> _expanded = {};
+  final Set<String> _selected = {}; // selected accountCode values
 
-  static const _allDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  // ── Load ─────────────────────────────────────────────────────────────────────
 
-  final List<Map<String, dynamic>> _pincodes = [
-    {
-      'pincode': '482002',
-      'existing': 0,
-      'assign': 0,
-      'remaining': 0,
-      'dayBreak': {'Mon': 0, 'Tue': 0, 'Wed': 0, 'Thu': 0, 'Fri': 0, 'Sat': 0, 'Sun': 0},
-      'customers': <Map<String, dynamic>>[],
-    },
-    {
-      'pincode': '500001',
-      'existing': 17,
-      'assign': 17,
-      'remaining': 0,
-      'dayBreak': {'Mon': 5, 'Tue': 6, 'Wed': 6, 'Thu': 10, 'Fri': 6, 'Sat': 5, 'Sun': 10},
-      'customers': [
-        {'code': '00026040060', 'name': 'Abids Daily Needs',      'salesman': 'Sanjay Gupta',  'address': 'Shop 45, Station Road',    'area': 'Abids', 'phone': '9848101002', 'days': ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], 'active': ['Thu'], 'next': 'Thu 04/06/2026'},
-        {'code': '00026040052', 'name': 'Abids Provision Mart 13','salesman': 'Sameer Uddin',  'address': 'Shop 13, Station Road',    'area': 'Abids', 'phone': '9848101005', 'days': ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], 'active': ['Mon'], 'next': 'Mon 01/06/2026'},
-        {'code': '00026040048', 'name': 'Star Kirana Centre',     'salesman': 'Rajiv Menon',   'address': 'Kothi, MG Road',           'area': 'Abids', 'phone': '9848101010', 'days': ['Mon','Wed','Fri'],                         'active': ['Mon'], 'next': 'Mon 01/06/2026'},
-        {'code': '00026040044', 'name': 'Lal Darwaza Store',      'salesman': 'Priya Shah',    'address': 'Lal Darwaza Junction',     'area': 'Abids', 'phone': '9848101018', 'days': ['Tue','Thu','Sat'],                         'active': ['Thu'], 'next': 'Thu 04/06/2026'},
-        {'code': '00026040040', 'name': 'Regal Provisions',       'salesman': 'Aditya Kumar',  'address': 'Near Clock Tower',         'area': 'Abids', 'phone': '9848101025', 'days': ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], 'active': ['Tue'], 'next': 'Tue 02/06/2026'},
-      ],
-    },
-    {
-      'pincode': '500095',
-      'existing': 15,
-      'assign': 15,
-      'remaining': 0,
-      'dayBreak': {'Mon': 3, 'Tue': 5, 'Wed': 4, 'Thu': 4, 'Fri': 4, 'Sat': 3, 'Sun': 5},
-      'customers': [
-        {'code': '00026040036', 'name': 'Sultan Bazar Mart',      'salesman': 'Deepak Rao',    'address': 'Sultan Bazar Main St',     'area': 'Sultan Bazar', 'phone': '9848101030', 'days': ['Mon','Wed','Fri','Sun'], 'active': ['Mon'], 'next': 'Mon 01/06/2026'},
-        {'code': '00026040032', 'name': 'City Light General',     'salesman': 'Sunita Iyer',   'address': 'Beside Post Office',       'area': 'Sultan Bazar', 'phone': '9848101038', 'days': ['Tue','Thu','Sat'],       'active': ['Tue'], 'next': 'Tue 02/06/2026'},
-        {'code': '00026040028', 'name': 'Everest Kirana',         'salesman': 'Mohan Das',     'address': 'Old Bridge Road, No.4',    'area': 'Sultan Bazar', 'phone': '9848101044', 'days': ['Mon','Tue','Wed'],       'active': ['Mon'], 'next': 'Mon 01/06/2026'},
-      ],
-    },
-    {
-      'pincode': '500028',
-      'existing': 17,
-      'assign': 15,
-      'remaining': 2,
-      'dayBreak': {'Mon': 5, 'Tue': 4, 'Wed': 4, 'Thu': 3, 'Fri': 3, 'Sat': 4, 'Sun': 7},
-      'customers': [
-        {'code': '00026040020', 'name': 'Himayat Nagar Stores',   'salesman': 'Kiran Patel',   'address': 'Himayat Nagar X Roads',    'area': 'Himayat Nagar', 'phone': '9848101055', 'days': ['Mon','Thu','Sun'], 'active': ['Mon'], 'next': 'Mon 01/06/2026'},
-        {'code': '00026040016', 'name': 'Classic Provisions',     'salesman': 'Nilesh Joshi',  'address': 'Road No. 5, Banjara',      'area': 'Banjara Hills', 'phone': '9848101062', 'days': ['Tue','Fri'],      'active': ['Tue'], 'next': 'Tue 02/06/2026'},
-        {'code': '00026040012', 'name': 'Dhan Shree Traders',     'salesman': 'Ankit Mehta',   'address': 'Near Water Tank, Lane 2',  'area': 'Himayat Nagar', 'phone': '9848101070', 'days': ['Sun'],            'active': ['Sun'], 'next': 'Sun 07/06/2026'},
-        {'code': '00026040008', 'name': 'Sree Balaji Stores',     'salesman': 'Pooja Reddy',   'address': 'Adj. Petrol Bunk',         'area': 'Banjara Hills', 'phone': '9848101078', 'days': ['Mon','Wed','Fri'], 'active': ['Mon'], 'next': 'Mon 01/06/2026'},
-      ],
-    },
-  ];
-
-  // ── Computed ─────────────────────────────────────────────────────────────────
-
-  int get _totalAccounts =>
-      _pincodes.fold(0, (s, p) => s + (p['customers'] as List).length);
-
-  Map<String, int> get _globalDayBreak {
-    final m = {for (final d in _allDays) d: 0};
-    for (final p in _pincodes) {
-      final db = p['dayBreak'] as Map<String, dynamic>;
-      for (final d in _allDays) {
-        m[d] = (m[d] ?? 0) + ((db[d] as int?) ?? 0);
-      }
-    }
-    return m;
-  }
-
-  List<Map<String, dynamic>> _filteredCustomers(List customers) {
-    if (_query.isEmpty) return List<Map<String, dynamic>>.from(customers);
-    final q = _query.toLowerCase();
-    return customers.where((c) {
-      final cMap = c as Map<String, dynamic>;
-      return (cMap['name'] as String).toLowerCase().contains(q) ||
-          (cMap['phone'] as String).contains(q) ||
-          (cMap['code'] as String).contains(q);
-    }).map((c) => c as Map<String, dynamic>).toList();
-  }
-
-  int get _selectedDayCount {
-    if (_selected.isEmpty) return 0;
-    final days = <String>{};
-    for (final p in _pincodes) {
-      for (final c in (p['customers'] as List)) {
-        final cMap = c as Map<String, dynamic>;
-        if (_selected.contains(cMap['code'])) {
-          days.addAll((cMap['active'] as List).cast<String>());
-        }
-      }
-    }
-    return days.length;
-  }
-
-  void _toggleCustomer(String code) =>
-      setState(() => _selected.contains(code) ? _selected.remove(code) : _selected.add(code));
-
-  void _selectAll(List customers) => setState(() {
-        for (final c in customers) {
-          _selected.add((c as Map<String, dynamic>)['code'] as String);
-        }
-      });
-
-  void _selectNone(List customers) => setState(() {
-        for (final c in customers) {
-          _selected.remove((c as Map<String, dynamic>)['code'] as String);
-        }
-      });
-
-  void _showAssignDayDialog() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Assign Day',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: _allDays.map((d) => GestureDetector(
-                onTap: () => Navigator.pop(context),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: _gold.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: _gold.withValues(alpha: 0.4)),
-                  ),
-                  child: Text(d,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w700, color: _gold)),
-                ),
-              )).toList(),
-            ),
-          ],
-        ),
-      ),
-    );
+  @override
+  void initState() {
+    super.initState();
+    _load();
   }
 
   @override
@@ -175,12 +49,201 @@ class _AllottedCustomerAccountsScreenState
     super.dispose();
   }
 
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = ''; _selected.clear(); });
+
+    final mobile = UserService.currentMobile ?? '';
+    if (mobile.isEmpty) {
+      setState(() { _loading = false; _error = 'Not logged in'; });
+      return;
+    }
+
+    try {
+      // Step 1 — get salesman's assigned area IDs from area_assign_crm
+      final assignRes  = await ApiService.getAreaAssign(mobile);
+      final assignData = assignRes?['data'];
+
+      final areaIds = <int>[];
+      if (assignData is Map) {
+        final ids = assignData['area_ids'];
+        if (ids is List) {
+          for (final id in ids) {
+            final n = int.tryParse(id.toString());
+            if (n != null) areaIds.add(n);
+          }
+        }
+      }
+
+      if (areaIds.isEmpty) {
+        setState(() { _loading = false; _groups = []; });
+        return;
+      }
+
+      // Step 2 — get pincodes from those areas (parallel), may be empty — that's ok
+      final areaResults = await Future.wait(areaIds.map(ApiService.getArea));
+      final pincodes = <String>[];
+      for (final area in areaResults) {
+        if (area == null) continue;
+        final raw = area['pincodes'];
+        if (raw is List) pincodes.addAll(raw.map((p) => p.toString()));
+      }
+
+      // Step 3 — ONE request: match by areaId OR by pincode (OR logic in backend)
+      //   Handles accounts with areaId set AND older accounts with only pincode set
+      final result = await ApiService.getLeadAccounts(
+        areaIds: areaIds,
+        pincodes: pincodes, // empty list is fine — backend ignores it
+        perPage: 1000,
+      );
+      final raw = result['data'];
+      final allAccounts = raw is List
+          ? raw.map((e) => Map<String, dynamic>.from(e as Map)).toList()
+          : <Map<String, dynamic>>[];
+
+      // Step 3 — group client-side by pincode
+      // Pre-seed with ALL pincodes from areas so empty ones still appear
+      final groupMap = <String, List<Map<String, dynamic>>>{
+        for (final p in pincodes) p: [],
+      };
+      for (final a in allAccounts) {
+        final pin = ((a['pincode'] as String?) ?? '').trim();
+        final key = pin.isEmpty ? 'Unknown' : pin;
+        groupMap.putIfAbsent(key, () => []).add(a);
+      }
+
+      final groups = groupMap.entries.map((e) => {
+        'pincode':  e.key,
+        'accounts': e.value,
+      }).toList();
+
+      // Sort: most accounts first, then alphabetically by pincode
+      groups.sort((a, b) {
+        final diff = (b['accounts'] as List).length
+            .compareTo((a['accounts'] as List).length);
+        return diff != 0 ? diff : (a['pincode'] as String).compareTo(b['pincode'] as String);
+      });
+
+      // Auto-expand first pincode
+      _expanded.clear();
+      if (groups.isNotEmpty) _expanded.add(groups[0]['pincode'] as String);
+
+      setState(() { _groups = groups; _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _loading = false; _error = 'Failed to load data. Tap refresh to retry.'; });
+    }
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────────
+
+  int get _totalAccounts =>
+      _groups.fold(0, (s, g) => s + (g['accounts'] as List).length);
+
+  List<Map<String, dynamic>> _filtered(List accounts) {
+    final list = accounts.cast<Map<String, dynamic>>();
+    if (_query.isEmpty) return list;
+    final q = _query.toLowerCase();
+    return list.where((a) =>
+        (a['businessName']  as String? ?? '').toLowerCase().contains(q) ||
+        (a['contactNumber'] as String? ?? '').contains(q) ||
+        (a['accountCode']   as String? ?? '').contains(q) ||
+        (a['personName']    as String? ?? '').toLowerCase().contains(q),
+    ).toList();
+  }
+
+  void _toggleSelect(String code) => setState(() =>
+      _selected.contains(code) ? _selected.remove(code) : _selected.add(code));
+
+
+  static const _dayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  Map<String, int> get _globalDayBreak {
+    final counts = {for (final d in _dayOrder) d: 0};
+    for (final g in _groups) {
+      for (final a in (g['accounts'] as List<Map<String, dynamic>>)) {
+        final days = a['assignedDays'];
+        if (days is List) {
+          for (final d in days) {
+            final key = d.toString();
+            if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
+          }
+        }
+      }
+    }
+    return counts;
+  }
+
+  void _selectAllIn(List<Map<String, dynamic>> accounts) =>
+      setState(() => _selected.addAll(accounts.map(_key)));
+
+  void _clearAllIn(List<Map<String, dynamic>> accounts) => setState(() {
+        for (final a in accounts) {
+          _selected.remove(_key(a));
+        }
+      });
+
+  Future<void> _selectNIn(List<Map<String, dynamic>> accounts) async {
+    final ctrl = TextEditingController();
+    final result = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Select N Accounts',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: TextInputType.number,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: 'Enter number (max ${accounts.length})',
+            isDense: true,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: _gold, width: 2),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: _gold, foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            onPressed: () {
+              final n = int.tryParse(ctrl.text.trim());
+              if (n != null && n > 0) Navigator.pop(ctx, n);
+            },
+            child: const Text('Select'),
+          ),
+        ],
+      ),
+    );
+    if (result != null) {
+      final unselected = accounts.where((a) => !_selected.contains(_key(a))).toList();
+      setState(() => _selected.addAll(unselected.take(result).map(_key)));
+    }
+  }
+
+  String _key(Map<String, dynamic> a) =>
+      (a['accountCode'] as String? ?? '').isNotEmpty
+          ? a['accountCode'] as String
+          : a['id'].toString();
+
   // ── Build ─────────────────────────────────────────────────────────────────────
+
+  Future<void> _showAssignDayDialog() async {
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _AssignDayDialog(selectedCount: _selected.length),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final dayBreak = _globalDayBreak;
-
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
@@ -190,197 +253,212 @@ class _AllottedCustomerAccountsScreenState
         elevation: 0,
         actions: [
           IconButton(icon: const Icon(Icons.info_outline_rounded), onPressed: () {}),
-          IconButton(icon: const Icon(Icons.refresh_rounded),      onPressed: () {}),
+          IconButton(icon: const Icon(Icons.refresh_rounded),      onPressed: _load),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-              children: [
-                // Subtitle
-                const Text('Pincode-wise allotted customers',
-                    style: TextStyle(fontSize: 12, color: Colors.black54)),
-                const SizedBox(height: 8),
-
-                // Search bar
-                TextField(
-                  controller: _searchCtrl,
-                  onChanged: (v) => setState(() => _query = v.trim()),
-                  decoration: InputDecoration(
-                    hintText: 'Search by name, phone, code...',
-                    hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-                    prefixIcon: const Icon(Icons.search_rounded, color: _gold),
-                    suffixIcon: _query.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.close_rounded, size: 18),
-                            onPressed: () {
-                              _searchCtrl.clear();
-                              setState(() => _query = '');
-                            })
-                        : null,
-                    filled: true,
-                    fillColor: Colors.white,
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none),
-                    enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: Colors.grey.shade200)),
-                    focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: _gold)),
-                  ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: _gold))
+          : _error.isNotEmpty
+              ? _errorState()
+              : Column(
+                  children: [
+                    Expanded(child: _buildList()),
+                    _buildBottomBar(),
+                  ],
                 ),
-                const SizedBox(height: 10),
-
-                // Stats row
-                Text(
-                  '${_pincodes.length} pincode(s)  |  $_totalAccounts account(s)',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 8),
-
-                // Day count chips
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: _allDays.map((d) => Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: Text('$d:${dayBreak[d]}',
-                            style: const TextStyle(
-                                fontSize: 11, fontWeight: FontWeight.w600)),
-                      ),
-                    )).toList(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                // Pincode sections
-                ..._pincodes.map((p) => _PincodeSection(
-                  pincodeData: p,
-                  expanded: _expanded.contains(p['pincode'] as String),
-                  selected: _selected,
-                  query: _query,
-                  onToggle: () => setState(() {
-                    final pin = p['pincode'] as String;
-                    _expanded.contains(pin) ? _expanded.remove(pin) : _expanded.add(pin);
-                  }),
-                  onCustomerTap: _toggleCustomer,
-                  onSelectAll: () => _selectAll(p['customers'] as List),
-                  onSelectNone: () => _selectNone(p['customers'] as List),
-                  filteredCustomers: _filteredCustomers(p['customers'] as List),
-                )),
-
-                const SizedBox(height: 80),
-              ],
-            ),
-          ),
-
-          // ── Bottom bar ────────────────────────────────────────────────────────
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, -2))],
-            ),
-            child: Row(
-              children: [
-                Text(
-                  '${_selected.length} selected  |  $_selectedDayCount day',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                ),
-                const Spacer(),
-                OutlinedButton(
-                  onPressed: _selected.isEmpty ? null : () => setState(() => _selected.clear()),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red,
-                    side: const BorderSide(color: Colors.red),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.remove_circle_outline_rounded, size: 15),
-                      SizedBox(width: 4),
-                      Text('Unassign', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                ElevatedButton(
-                  onPressed: _selected.isEmpty ? null : _showAssignDayDialog,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _gold,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.save_rounded, size: 15),
-                      SizedBox(width: 4),
-                      Text('Assign Day', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
+
+  Widget _errorState() => Center(
+    child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.wifi_off_rounded, size: 56, color: Colors.grey.shade300),
+      const SizedBox(height: 12),
+      Text(_error, textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 14, color: Colors.grey.shade500)),
+      const SizedBox(height: 14),
+      ElevatedButton.icon(
+        onPressed: _load,
+        icon: const Icon(Icons.refresh_rounded, size: 16),
+        label: const Text('Retry'),
+        style: ElevatedButton.styleFrom(
+            backgroundColor: _gold, foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
+      ),
+    ]),
+  );
+
+  Widget _buildList() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      children: [
+        // Subtitle
+        const Text('Pincode-wise allotted customers',
+            style: TextStyle(fontSize: 12, color: Colors.black54)),
+        const SizedBox(height: 8),
+
+        // Search bar
+        TextField(
+          controller: _searchCtrl,
+          onChanged: (v) => setState(() => _query = v.trim()),
+          decoration: InputDecoration(
+            hintText: 'Search by name, phone, code...',
+            hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+            prefixIcon: const Icon(Icons.search_rounded, color: _gold),
+            suffixIcon: _query.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    onPressed: () { _searchCtrl.clear(); setState(() => _query = ''); })
+                : null,
+            filled: true, fillColor: Colors.white, isDense: true,
+            contentPadding: const EdgeInsets.symmetric(vertical: 12),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade200)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: _gold)),
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // Stats
+        Text('${_groups.length} pincode(s)  |  $_totalAccounts account(s)',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+
+        // Day count chips
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: _globalDayBreak.entries.map((e) => Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Text('${e.key}:${e.value}',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.black87)),
+              ),
+            )).toList(),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Pincode sections
+        if (_groups.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 40),
+            child: Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.inbox_outlined, size: 64, color: Colors.grey.shade300),
+                const SizedBox(height: 12),
+                Text('No accounts in your assigned areas',
+                    style: TextStyle(fontSize: 15, color: Colors.grey.shade500)),
+              ]),
+            ),
+          )
+        else
+          ..._groups.map((g) {
+            final pin      = g['pincode'] as String;
+            final accounts = g['accounts'] as List<Map<String, dynamic>>;
+            final filtered = _filtered(accounts);
+            final isOpen   = _expanded.contains(pin);
+            final selCount = accounts.where((a) => _selected.contains(_key(a))).length;
+            return _PincodeSection(
+              pincode:   pin,
+              total:     accounts.length,
+              selected:  selCount,
+              expanded:  isOpen,
+              onToggle:  () => setState(() => isOpen ? _expanded.remove(pin) : _expanded.add(pin)),
+              onSelectAll: () => _selectAllIn(accounts),
+              onClearAll:  () => _clearAllIn(accounts),
+              onSelectN:   () => _selectNIn(accounts),
+              filteredAccounts: filtered,
+              selectedKeys: _selected,
+              keyOf:     _key,
+              onToggleAccount: _toggleSelect,
+            );
+          }),
+
+        const SizedBox(height: 80),
+      ],
+    );
+  }
+
+  Widget _buildBottomBar() => Container(
+    padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+    decoration: const BoxDecoration(
+      color: Colors.white,
+      boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, -2))],
+    ),
+    child: Row(
+      children: [
+        Text('${_selected.length} selected  |  0 day',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        const Spacer(),
+        OutlinedButton.icon(
+          onPressed: _selected.isEmpty ? null : () => setState(() => _selected.clear()),
+          icon: const Icon(Icons.remove_circle_outline_rounded, size: 15),
+          label: const Text('Unassign', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.red,
+            side: const BorderSide(color: Colors.red),
+            disabledForegroundColor: Colors.red.withValues(alpha: 0.3),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          ),
+        ),
+        const SizedBox(width: 10),
+        ElevatedButton.icon(
+          onPressed: _selected.isEmpty ? null : _showAssignDayDialog,
+          icon: const Icon(Icons.save_rounded, size: 15),
+          label: const Text('Assign Day', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _gold,
+            foregroundColor: Colors.white,
+            disabledBackgroundColor: _gold.withValues(alpha: 0.4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
-// ── Pincode Section ───────────────────────────────────────────────────────────
+// ── Pincode section ───────────────────────────────────────────────────────────
 
 class _PincodeSection extends StatelessWidget {
-  final Map<String, dynamic>       pincodeData;
-  final bool                       expanded;
-  final Set<String>                selected;
-  final String                     query;
-  final VoidCallback               onToggle;
-  final void Function(String code) onCustomerTap;
-  final VoidCallback               onSelectAll;
-  final VoidCallback               onSelectNone;
-  final List<Map<String, dynamic>> filteredCustomers;
-
-  static const _gold = Color(0xFFD7BE69);
-  static const _allDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  final String                       pincode;
+  final int                          total;
+  final int                          selected;
+  final bool                         expanded;
+  final VoidCallback                 onToggle;
+  final VoidCallback                 onSelectAll;
+  final VoidCallback                 onClearAll;
+  final VoidCallback                 onSelectN;
+  final List<Map<String, dynamic>>   filteredAccounts;
+  final Set<String>                  selectedKeys;
+  final String Function(Map<String, dynamic>) keyOf;
+  final void Function(String)        onToggleAccount;
 
   const _PincodeSection({
-    required this.pincodeData,
-    required this.expanded,
+    required this.pincode,
+    required this.total,
     required this.selected,
-    required this.query,
+    required this.expanded,
     required this.onToggle,
-    required this.onCustomerTap,
     required this.onSelectAll,
-    required this.onSelectNone,
-    required this.filteredCustomers,
+    required this.onClearAll,
+    required this.onSelectN,
+    required this.filteredAccounts,
+    required this.selectedKeys,
+    required this.keyOf,
+    required this.onToggleAccount,
   });
 
   @override
   Widget build(BuildContext context) {
-    final pincode  = pincodeData['pincode'] as String;
-    final existing = pincodeData['existing'] as int;
-    final assign   = pincodeData['assign']   as int;
-    final remaining= pincodeData['remaining']as int;
-    final dayBreak = pincodeData['dayBreak'] as Map<String, dynamic>;
-
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
@@ -392,96 +470,72 @@ class _PincodeSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Header ────────────────────────────────────────────────────────
+          // Header
           InkWell(
             onTap: onToggle,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 10, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Text(pincode,
-                          style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w800)),
-                      const Spacer(),
-                      Icon(expanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
-                          color: Colors.black45),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _StatChip(label: 'Existing: $existing', color: _gold),
-                        const SizedBox(width: 6),
-                        _StatChip(label: 'Assign: $assign',     color: _gold),
-                        const SizedBox(width: 6),
-                        _StatChip(label: 'Remaining: $remaining',color: _gold),
-                        const SizedBox(width: 6),
-                        _StatChip(label: 'Selected: ${filteredCustomers.where((c) => selected.contains(c['code'])).length}', color: _gold),
+                        Text(pincode,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6, runSpacing: 4,
+                          children: [
+                            _StatChip(label: 'Existing: $total'),
+                            _StatChip(label: 'Assign: $total'),
+                            _StatChip(label: 'Remaining: 0'),
+                            _StatChip(label: 'Selected: $selected'),
+                          ],
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  // Day breakdown
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: _allDays.map((d) => Padding(
-                        padding: const EdgeInsets.only(right: 4),
-                        child: Text('$d:${dayBreak[d] ?? 0}',
-                            style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-                      )).toList(),
-                    ),
-                  ),
+                  Icon(expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                      color: Colors.black45),
                 ],
               ),
             ),
           ),
 
-          // ── Expanded: select buttons + customer cards ─────────────────────
+          // Expanded body
           if (expanded) ...[
             const Divider(height: 1),
-            if (filteredCustomers.isNotEmpty) ...[
+            if (filteredAccounts.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                 child: Row(
                   children: [
-                    _SelectBtn(
-                      icon: Icons.check_rounded,
-                      label: 'Select All',
-                      onTap: onSelectAll,
-                    ),
+                    _SelectBtn(icon: Icons.check_box_rounded,              label: 'Select All',  onTap: onSelectAll),
                     const SizedBox(width: 8),
-                    _SelectBtn(
-                      icon: Icons.grid_view_rounded,
-                      label: 'Select None',
-                      onTap: onSelectNone,
-                    ),
+                    _SelectBtn(icon: Icons.check_box_outline_blank_rounded, label: 'Unselect All', onTap: onClearAll),
+                    const SizedBox(width: 8),
+                    _SelectBtn(icon: Icons.format_list_numbered_rounded,   label: 'Select N',    onTap: onSelectN),
                   ],
                 ),
               ),
-            ],
-            ...filteredCustomers.map((c) => _CustomerCard(
-              customer: c,
-              isSelected: selected.contains(c['code'] as String),
-              onTap: () => onCustomerTap(c['code'] as String),
+            ...filteredAccounts.map((a) => _AccountCard(
+              account:    a,
+              isSelected: selectedKeys.contains(keyOf(a)),
+              onCheckTap: () => onToggleAccount(keyOf(a)),
             )),
-            if (filteredCustomers.isEmpty)
+            if (filteredAccounts.isEmpty)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
+                padding: const EdgeInsets.symmetric(vertical: 18),
                 child: Center(
-                  child: Text(
-                    query.isNotEmpty ? 'No results for "$query"' : 'No customers in this pincode',
-                    style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
-                  ),
+                  child: Text('No accounts found',
+                      style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
                 ),
               ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
           ],
         ],
       ),
@@ -489,180 +543,161 @@ class _PincodeSection extends StatelessWidget {
   }
 }
 
-// ── Customer Card (inside pincode) ────────────────────────────────────────────
+// ── Account card ──────────────────────────────────────────────────────────────
 
-class _CustomerCard extends StatelessWidget {
-  final Map<String, dynamic> customer;
+class _AccountCard extends StatelessWidget {
+  final Map<String, dynamic> account;
   final bool                 isSelected;
-  final VoidCallback         onTap;
+  final VoidCallback         onCheckTap; // checkbox toggle
 
-  static const _allDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-  const _CustomerCard({
-    required this.customer,
+  const _AccountCard({
+    required this.account,
     required this.isSelected,
-    required this.onTap,
+    required this.onCheckTap,
   });
+
+  Future<void> _launch(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) await launchUrl(uri);
+  }
+
+  void _call(String phone) => _launch('tel:$phone');
+
+  void _whatsapp(String phone) {
+    // Strip leading 0 / +91 and normalise to 10 digits, then prepend country code
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    final number = digits.length == 10 ? '91$digits' : digits;
+    _launch('https://wa.me/$number');
+  }
 
   @override
   Widget build(BuildContext context) {
-    final days   = (customer['days']   as List).cast<String>();
-    final active = (customer['active'] as List).cast<String>();
-    final next   = customer['next'] as String;
+    final id      = (account['id']           as String?) ?? '';
+    final code    = account['accountCode']   as String? ?? '';
+    final name    = account['businessName']  as String? ?? '—';
+    final person  = account['personName']    as String? ?? '';
+    final phone   = account['contactNumber'] as String? ?? '';
+    final address = account['address']       as String? ?? '';
+    final area    = account['area']          as String? ?? '';
 
-    return Container(
-      margin: const EdgeInsets.fromLTRB(10, 4, 10, 4),
-      decoration: BoxDecoration(
-        color: isSelected
-            ? const Color(0xFFEBF5FB)
-            : const Color(0xFFF0FFF4),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isSelected
-              ? const Color(0xFFAED6F1)
-              : const Color(0xFFC8E6C9),
+    return GestureDetector(
+      onTap: () {
+        if (id.isNotEmpty) context.push('/lead-accounts/$id', extra: account);
+      },
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(10, 4, 10, 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF1976D2) : const Color(0xFFEEEEEE),
+          ),
         ),
-      ),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Code + salesman
-          Row(
-            children: [
-              Text(customer['code'] as String,
-                  style: const TextStyle(fontSize: 11, color: Colors.black54, letterSpacing: 0.4)),
-              const Spacer(),
-              Text(customer['salesman'] as String,
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-            ],
-          ),
-          const SizedBox(height: 4),
-          // Store name
-          Text(customer['name'] as String,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 2),
-          Text('Address : ${customer['address']}',
-              style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
-          Text('Main area : ${customer['area']}',
-              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          // Days row
-          Row(
-            children: [
-              const Text('Days : ',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-              ..._allDays.map((d) {
-                final has    = days.contains(d);
-                final isAct  = active.contains(d);
-                return Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: isAct
-                          ? Colors.black87
-                          : has
-                              ? Colors.grey.shade200
-                              : Colors.transparent,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(d,
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: isAct
-                              ? Colors.white
-                              : has
-                                  ? Colors.black54
-                                  : Colors.grey.shade300,
-                        )),
-                  ),
-                );
-              }),
-            ],
-          ),
-          const SizedBox(height: 6),
-          // Next visit chip
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade200,
-              borderRadius: BorderRadius.circular(20),
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Code + person name
+            Row(
+              children: [
+                Text(code,
+                    style: const TextStyle(fontSize: 11, color: Colors.black45, letterSpacing: 0.4)),
+                const Spacer(),
+                if (person.isNotEmpty)
+                  Text(person,
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              ],
             ),
-            child: Text(next,
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-          ),
-          const SizedBox(height: 8),
-          // Checkbox + phone + actions
-          Row(
-            children: [
-              GestureDetector(
-                onTap: onTap,
-                child: Container(
-                  width: 22, height: 22,
-                  decoration: BoxDecoration(
-                    color: isSelected ? const Color(0xFF1976D2) : Colors.white,
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color: isSelected ? const Color(0xFF1976D2) : Colors.grey.shade400,
+            const SizedBox(height: 4),
+            Text(name,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 2),
+            if (address.isNotEmpty)
+              Text('Address : $address',
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+            if (area.isNotEmpty)
+              Text('Main area : $area',
+                  style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            // Checkbox + phone + call + whatsapp
+            Row(
+              children: [
+                // Checkbox — stops tap propagating to card
+                GestureDetector(
+                  onTap: onCheckTap,
+                  behavior: HitTestBehavior.opaque,
+                  child: Container(
+                    width: 22, height: 22,
+                    decoration: BoxDecoration(
+                      color: isSelected ? const Color(0xFF1976D2) : Colors.white,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: isSelected ? const Color(0xFF1976D2) : Colors.grey.shade400,
+                      ),
+                    ),
+                    child: isSelected
+                        ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.phone_rounded, size: 13, color: Colors.grey.shade600),
+                        const SizedBox(width: 5),
+                        Text(phone,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      ],
                     ),
                   ),
-                  child: isSelected
-                      ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
-                      : null,
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.phone_rounded, size: 13, color: Colors.grey.shade600),
-                      const SizedBox(width: 5),
-                      Text(customer['phone'] as String,
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                    ],
-                  ),
+                const SizedBox(width: 8),
+                // Call button
+                _ActionBtn(
+                  icon: Icons.call_rounded,
+                  color: Colors.grey.shade600,
+                  onTap: phone.isNotEmpty ? () => _call(phone) : null,
                 ),
-              ),
-              const SizedBox(width: 8),
-              _ActionBtn(icon: Icons.call_rounded,  color: Colors.grey.shade600),
-              const SizedBox(width: 6),
-              _ActionBtn(icon: Icons.chat_rounded,  color: const Color(0xFF25D366)),
-            ],
-          ),
-        ],
+                const SizedBox(width: 6),
+                // WhatsApp button
+                _ActionBtn(
+                  icon: Icons.chat_rounded,
+                  color: const Color(0xFF25D366),
+                  onTap: phone.isNotEmpty ? () => _whatsapp(phone) : null,
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Small helpers ─────────────────────────────────────────────────────────────
 
 class _StatChip extends StatelessWidget {
   final String label;
-  final Color  color;
-  const _StatChip({required this.label, required this.color});
-
+  const _StatChip({required this.label});
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
+          color: Colors.grey.shade100,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withValues(alpha: 0.35)),
+          border: Border.all(color: Colors.grey.shade300),
         ),
         child: Text(label,
-            style: TextStyle(
-                fontSize: 10, fontWeight: FontWeight.w700, color: color)),
+            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.black87)),
       );
 }
 
@@ -671,7 +706,6 @@ class _SelectBtn extends StatelessWidget {
   final String       label;
   final VoidCallback onTap;
   const _SelectBtn({required this.icon, required this.label, required this.onTap});
-
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
@@ -682,29 +716,180 @@ class _SelectBtn extends StatelessWidget {
             borderRadius: BorderRadius.circular(20),
             color: Colors.grey.shade50,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 13, color: Colors.black54),
-              const SizedBox(width: 4),
-              Text(label,
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-            ],
-          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 13, color: Colors.black54),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+          ]),
         ),
       );
 }
 
-class _ActionBtn extends StatelessWidget {
-  final IconData icon;
-  final Color    color;
-  const _ActionBtn({required this.icon, required this.color});
+// ── Assign Day Dialog ─────────────────────────────────────────────────────────
+
+class _AssignDayDialog extends StatefulWidget {
+  final int selectedCount;
+  const _AssignDayDialog({required this.selectedCount});
 
   @override
-  Widget build(BuildContext context) => Container(
-        width: 36, height: 36,
-        decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
-        child: Icon(icon, size: 18, color: color),
+  State<_AssignDayDialog> createState() => _AssignDayDialogState();
+}
+
+class _AssignDayDialogState extends State<_AssignDayDialog> {
+  static const _gold = Color(0xFFD7BE69);
+  static const _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  final Set<String> _selectedDays = {};
+  String _frequency = 'Weekly'; // Weekly | Monthly | Recurring Day (After N Days)
+  final _nCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _nCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 40),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Title
+            const Text('Assign Day',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 14),
+
+            // Day checkboxes
+            ..._days.map((d) => InkWell(
+              onTap: () => setState(() =>
+                  _selectedDays.contains(d) ? _selectedDays.remove(d) : _selectedDays.add(d)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 24, height: 24,
+                      child: Checkbox(
+                        value: _selectedDays.contains(d),
+                        activeColor: _gold,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                        onChanged: (v) => setState(() =>
+                            v == true ? _selectedDays.add(d) : _selectedDays.remove(d)),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(d, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
+            )),
+
+            const Divider(height: 20),
+
+            // Frequency radio buttons
+            RadioGroup<String>(
+              groupValue: _frequency,
+              onChanged: (v) { if (v != null) setState(() => _frequency = v); },
+              child: Column(
+                children: ['Weekly', 'Monthly', 'Recurring Day (After N Days)'].map((f) =>
+                  InkWell(
+                    onTap: () => setState(() => _frequency = f),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 24, height: 24,
+                            child: Radio<String>(value: f, activeColor: _gold),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(f, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ).toList(),
+              ),
+            ),
+
+            // N days input (only for Recurring)
+            if (_frequency == 'Recurring Day (After N Days)') ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: _nCtrl,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  hintText: 'Enter number of days',
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: _gold, width: 2),
+                  ),
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 16),
+
+            // Actions
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.grey, fontSize: 14)),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _gold,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                  ),
+                  onPressed: () {
+                    if (_selectedDays.isEmpty) return;
+                    Navigator.pop(context, {
+                      'days':      _selectedDays.toList(),
+                      'frequency': _frequency,
+                      if (_frequency == 'Recurring Day (After N Days)')
+                        'n': int.tryParse(_nCtrl.text.trim()),
+                    });
+                  },
+                  child: const Text('Ok', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Action button ─────────────────────────────────────────────────────────────
+
+class _ActionBtn extends StatelessWidget {
+  final IconData      icon;
+  final Color         color;
+  final VoidCallback? onTap;
+  const _ActionBtn({required this.icon, required this.color, this.onTap});
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 36, height: 36,
+          decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
+          child: Icon(icon, size: 18, color: color),
+        ),
       );
 }

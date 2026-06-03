@@ -212,12 +212,30 @@ class ApiService {
 
   /// Fetch paginated/searched list of lead accounts.
   /// Returns {'data': [...], 'meta': {...}} or {'data': [...]}.
-  static Future<Map<String, dynamic>> getLeadAccounts({String? q, int? page, int? perPage}) async {
-    final uri = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts').replace(queryParameters: {
+  static Future<Map<String, dynamic>> getLeadAccounts({
+    String? q,
+    int? page,
+    int? perPage,
+    String? pincode,
+    List<String>? pincodes,
+    List<int>? areaIds,
+  }) async {
+    final params = <String, dynamic>{
       if (q != null && q.isNotEmpty) 'q': q,
       if (page != null) 'page': page.toString(),
       if (perPage != null) 'per_page': perPage.toString(),
-    });
+      if (pincode != null && pincode.isNotEmpty) 'pincode': pincode,
+    };
+    // Uri.replace doesn't support repeated keys — build manually for list params
+    var uri = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts').replace(queryParameters: params);
+    if (pincodes != null && pincodes.isNotEmpty) {
+      final extra = pincodes.map((p) => 'pincodes[]=${Uri.encodeQueryComponent(p)}').join('&');
+      uri = Uri.parse('${uri.toString()}&$extra');
+    }
+    if (areaIds != null && areaIds.isNotEmpty) {
+      final extra = areaIds.map((id) => 'area_ids[]=$id').join('&');
+      uri = Uri.parse('${uri.toString()}&$extra');
+    }
 
     try {
       final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
