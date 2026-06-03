@@ -23,6 +23,9 @@ import '../screens/employee/my_incharges_screen.dart';
 import '../screens/employee/allotted_customer_accounts_screen.dart';
 import '../screens/employee/todays_beat_plan_screen.dart';
 import '../screens/employee/all_beat_plan_screen.dart';
+import '../screens/employee/beat_plan_day_screen.dart';
+import '../screens/employee/order_funnel_screen.dart';
+import '../screens/employee/assignment_view_screen.dart';
 import '../screens/lead/lead_account_screen.dart';
 import '../screens/lead/lead_account_list_screen.dart';
 import '../screens/lead/lead_account_detail_screen.dart';
@@ -204,6 +207,25 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/all-beat-plan',
       builder: (context, state) => const AllBeatPlanScreen(),
+    ),
+    GoRoute(
+      path: '/beat-plan/day',
+      builder: (context, state) {
+        final date = state.uri.queryParameters['date'] ?? '';
+        return BeatPlanDayScreen(date: date);
+      },
+    ),
+    GoRoute(
+      path: '/assignment-view',
+      builder: (context, state) => const AssignmentViewScreen(),
+    ),
+    GoRoute(
+      path: '/order-funnel/:id',
+      builder: (context, state) {
+        final id      = state.pathParameters['id'] ?? '';
+        final account = state.extra as Map<String, dynamic>?;
+        return OrderFunnelScreen(accountId: id, account: account);
+      },
     ),
   ],
 );

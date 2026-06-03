@@ -26,11 +26,18 @@ class _AllottedCustomerAccountsScreenState
   final _searchCtrl = TextEditingController();
   String _query     = '';
 
-  bool   _loading = true;
-  String _error   = '';
+  bool   _loading       = true;
+  bool   _actionLoading = false;
+  String _error         = '';
 
   // {pincode, accounts: [...]}
   List<Map<String, dynamic>> _groups = [];
+
+  // {pincode: {existing, assign, remaining}} — from beat-plan/stats API
+  Map<String, Map<String, int>> _stats = {};
+
+  // {accountId: beatPlan} — from beat-plan/my-plans API
+  Map<String, Map<String, dynamic>> _beatPlans = {};
 
   final Set<String> _expanded = {};
   final Set<String> _selected = {}; // selected accountCode values
@@ -127,7 +134,38 @@ class _AllottedCustomerAccountsScreenState
       _expanded.clear();
       if (groups.isNotEmpty) _expanded.add(groups[0]['pincode'] as String);
 
-      setState(() { _groups = groups; _loading = false; });
+      // Step 4 — fetch beat plan stats + my-plans in parallel
+      final futures = await Future.wait([
+        ApiService.getBeatPlanStats(areaIds: areaIds, pincodes: pincodes),
+        ApiService.getMyBeatPlans(),
+      ]);
+
+      final statsRaw = futures[0]['data'] as Map?;
+      final stats = <String, Map<String, int>>{};
+      if (statsRaw != null) {
+        statsRaw.forEach((pin, s) {
+          final m = s as Map<String, dynamic>;
+          stats[pin.toString()] = {
+            'existing':  (m['existing']  as int?) ?? 0,
+            'assign':    (m['assign']    as int?) ?? 0,
+            'remaining': (m['remaining'] as int?) ?? 0,
+          };
+        });
+      }
+
+      final plansRaw = futures[1]['data'] as List? ?? [];
+      final beatPlans = <String, Map<String, dynamic>>{};
+      for (final p in plansRaw) {
+        final m = Map<String, dynamic>.from(p as Map);
+        beatPlans[m['account_id'] as String] = m;
+      }
+
+      setState(() {
+        _groups    = groups;
+        _stats     = stats;
+        _beatPlans = beatPlans;
+        _loading   = false;
+      });
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = 'Failed to load data. Tap refresh to retry.'; });
     }
@@ -158,9 +196,9 @@ class _AllottedCustomerAccountsScreenState
 
   Map<String, int> get _globalDayBreak {
     final counts = {for (final d in _dayOrder) d: 0};
-    for (final g in _groups) {
-      for (final a in (g['accounts'] as List<Map<String, dynamic>>)) {
-        final days = a['assignedDays'];
+    for (final plan in _beatPlans.values) {
+      if ((plan['frequency'] as String?) == 'weekly') {
+        final days = plan['days'];
         if (days is List) {
           for (final d in days) {
             final key = d.toString();
@@ -234,12 +272,80 @@ class _AllottedCustomerAccountsScreenState
 
   // ── Build ─────────────────────────────────────────────────────────────────────
 
+  Future<void> _unassignSelected() async {
+    final accountIds = _groups
+        .expand((g) => (g['accounts'] as List<Map<String, dynamic>>))
+        .where((a) => _selected.contains(_key(a)))
+        .map((a) => a['id'] as String? ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList();
+
+    if (accountIds.isEmpty) return;
+    setState(() => _actionLoading = true);
+    final ok = await ApiService.unassignBeatPlanBulk(accountIds);
+    if (!mounted) return;
+    setState(() { _actionLoading = false; _selected.clear(); });
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Beat plan removed'),
+        backgroundColor: Colors.orange,
+      ));
+      _load();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Failed to unassign. Try again.'),
+        backgroundColor: Colors.red,
+      ));
+    }
+  }
+
   Future<void> _showAssignDayDialog() async {
-    await showDialog(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _AssignDayDialog(selectedCount: _selected.length),
     );
+    if (result == null || !mounted) return;
+
+    final frequency   = result['frequency'] as String;
+    final days        = (result['days']       as List?)?.cast<String>();
+    final monthDate   = result['month_date']  as int?;
+    final intervalDays= result['interval_days']as int?;
+    final startDate   = result['start_date']  as String?;
+
+    final accountIds = _groups
+        .expand((g) => (g['accounts'] as List<Map<String, dynamic>>))
+        .where((a) => _selected.contains(_key(a)))
+        .map((a) => a['id'] as String? ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList();
+
+    if (accountIds.isEmpty) return;
+
+    if (mounted) setState(() => _actionLoading = true);
+    final res = await ApiService.assignBeatPlan(
+      accountIds:   accountIds,
+      frequency:    frequency,
+      days:         days,
+      monthDate:    monthDate,
+      intervalDays: intervalDays,
+      startDate:    startDate,
+    );
+    if (!mounted) return;
+    setState(() { _actionLoading = false; _selected.clear(); });
+
+    if (res != null && res['success'] == true) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(res['message']?.toString() ?? 'Beat plan assigned'),
+        backgroundColor: const Color(0xFF43A047),
+      ));
+      _load(); // refresh stats
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Failed to assign beat plan. Try again.'),
+        backgroundColor: Colors.red,
+      ));
+    }
   }
 
   @override
@@ -252,8 +358,12 @@ class _AllottedCustomerAccountsScreenState
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
-          IconButton(icon: const Icon(Icons.info_outline_rounded), onPressed: () {}),
-          IconButton(icon: const Icon(Icons.refresh_rounded),      onPressed: _load),
+          IconButton(
+            icon: const Icon(Icons.calendar_view_week_rounded),
+            tooltip: 'Assignment View',
+            onPressed: () => context.push('/assignment-view'),
+          ),
+          IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load),
         ],
       ),
       body: _loading
@@ -364,9 +474,12 @@ class _AllottedCustomerAccountsScreenState
             final filtered = _filtered(accounts);
             final isOpen   = _expanded.contains(pin);
             final selCount = accounts.where((a) => _selected.contains(_key(a))).length;
+            final s = _stats[pin];
             return _PincodeSection(
               pincode:   pin,
-              total:     accounts.length,
+              existing:  s?['existing']  ?? accounts.length,
+              assign:    s?['assign']    ?? 0,
+              remaining: s?['remaining'] ?? accounts.length,
               selected:  selCount,
               expanded:  isOpen,
               onToggle:  () => setState(() => isOpen ? _expanded.remove(pin) : _expanded.add(pin)),
@@ -375,8 +488,9 @@ class _AllottedCustomerAccountsScreenState
               onSelectN:   () => _selectNIn(accounts),
               filteredAccounts: filtered,
               selectedKeys: _selected,
-              keyOf:     _key,
+              keyOf:        _key,
               onToggleAccount: _toggleSelect,
+              beatPlans:    _beatPlans,
             );
           }),
 
@@ -386,7 +500,8 @@ class _AllottedCustomerAccountsScreenState
   }
 
   Widget _buildBottomBar() => Container(
-    padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+    padding: EdgeInsets.fromLTRB(
+        16, 10, 16, 16 + MediaQuery.of(context).padding.bottom),
     decoration: const BoxDecoration(
       color: Colors.white,
       boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, -2))],
@@ -397,7 +512,7 @@ class _AllottedCustomerAccountsScreenState
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
         const Spacer(),
         OutlinedButton.icon(
-          onPressed: _selected.isEmpty ? null : () => setState(() => _selected.clear()),
+          onPressed: (_selected.isEmpty || _actionLoading) ? null : _unassignSelected,
           icon: const Icon(Icons.remove_circle_outline_rounded, size: 15),
           label: const Text('Unassign', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           style: OutlinedButton.styleFrom(
@@ -410,8 +525,11 @@ class _AllottedCustomerAccountsScreenState
         ),
         const SizedBox(width: 10),
         ElevatedButton.icon(
-          onPressed: _selected.isEmpty ? null : _showAssignDayDialog,
-          icon: const Icon(Icons.save_rounded, size: 15),
+          onPressed: (_selected.isEmpty || _actionLoading) ? null : _showAssignDayDialog,
+          icon: _actionLoading
+              ? const SizedBox(width: 15, height: 15,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.save_rounded, size: 15),
           label: const Text('Assign Day', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           style: ElevatedButton.styleFrom(
             backgroundColor: _gold,
@@ -428,9 +546,11 @@ class _AllottedCustomerAccountsScreenState
 
 // ── Pincode section ───────────────────────────────────────────────────────────
 
-class _PincodeSection extends StatelessWidget {
+class _PincodeSection extends StatefulWidget {
   final String                       pincode;
-  final int                          total;
+  final int                          existing;
+  final int                          assign;
+  final int                          remaining;
   final int                          selected;
   final bool                         expanded;
   final VoidCallback                 onToggle;
@@ -441,10 +561,13 @@ class _PincodeSection extends StatelessWidget {
   final Set<String>                  selectedKeys;
   final String Function(Map<String, dynamic>) keyOf;
   final void Function(String)        onToggleAccount;
+  final Map<String, Map<String, dynamic>> beatPlans;
 
   const _PincodeSection({
     required this.pincode,
-    required this.total,
+    required this.existing,
+    required this.assign,
+    required this.remaining,
     required this.selected,
     required this.expanded,
     required this.onToggle,
@@ -455,10 +578,76 @@ class _PincodeSection extends StatelessWidget {
     required this.selectedKeys,
     required this.keyOf,
     required this.onToggleAccount,
+    required this.beatPlans,
   });
 
   @override
+  State<_PincodeSection> createState() => _PincodeSectionState();
+}
+
+class _PincodeSectionState extends State<_PincodeSection> {
+  // active filter: 'existing' (all) | 'assign' | 'remaining' | 'selected'
+  String _filter = 'existing';
+
+  static const _dayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  bool _hasPlan(Map<String, dynamic> a) =>
+      widget.beatPlans.containsKey(a['id'] as String? ?? '');
+
+  // Per-pincode breakdown: weekly day counts + monthly/n_days totals
+  // for this pincode's assigned accounts.
+  Map<String, int> get _dayBreak {
+    final counts = {for (final d in _dayOrder) d: 0};
+    var monthly = 0;
+    var nDays   = 0;
+    for (final a in widget.filteredAccounts) {
+      final plan = widget.beatPlans[a['id'] as String? ?? ''];
+      if (plan == null) continue;
+      switch (plan['frequency'] as String?) {
+        case 'weekly':
+          final days = plan['days'];
+          if (days is List) {
+            for (final d in days) {
+              final key = d.toString();
+              if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
+            }
+          }
+        case 'monthly':
+          monthly++;
+        case 'n_days':
+          nDays++;
+      }
+    }
+    counts['Monthly'] = monthly;
+    counts['N-Days']  = nDays;
+    return counts;
+  }
+
+  List<Map<String, dynamic>> get _visibleAccounts {
+    switch (_filter) {
+      case 'assign':
+        return widget.filteredAccounts.where(_hasPlan).toList();
+      case 'remaining':
+        return widget.filteredAccounts.where((a) => !_hasPlan(a)).toList();
+      case 'selected':
+        return widget.filteredAccounts
+            .where((a) => widget.selectedKeys.contains(widget.keyOf(a)))
+            .toList();
+      default:
+        return widget.filteredAccounts;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final pincode          = widget.pincode;
+    final expanded         = widget.expanded;
+    final beatPlans        = widget.beatPlans;
+    final selectedKeys     = widget.selectedKeys;
+    final keyOf            = widget.keyOf;
+    final onToggleAccount  = widget.onToggleAccount;
+    final visibleAccounts  = _visibleAccounts;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
@@ -471,68 +660,121 @@ class _PincodeSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header
-          InkWell(
-            onTap: onToggle,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(pincode,
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 6, runSpacing: 4,
-                          children: [
-                            _StatChip(label: 'Existing: $total'),
-                            _StatChip(label: 'Assign: $total'),
-                            _StatChip(label: 'Remaining: 0'),
-                            _StatChip(label: 'Selected: $selected'),
-                          ],
-                        ),
-                      ],
-                    ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 10, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Pincode + expand toggle
+                InkWell(
+                  onTap: widget.onToggle,
+                  child: Row(
+                    children: [
+                      Text(pincode,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                      const Spacer(),
+                      Icon(expanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                          color: Colors.black45),
+                    ],
                   ),
-                  Icon(expanded
-                      ? Icons.keyboard_arrow_up_rounded
-                      : Icons.keyboard_arrow_down_rounded,
-                      color: Colors.black45),
-                ],
-              ),
+                ),
+                const SizedBox(height: 8),
+                // Clickable filter buttons — single row
+                Row(
+                  children: [
+                    Expanded(child: _FilterBtn(
+                      label: 'Existing', count: widget.existing,
+                      active: _filter == 'existing',
+                      onTap: () => setState(() { _filter = 'existing'; if (!expanded) widget.onToggle(); }),
+                    )),
+                    const SizedBox(width: 5),
+                    Expanded(child: _FilterBtn(
+                      label: 'Assign', count: widget.assign,
+                      active: _filter == 'assign',
+                      onTap: () => setState(() { _filter = 'assign'; if (!expanded) widget.onToggle(); }),
+                    )),
+                    const SizedBox(width: 5),
+                    Expanded(child: _FilterBtn(
+                      label: 'Remaining', count: widget.remaining,
+                      active: _filter == 'remaining',
+                      onTap: () => setState(() { _filter = 'remaining'; if (!expanded) widget.onToggle(); }),
+                    )),
+                    const SizedBox(width: 5),
+                    Expanded(child: _FilterBtn(
+                      label: 'Selected', count: widget.selected,
+                      active: _filter == 'selected',
+                      onTap: () => setState(() { _filter = 'selected'; if (!expanded) widget.onToggle(); }),
+                    )),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                // Per-pincode day breakdown
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: () {
+                      final db = _dayBreak;
+                      // weekdays always shown, then Monthly/N-Days only if > 0
+                      final keys = [
+                        ..._dayOrder,
+                        if ((db['Monthly'] ?? 0) > 0) 'Monthly',
+                        if ((db['N-Days'] ?? 0) > 0) 'N-Days',
+                      ];
+                      final items = <Widget>[];
+                      for (var i = 0; i < keys.length; i++) {
+                        final k = keys[i];
+                        final n = db[k] ?? 0;
+                        items.add(Text('$k:$n',
+                            style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: n > 0 ? FontWeight.w700 : FontWeight.w500,
+                                color: n > 0 ? const Color(0xFF2E7D32) : Colors.grey.shade500)));
+                        if (i < keys.length - 1) {
+                          items.add(Text('  |  ',
+                              style: TextStyle(fontSize: 10.5, color: Colors.grey.shade300)));
+                        }
+                      }
+                      return items;
+                    }(),
+                  ),
+                ),
+              ],
             ),
           ),
 
           // Expanded body
           if (expanded) ...[
             const Divider(height: 1),
-            if (filteredAccounts.isNotEmpty)
+            if (visibleAccounts.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                 child: Row(
                   children: [
-                    _SelectBtn(icon: Icons.check_box_rounded,              label: 'Select All',  onTap: onSelectAll),
+                    _SelectBtn(icon: Icons.check_box_rounded,              label: 'Select All',  onTap: widget.onSelectAll),
                     const SizedBox(width: 8),
-                    _SelectBtn(icon: Icons.check_box_outline_blank_rounded, label: 'Unselect All', onTap: onClearAll),
+                    _SelectBtn(icon: Icons.check_box_outline_blank_rounded, label: 'Unselect All', onTap: widget.onClearAll),
                     const SizedBox(width: 8),
-                    _SelectBtn(icon: Icons.format_list_numbered_rounded,   label: 'Select N',    onTap: onSelectN),
+                    _SelectBtn(icon: Icons.format_list_numbered_rounded,   label: 'Select N',    onTap: widget.onSelectN),
                   ],
                 ),
               ),
-            ...filteredAccounts.map((a) => _AccountCard(
+            ...visibleAccounts.map((a) => _AccountCard(
               account:    a,
               isSelected: selectedKeys.contains(keyOf(a)),
               onCheckTap: () => onToggleAccount(keyOf(a)),
+              plan:       beatPlans[a['id'] as String? ?? ''],
             )),
-            if (filteredAccounts.isEmpty)
+            if (visibleAccounts.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 18),
                 child: Center(
-                  child: Text('No accounts found',
-                      style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
+                  child: Text(
+                    _filter == 'existing'
+                        ? 'No accounts found'
+                        : 'No "$_filter" accounts in this pincode',
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
                 ),
               ),
             const SizedBox(height: 6),
@@ -546,15 +788,36 @@ class _PincodeSection extends StatelessWidget {
 // ── Account card ──────────────────────────────────────────────────────────────
 
 class _AccountCard extends StatelessWidget {
-  final Map<String, dynamic> account;
-  final bool                 isSelected;
-  final VoidCallback         onCheckTap; // checkbox toggle
+  final Map<String, dynamic>  account;
+  final bool                  isSelected;
+  final VoidCallback          onCheckTap; // checkbox toggle
+  final Map<String, dynamic>? plan;       // active beat plan, if any
 
   const _AccountCard({
     required this.account,
     required this.isSelected,
     required this.onCheckTap,
+    this.plan,
   });
+
+  // Build a short human label for the active plan
+  String? get _planLabel {
+    final p = plan;
+    if (p == null) return null;
+    switch (p['frequency'] as String?) {
+      case 'weekly':
+        final days = (p['days'] as List?)?.cast<dynamic>() ?? [];
+        return days.isEmpty ? null : days.join(', ');
+      case 'monthly':
+        final d = p['month_date'];
+        return d == null ? null : 'Day $d/month';
+      case 'n_days':
+        final n = p['interval_days'];
+        return n == null ? null : 'Every $n days';
+      default:
+        return null;
+    }
+  }
 
   Future<void> _launch(String url) async {
     final uri = Uri.parse(url);
@@ -618,6 +881,28 @@ class _AccountCard extends StatelessWidget {
             if (area.isNotEmpty)
               Text('Main area : $area',
                   style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+            // Assigned beat-plan chip
+            if (_planLabel != null) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF43A047).withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFF43A047).withValues(alpha: 0.30)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.event_repeat_rounded, size: 12, color: Color(0xFF2E7D32)),
+                    const SizedBox(width: 4),
+                    Text(_planLabel!,
+                        style: const TextStyle(
+                            fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF2E7D32))),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             // Checkbox + phone + call + whatsapp
             Row(
@@ -685,20 +970,54 @@ class _AccountCard extends StatelessWidget {
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
-class _StatChip extends StatelessWidget {
-  final String label;
-  const _StatChip({required this.label});
+class _FilterBtn extends StatelessWidget {
+  final String       label;
+  final int          count;
+  final bool         active;
+  final VoidCallback onTap;
+  const _FilterBtn({
+    required this.label,
+    required this.count,
+    required this.active,
+    required this.onTap,
+  });
+
+  static const _gold = Color(0xFFD7BE69);
+
   @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+  Widget build(BuildContext context) {
+    final fg = active ? const Color(0xFF8A6D1B) : Colors.black87;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
         decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.grey.shade300),
+          color: active ? _gold.withValues(alpha: 0.18) : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+              color: active ? _gold : Colors.grey.shade300,
+              width: active ? 1.5 : 1),
         ),
-        child: Text(label,
-            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.black87)),
-      );
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 8.5, fontWeight: FontWeight.w600, color: fg)),
+            ),
+            const SizedBox(width: 2),
+            Text('$count',
+                style: TextStyle(
+                    fontSize: 11, fontWeight: FontWeight.w800, color: fg)),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _SelectBtn extends StatelessWidget {
@@ -737,140 +1056,273 @@ class _AssignDayDialog extends StatefulWidget {
 
 class _AssignDayDialogState extends State<_AssignDayDialog> {
   static const _gold = Color(0xFFD7BE69);
-  static const _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  static const _allDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-  final Set<String> _selectedDays = {};
-  String _frequency = 'Weekly'; // Weekly | Monthly | Recurring Day (After N Days)
-  final _nCtrl = TextEditingController();
+  // frequency: 'weekly' | 'monthly' | 'n_days'
+  String          _frequency    = 'weekly';
+  final Set<String> _days       = {};         // weekly
+  final _monthCtrl = TextEditingController(); // monthly: 1-31
+  final _nCtrl     = TextEditingController(); // n_days: interval
+  DateTime?       _startDate;                // n_days: anchor date
 
   @override
   void dispose() {
+    _monthCtrl.dispose();
     _nCtrl.dispose();
     super.dispose();
+  }
+
+  bool get _canSubmit {
+    switch (_frequency) {
+      case 'weekly':  return _days.isNotEmpty;
+      case 'monthly': final v = int.tryParse(_monthCtrl.text.trim()); return v != null && v >= 1 && v <= 31;
+      case 'n_days':  final n = int.tryParse(_nCtrl.text.trim()); return n != null && n >= 1 && _startDate != null;
+      default:        return false;
+    }
+  }
+
+  void _submit() {
+    if (!_canSubmit) return;
+    switch (_frequency) {
+      case 'weekly':
+        Navigator.pop(context, {'frequency': 'weekly', 'days': _days.toList()});
+      case 'monthly':
+        Navigator.pop(context, {'frequency': 'monthly', 'month_date': int.parse(_monthCtrl.text.trim())});
+      case 'n_days':
+        Navigator.pop(context, {
+          'frequency':    'n_days',
+          'interval_days': int.parse(_nCtrl.text.trim()),
+          'start_date':   _startDate!.toIso8601String().substring(0, 10),
+        });
+    }
+  }
+
+  Future<void> _pickStartDate() async {
+    final picked = await showDatePicker(
+      context:      context,
+      initialDate:  _startDate ?? DateTime.now(),
+      firstDate:    DateTime.now(),
+      lastDate:     DateTime.now().add(const Duration(days: 365)),
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: const ColorScheme.light(primary: _gold),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked != null) setState(() => _startDate = picked);
   }
 
   @override
   Widget build(BuildContext context) {
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 40),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Title
-            const Text('Assign Day',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 14),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Title + count
+              Row(children: [
+                const Text('Assign Day',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _gold.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text('${widget.selectedCount} accounts',
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _gold)),
+                ),
+              ]),
+              const SizedBox(height: 14),
 
-            // Day checkboxes
-            ..._days.map((d) => InkWell(
-              onTap: () => setState(() =>
-                  _selectedDays.contains(d) ? _selectedDays.remove(d) : _selectedDays.add(d)),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 24, height: 24,
-                      child: Checkbox(
-                        value: _selectedDays.contains(d),
-                        activeColor: _gold,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                        onChanged: (v) => setState(() =>
-                            v == true ? _selectedDays.add(d) : _selectedDays.remove(d)),
+              // ── Frequency selector ─────────────────────────────────────────
+              RadioGroup<String>(
+                groupValue: _frequency,
+                onChanged: (v) { if (v != null) setState(() => _frequency = v); },
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _FreqRadio(value: 'weekly',  label: 'Weekly',  freq: _frequency, onTap: () => setState(() => _frequency = 'weekly')),
+                      const SizedBox(width: 4),
+                      _FreqRadio(value: 'monthly', label: 'Monthly', freq: _frequency, onTap: () => setState(() => _frequency = 'monthly')),
+                      const SizedBox(width: 4),
+                      _FreqRadio(value: 'n_days',  label: 'N Days',  freq: _frequency, onTap: () => setState(() => _frequency = 'n_days')),
+                    ],
+                  ),
+                ),
+              ),
+
+              const Divider(height: 20),
+
+              // ── Weekly body ────────────────────────────────────────────────
+              if (_frequency == 'weekly') ...[
+                const Text('Select days of the week:',
+                    style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8, runSpacing: 8,
+                  children: _allDays.map((d) {
+                    final on = _days.contains(d);
+                    return GestureDetector(
+                      onTap: () => setState(() => on ? _days.remove(d) : _days.add(d)),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: on ? _gold : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: on ? _gold : Colors.grey.shade300),
+                        ),
+                        child: Text(d,
+                            style: TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w600,
+                              color: on ? Colors.white : Colors.black54,
+                            )),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(d, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-                  ],
-                ),
-              ),
-            )),
-
-            const Divider(height: 20),
-
-            // Frequency radio buttons
-            RadioGroup<String>(
-              groupValue: _frequency,
-              onChanged: (v) { if (v != null) setState(() => _frequency = v); },
-              child: Column(
-                children: ['Weekly', 'Monthly', 'Recurring Day (After N Days)'].map((f) =>
-                  InkWell(
-                    onTap: () => setState(() => _frequency = f),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 5),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 24, height: 24,
-                            child: Radio<String>(value: f, activeColor: _gold),
-                          ),
-                          const SizedBox(width: 12),
-                          Text(f, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-                        ],
-                      ),
-                    ),
-                  ),
-                ).toList(),
-              ),
-            ),
-
-            // N days input (only for Recurring)
-            if (_frequency == 'Recurring Day (After N Days)') ...[
-              const SizedBox(height: 8),
-              TextField(
-                controller: _nCtrl,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  hintText: 'Enter number of days',
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: _gold, width: 2),
-                  ),
-                ),
-              ),
-            ],
-
-            const SizedBox(height: 16),
-
-            // Actions
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel', style: TextStyle(color: Colors.grey, fontSize: 14)),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _gold,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                  ),
-                  onPressed: () {
-                    if (_selectedDays.isEmpty) return;
-                    Navigator.pop(context, {
-                      'days':      _selectedDays.toList(),
-                      'frequency': _frequency,
-                      if (_frequency == 'Recurring Day (After N Days)')
-                        'n': int.tryParse(_nCtrl.text.trim()),
-                    });
-                  },
-                  child: const Text('Ok', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                    );
+                  }).toList(),
                 ),
               ],
-            ),
-          ],
+
+              // ── Monthly body ───────────────────────────────────────────────
+              if (_frequency == 'monthly') ...[
+                const Text('Day of month (1 – 31):',
+                    style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _monthCtrl,
+                  keyboardType: TextInputType.number,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'e.g. 5  →  5th of every month',
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: _gold, width: 2),
+                    ),
+                  ),
+                ),
+              ],
+
+              // ── N Days body ────────────────────────────────────────────────
+              if (_frequency == 'n_days') ...[
+                const Text('Repeat every N days:',
+                    style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _nCtrl,
+                  keyboardType: TextInputType.number,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'e.g. 7  →  every 7 days',
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: _gold, width: 2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text('Start date:',
+                    style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 6),
+                InkWell(
+                  onTap: _pickStartDate,
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                          color: _startDate != null ? _gold : Colors.grey.shade400),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(children: [
+                      Icon(Icons.calendar_today_rounded, size: 16,
+                          color: _startDate != null ? _gold : Colors.grey),
+                      const SizedBox(width: 8),
+                      Text(
+                        _startDate != null
+                            ? '${_startDate!.day.toString().padLeft(2,'0')}/'
+                              '${_startDate!.month.toString().padLeft(2,'0')}/'
+                              '${_startDate!.year}'
+                            : 'Pick a start date',
+                        style: TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w500,
+                          color: _startDate != null ? Colors.black87 : Colors.grey,
+                        ),
+                      ),
+                    ]),
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 20),
+
+              // ── Actions ────────────────────────────────────────────────────
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel',
+                        style: TextStyle(color: Colors.grey, fontSize: 14)),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _canSubmit ? _gold : Colors.grey.shade300,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 24, vertical: 10),
+                    ),
+                    onPressed: _canSubmit ? _submit : null,
+                    child: const Text('Ok',
+                        style: TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _FreqRadio extends StatelessWidget {
+  final String value, label, freq;
+  final VoidCallback onTap;
+  const _FreqRadio({required this.value, required this.label, required this.freq, required this.onTap});
+
+  static const _gold = Color(0xFFD7BE69);
+
+  @override
+  Widget build(BuildContext context) {
+    final on = freq == value;
+    return GestureDetector(
+      onTap: onTap,
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Radio<String>(value: value, activeColor: _gold),
+        Text(label,
+            style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w600,
+              color: on ? _gold : Colors.black54,
+            )),
+      ]),
     );
   }
 }

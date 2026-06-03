@@ -9,6 +9,7 @@ use App\Http\Controllers\AreaController;
 use App\Http\Controllers\AreaAssignController;
 use App\Http\Controllers\InchargeAssignController;
 use App\Http\Controllers\AttendanceController;
+use App\Http\Controllers\BeatPlanController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -105,4 +106,18 @@ Route::prefix('incharge-assign')->group(function () {
     Route::get('/{headInchargeId}',    [InchargeAssignController::class, 'show']);
     Route::post('/{headInchargeId}',   [InchargeAssignController::class, 'save']);
     Route::delete('/{headInchargeId}', [InchargeAssignController::class, 'destroy']);
+});
+
+// ---------------------------------------------------------------------------
+// Beat Plan (salesman self-assigns accounts to recurring schedule)
+// ---------------------------------------------------------------------------
+Route::prefix('beat-plan')->group(function () {
+    Route::get('/my-plans',         [BeatPlanController::class, 'myPlans']);
+    Route::post('/assign',          [BeatPlanController::class, 'assign']);
+    Route::post('/unassign-bulk',   [BeatPlanController::class, 'unassignBulk']);
+    Route::get('/today',            [BeatPlanController::class, 'today']);
+    Route::get('/week',             [BeatPlanController::class, 'week']);
+    Route::get('/stats',            [BeatPlanController::class, 'accountStats']);
+    Route::delete('/{id}',          [BeatPlanController::class, 'unassign']);
+    Route::post('/{id}/visit',      [BeatPlanController::class, 'recordVisit']);
 });

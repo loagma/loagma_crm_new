@@ -994,4 +994,134 @@ class ApiService {
     }
     return {'success': false, 'data': <dynamic>[]};
   }
+
+  // ── Beat Plan ───────────────────────────────────────────────────────────────
+
+  static Future<Map<String, dynamic>> getMyBeatPlans() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/my-plans');
+    try {
+      final res = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('getMyBeatPlans error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  static Future<Map<String, dynamic>?> assignBeatPlan({
+    required List<String> accountIds,
+    required String frequency,         // 'weekly' | 'monthly' | 'n_days'
+    List<String>? days,                // weekly only
+    int? monthDate,                    // monthly only
+    int? intervalDays,                 // n_days only
+    String? startDate,                 // n_days only (YYYY-MM-DD)
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/assign');
+    try {
+      final body = <String, dynamic>{
+        'account_ids': accountIds,
+        'frequency':   frequency,
+        if (days != null)         'days':          days,
+        if (monthDate != null)    'month_date':    monthDate,
+        if (intervalDays != null) 'interval_days': intervalDays,
+        if (startDate != null)    'start_date':    startDate,
+      };
+      final res = await http.post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+      print('assignBeatPlan status ${res.statusCode}: ${res.body}');
+    } catch (e) {
+      print('assignBeatPlan error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>> getTodayBeatPlan() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/today');
+    try {
+      final res = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+      return decoded;
+    } catch (e) {
+      print('getTodayBeatPlan error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  static Future<Map<String, dynamic>> getWeekBeatPlan({String? date, String? weekOf}) async {
+    var uri = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/week');
+    final qp = <String, String>{
+      if (date != null) 'date': date,
+      if (weekOf != null) 'week_of': weekOf,
+    };
+    if (qp.isNotEmpty) uri = uri.replace(queryParameters: qp);
+    try {
+      final res = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('getWeekBeatPlan error: $e');
+    }
+    return {'success': false, 'days': <dynamic>{}};
+  }
+
+  static Future<Map<String, dynamic>> getBeatPlanStats({
+    required List<int> areaIds,
+    List<String>? pincodes,
+  }) async {
+    var uri = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/stats');
+    final extra = [
+      ...areaIds.map((id) => 'area_ids[]=$id'),
+      if (pincodes != null) ...pincodes.map((p) => 'pincodes[]=${Uri.encodeQueryComponent(p)}'),
+    ].join('&');
+    if (extra.isNotEmpty) uri = Uri.parse('${uri.toString()}?$extra');
+    try {
+      final res = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('getBeatPlanStats error: $e');
+    }
+    return {'success': false, 'data': <dynamic>{}};
+  }
+
+  static Future<bool> unassignBeatPlanBulk(List<String> accountIds) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/unassign-bulk');
+    try {
+      final res = await http.post(url,
+          headers: _authHeaders,
+          body: jsonEncode({'account_ids': accountIds}))
+          .timeout(const Duration(seconds: 15));
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (e) {
+      print('unassignBeatPlanBulk error: $e');
+    }
+    return false;
+  }
+
+  static Future<bool> deleteBeatPlan(int id) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/$id');
+    try {
+      final res = await http.delete(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (e) {
+      print('deleteBeatPlan error: $e');
+    }
+    return false;
+  }
+
+  static Future<bool> recordBeatPlanVisit(int id, {String? notes}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/$id/visit');
+    try {
+      final body = <String, dynamic>{
+        if (notes != null && notes.isNotEmpty) 'notes': notes,
+      };
+      final res = await http.post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 12));
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (e) {
+      print('recordBeatPlanVisit error: $e');
+    }
+    return false;
+  }
 }

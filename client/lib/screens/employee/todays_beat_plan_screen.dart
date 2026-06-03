@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../services/api_service.dart';
 
 class TodaysBeatPlanScreen extends StatefulWidget {
   const TodaysBeatPlanScreen({super.key});
@@ -10,21 +14,39 @@ class TodaysBeatPlanScreen extends StatefulWidget {
 class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
   static const _gold = Color(0xFFD7BE69);
 
-  static const _customers = [
-    {'code': '00026040073', 'name': 'Elite Kirana Store',      'salesman': 'Siddharth Jain', 'address': 'Chirag Ali Lane',           'area': 'Abids',        'pin': '500001', 'phone': '9848101015', 'day': 'Monday', 'freq': 'WEEKLY'},
-    {'code': '00026040069', 'name': 'Ganesh Kirana Emporium',  'salesman': 'Ganesh Ram',      'address': 'Boggulkunta Cross Road',     'area': 'Abids',        'pin': '500001', 'phone': '9848101011', 'day': 'Monday', 'freq': 'WEEKLY'},
-    {'code': '00026040064', 'name': 'Metro Kirana Mart',       'salesman': 'Prakash Jha',     'address': 'Jagdish Market Area',        'area': 'Abids',        'pin': '500001', 'phone': '9848101006', 'day': 'Monday', 'freq': 'WEEKLY'},
-    {'code': '00026040058', 'name': 'Laxmi General Store',     'salesman': 'Ramesh Kumar',    'address': 'MG Road, Near Bus Stand',    'area': 'Abids',        'pin': '500001', 'phone': '9848101002', 'day': 'Monday', 'freq': 'WEEKLY'},
-    {'code': '00026040055', 'name': 'Shri Balaji Provisions',  'salesman': 'Suresh Verma',    'address': 'Sultan Bazar, Shop 12',      'area': 'Sultan Bazar', 'pin': '500095', 'phone': '9848101008', 'day': 'Monday', 'freq': 'BI-WEEKLY'},
-    {'code': '00026040051', 'name': 'New India Mart',          'salesman': 'Vijay Singh',     'address': 'Nampally Station Road',      'area': 'Nampally',     'pin': '500001', 'phone': '9848101014', 'day': 'Monday', 'freq': 'WEEKLY'},
-    {'code': '00026040047', 'name': 'Hari Om Superstore',      'salesman': 'Deepak Rao',      'address': 'Near Charminar Gate',        'area': 'Charminar',    'pin': '500002', 'phone': '9848101020', 'day': 'Monday', 'freq': 'WEEKLY'},
-    {'code': '00026040043', 'name': 'Radha Swami Grocers',     'salesman': 'Ankit Sharma',    'address': 'Laad Bazaar Lane 3',         'area': 'Charminar',    'pin': '500002', 'phone': '9848101033', 'day': 'Monday', 'freq': 'MONTHLY'},
-    {'code': '00026040039', 'name': 'Sunrise Daily Needs',     'salesman': 'Kiran Patel',     'address': 'Secunderabad Main Road',     'area': 'Secunderabad', 'pin': '500003', 'phone': '9848101041', 'day': 'Monday', 'freq': 'WEEKLY'},
-    {'code': '00026040035', 'name': 'Mahalaxmi Kirana',        'salesman': 'Suman Desai',     'address': 'Old MLA Quarters, Block B',  'area': 'Begumpet',     'pin': '500016', 'phone': '9848101050', 'day': 'Monday', 'freq': 'WEEKLY'},
-    {'code': '00026040031', 'name': 'Bharat Super Mart',       'salesman': 'Arun Nair',       'address': 'Himayat Nagar Cross Road',   'area': 'Himayat Nagar','pin': '500029', 'phone': '9848101062', 'day': 'Monday', 'freq': 'WEEKLY'},
-    {'code': '00026040027', 'name': 'City Provisions Centre',  'salesman': 'Nilesh Joshi',    'address': 'Ameerpet, Shop 7',           'area': 'Ameerpet',     'pin': '500016', 'phone': '9848101077', 'day': 'Monday', 'freq': 'BI-WEEKLY'},
-    {'code': '00026040022', 'name': 'Sai Baba Store',          'salesman': 'Mohan Pillai',    'address': 'SR Nagar, 2nd Lane',         'area': 'SR Nagar',     'pin': '500038', 'phone': '9848101090', 'day': 'Monday', 'freq': 'WEEKLY'},
-  ];
+  bool   _loading = true;
+  String _error   = '';
+  int    _total   = 0;
+  List<Map<String, dynamic>> _items = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = ''; });
+    try {
+      final res = await ApiService.getTodayBeatPlan();
+      if (!mounted) return;
+      if (res['success'] == true) {
+        final raw = res['data'];
+        final items = raw is List
+            ? raw.map((e) => Map<String, dynamic>.from(e as Map)).toList()
+            : <Map<String, dynamic>>[];
+        setState(() {
+          _items   = items;
+          _total   = (res['total'] as int?) ?? items.length;
+          _loading = false;
+        });
+      } else {
+        setState(() { _loading = false; _error = 'Failed to load beat plan.'; });
+      }
+    } catch (e) {
+      if (mounted) setState(() { _loading = false; _error = 'Error loading beat plan.'; });
+    }
+  }
 
   String get _todayLabel {
     final now = DateTime.now();
@@ -44,203 +66,333 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
-          IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: () {}),
+          IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
-        children: [
-          // Summary card
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 2))],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: _gold))
+          : _error.isNotEmpty
+              ? Center(child: Text(_error,
+                    style: const TextStyle(color: Colors.red)))
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
                   children: [
-                    const Text('Today Beat Plan',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-                    const Spacer(),
-                    Text(_todayLabel,
-                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    _Chip(label: 'Total Planned: ${_customers.length}', color: const Color(0xFF1976D2)),
-                    const SizedBox(width: 8),
-                    _Chip(label: 'Shown: ${_customers.length}', color: const Color(0xFF43A047)),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: () {},
-                      icon: const Icon(Icons.map_outlined, size: 13),
-                      label: const Text('Show in Map', style: TextStyle(fontSize: 11)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.blueGrey,
-                        side: BorderSide(color: Colors.blueGrey.shade400),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    // Summary card
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: const [BoxShadow(
+                            color: Colors.black12, blurRadius: 6,
+                            offset: Offset(0, 2))],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            const Text('Today Beat Plan',
+                                style: TextStyle(
+                                    fontSize: 15, fontWeight: FontWeight.w700)),
+                            const Spacer(),
+                            Text(_todayLabel,
+                                style: TextStyle(
+                                    fontSize: 12, color: Colors.grey.shade600)),
+                          ]),
+                          const SizedBox(height: 10),
+                          Row(children: [
+                            _Chip(label: 'Total Planned: $_total',
+                                color: const Color(0xFF1976D2)),
+                            const SizedBox(width: 8),
+                            _Chip(
+                                label: 'Shown: ${_items.length}',
+                                color: const Color(0xFF43A047)),
+                            const SizedBox(width: 8),
+                            OutlinedButton.icon(
+                              onPressed: () {},
+                              icon: const Icon(Icons.map_outlined, size: 13),
+                              label: const Text('Show in Map',
+                                  style: TextStyle(fontSize: 11)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.blueGrey,
+                                side: BorderSide(
+                                    color: Colors.blueGrey.shade400),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 5),
+                                minimumSize: Size.zero,
+                                tapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(20)),
+                              ),
+                            ),
+                          ]),
+                        ],
                       ),
                     ),
+                    const SizedBox(height: 12),
+
+                    if (_items.isEmpty)
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 40),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.today_outlined,
+                                  size: 72, color: Colors.grey.shade300),
+                              const SizedBox(height: 14),
+                              Text('No accounts scheduled for today',
+                                  style: TextStyle(
+                                      fontSize: 15,
+                                      color: Colors.grey.shade500)),
+                            ],
+                          ),
+                        ),
+                      )
+                    else
+                      ...List.generate(_items.length, (i) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _CustomerCard(item: _items[i]),
+                      )),
                   ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Customer cards
-          ...List.generate(_customers.length, (i) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _CustomerCard(c: _customers[i]),
-          )),
-        ],
-      ),
     );
   }
 }
 
-// ── Customer Card ─────────────────────────────────────────────────────────────
+// ── Customer card ─────────────────────────────────────────────────────────────
 
 class _CustomerCard extends StatelessWidget {
-  final Map<String, String> c;
-  const _CustomerCard({required this.c});
+  final Map<String, dynamic> item;
+  const _CustomerCard({required this.item});
 
   static const _gold   = Color(0xFFD7BE69);
   static const _cardBg = Color(0xFFFFF0EE);
 
+  Map<String, dynamic> get _account =>
+      (item['account'] as Map<String, dynamic>?) ?? {};
+
+  Future<void> _launch(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) await launchUrl(uri);
+  }
+
+  String _freqLabel(String freq, List<dynamic>? days) {
+    switch (freq) {
+      case 'weekly':
+        final d = days?.cast<dynamic>() ?? [];
+        return d.isEmpty ? 'WEEKLY' : d.join(', ').toUpperCase();
+      case 'monthly':
+        final md = item['month_date'];
+        return md == null ? 'MONTHLY' : 'DAY $md / MONTH';
+      case 'n_days':
+        final n = item['interval_days'];
+        return n == null ? 'RECURRING' : 'EVERY $n DAYS';
+      default:
+        return freq.toUpperCase();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: _cardBg,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFFD8D2)),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
-      ),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Code + day/freq chips
-          Row(
-            children: [
-              Text(c['code']!,
-                  style: const TextStyle(fontSize: 11, color: Colors.grey, letterSpacing: 0.5)),
-              const Spacer(),
-              _Tag(label: c['day']!, bg: Colors.grey.shade300, fg: Colors.black54),
-              const SizedBox(width: 6),
-              _Tag(label: c['freq']!, bg: const Color(0xFFE8F5E9), fg: const Color(0xFF2E7D32)),
-            ],
+    final acc     = _account;
+    final code    = acc['accountCode']   as String? ?? '';
+    final name    = acc['businessName']  as String? ?? '—';
+    final person  = acc['personName']    as String? ?? '';
+    final phone   = acc['contactNumber'] as String? ?? '';
+    final address = acc['address']       as String? ?? '';
+    final area    = acc['area']          as String? ?? '';
+    final pin     = acc['pincode']       as String? ?? '';
+    final freq    = item['frequency']    as String? ?? 'weekly';
+    final days    = item['days']         as List?;
+    final visited = item['visited_today'] == true;
+
+    return GestureDetector(
+      onTap: () {
+        final id = acc['id'] as String?;
+        if (id != null && id.isNotEmpty) {
+          context.push('/lead-accounts/$id', extra: acc);
+        }
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: visited ? const Color(0xFFF0FFF4) : _cardBg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: visited
+                ? const Color(0xFFC8E6C9)
+                : const Color(0xFFFFD8D2),
           ),
-          const SizedBox(height: 6),
-          // Store name + salesman + proceed
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+          boxShadow: const [
+            BoxShadow(color: Colors.black12, blurRadius: 4,
+                offset: Offset(0, 2))
+          ],
+        ),
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Code + freq chip
+            Row(children: [
+              Text(code,
+                  style: const TextStyle(
+                      fontSize: 11, color: Colors.grey,
+                      letterSpacing: 0.5)),
+              const Spacer(),
+              if (visited)
+                _Tag(label: '✓ Visited',
+                    bg: const Color(0xFFE8F5E9),
+                    fg: const Color(0xFF2E7D32))
+              else
+                _Tag(
+                  label: _freqLabel(freq, days),
+                  bg: const Color(0xFFE8F5E9),
+                  fg: const Color(0xFF2E7D32),
+                ),
+            ]),
+            const SizedBox(height: 6),
+            // Name + salesman + proceed
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Expanded(
-                child: Text(c['name']!,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                child: Text(name,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w800)),
               ),
               const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(c['salesman']!,
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: _gold,
-                      borderRadius: BorderRadius.circular(20),
+              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                if (person.isNotEmpty)
+                  Text(person,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                if (!visited)
+                  GestureDetector(
+                    onTap: () => context.push(
+                        '/order-funnel/${acc['id'] ?? ''}',
+                        extra: {
+                          ...acc,
+                          'beat_plan_id':  item['beat_plan_id'],
+                          'frequency':     item['frequency'],
+                          'days':          item['days'],
+                          'month_date':    item['month_date'],
+                          'interval_days': item['interval_days'],
+                        }),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: _gold,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text('Proceed',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white)),
                     ),
-                    child: const Text('Proceed',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)),
                   ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text('Address : ${c['address']}',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-          const SizedBox(height: 2),
-          Text('Main area : ${c['area']}',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-          Text('PIN : ${c['pin']}',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
-          const SizedBox(height: 10),
-          // Phone + action buttons
-          Row(
-            children: [
+              ]),
+            ]),
+            const SizedBox(height: 4),
+            if (address.isNotEmpty)
+              Text('Address : $address',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            if (area.isNotEmpty)
+              Text('Main area : $area',
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600)),
+            if (pin.isNotEmpty)
+              Text('PIN : $pin',
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w500)),
+            const SizedBox(height: 10),
+            // Phone + actions
+            Row(children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 7),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: Colors.grey.shade300),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.phone_rounded, size: 13, color: Colors.grey.shade600),
-                    const SizedBox(width: 5),
-                    Text(c['phone']!,
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                  ],
-                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.phone_rounded, size: 13,
+                      color: Colors.grey.shade600),
+                  const SizedBox(width: 5),
+                  Text(phone,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600)),
+                ]),
               ),
               const Spacer(),
-              _ActionBtn(icon: Icons.visibility_outlined, color: Colors.grey.shade600),
+              _ActionBtn(
+                icon: Icons.visibility_outlined,
+                color: Colors.grey.shade600,
+                onTap: () {
+                  final id = acc['id'] as String?;
+                  if (id != null && id.isNotEmpty) {
+                    context.push('/lead-accounts/$id', extra: acc);
+                  }
+                },
+              ),
               const SizedBox(width: 6),
-              _ActionBtn(icon: Icons.call_rounded,        color: Colors.grey.shade600),
+              _ActionBtn(
+                icon: Icons.call_rounded,
+                color: Colors.grey.shade600,
+                onTap: phone.isNotEmpty
+                    ? () => _launch('tel:$phone')
+                    : null,
+              ),
               const SizedBox(width: 6),
-              _ActionBtn(icon: Icons.chat_rounded,        color: const Color(0xFF25D366)),
+              _ActionBtn(
+                icon: Icons.chat_rounded,
+                color: const Color(0xFF25D366),
+                onTap: phone.isNotEmpty
+                    ? () {
+                        final d = phone.replaceAll(RegExp(r'\D'), '');
+                        final n = d.length == 10 ? '91$d' : d;
+                        _launch('https://wa.me/$n');
+                      }
+                    : null,
+              ),
               const SizedBox(width: 6),
-              _ActionBtn(icon: Icons.map_rounded,         color: const Color(0xFF1565C0)),
-            ],
-          ),
-        ],
+              _ActionBtn(
+                icon: Icons.map_rounded,
+                color: const Color(0xFF1565C0),
+                onTap: (acc['latitude'] != null && acc['longitude'] != null)
+                    ? () => _launch(
+                        'https://www.google.com/maps/search/?api=1&query=${acc['latitude']},${acc['longitude']}')
+                    : null,
+              ),
+            ]),
+          ],
+        ),
       ),
     );
   }
 }
 
+// ── Small helpers ─────────────────────────────────────────────────────────────
+
 class _Tag extends StatelessWidget {
   final String label;
-  final Color bg, fg;
+  final Color  bg, fg;
   const _Tag({required this.label, required this.bg, required this.fg});
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
         decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-        child: Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: fg)),
-      );
-}
-
-class _ActionBtn extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  const _ActionBtn({required this.icon, required this.color});
-  @override
-  Widget build(BuildContext context) => Container(
-        width: 36, height: 36,
-        decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
-        child: Icon(icon, size: 18, color: color),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 10, fontWeight: FontWeight.w700, color: fg)),
       );
 }
 
 class _Chip extends StatelessWidget {
   final String label;
-  final Color color;
+  final Color  color;
   const _Chip({required this.label, required this.color});
   @override
   Widget build(BuildContext context) => Container(
@@ -250,6 +402,25 @@ class _Chip extends StatelessWidget {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: color.withValues(alpha: 0.30)),
         ),
-        child: Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color)),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 11, fontWeight: FontWeight.w600, color: color)),
+      );
+}
+
+class _ActionBtn extends StatelessWidget {
+  final IconData      icon;
+  final Color         color;
+  final VoidCallback? onTap;
+  const _ActionBtn({required this.icon, required this.color, this.onTap});
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 36, height: 36,
+          decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
+          child: Icon(icon, size: 18, color: color),
+        ),
       );
 }
