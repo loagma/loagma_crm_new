@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
 
@@ -103,10 +104,18 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
       Fluttertoast.showToast(msg: 'Failed to save assignment', backgroundColor: Colors.red, textColor: Colors.white);
     } else {
       Fluttertoast.showToast(
-        msg: areaIds.isEmpty ? 'Assignment cleared' : '${areaIds.length} area(s) saved',
+        msg: areaIds.isEmpty
+            ? 'Assignment cleared successfully'
+            : '${areaIds.length} area(s) assigned successfully',
         backgroundColor: greenCheck,
         textColor: Colors.white,
       );
+      // Redirect back to the Area Assign page
+      if (context.canPop()) {
+        context.pop(true);
+      } else {
+        context.go('/area-assign');
+      }
     }
   }
 

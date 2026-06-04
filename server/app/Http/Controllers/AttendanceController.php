@@ -10,6 +10,7 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 class AttendanceController extends Controller
 {
@@ -17,7 +18,9 @@ class AttendanceController extends Controller
 
     private function authMobile(): string
     {
-        return auth('api')->userOrFail()->mobile;
+        // Use the same proven token-parsing pattern as OtpAuthController::me()
+        // (the default guard is `web`/session, so auth() resolves to null here).
+        return JWTAuth::parseToken()->authenticate()->mobile;
     }
 
     private function isLate(DeliStaff $staff): bool

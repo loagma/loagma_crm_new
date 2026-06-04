@@ -59,61 +59,174 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
 
   Future<void> _showAddDialog() async {
     final ctrl = TextEditingController();
-    final formKey = GlobalKey<FormState>();
+
+    // Lookup state, scoped to the dialog
+    bool                  looking = false;
+    Map<String, dynamic>? lookup;   // {country, state, district, city, areas}
+    String?               lookupError;
+    String                lastQueried = '';
 
     await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: const Text('Add Pincode', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        content: Form(
-          key: formKey,
-          child: TextFormField(
-            controller: ctrl,
-            autofocus: true,
-            keyboardType: TextInputType.number,
-            inputFormatters: [
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(6),
-            ],
-            decoration: InputDecoration(
-              labelText: 'Pincode *',
-              hintText: 'Enter 6-digit pincode',
-              prefixIcon: const Icon(Icons.pin_drop_outlined, color: gold),
-              isDense: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: gold, width: 2),
-              ),
-            ),
-            validator: (v) {
-              if (v == null || v.trim().isEmpty) return 'Pincode is required';
-              if (!RegExp(r'^\d{6}$').hasMatch(v.trim())) return 'Enter valid 6-digit pincode';
-              return null;
-            },
-          ),
-        ),
-        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
-          ElevatedButton(
-            onPressed: () async {
-              if (!formKey.currentState!.validate()) return;
-              final res = await ApiService.addAreaPincodes(_areaId, [ctrl.text.trim()]);
-              if (!mounted) return;
-              if (res == null || res.containsKey('errors')) {
-                final msg = res?['errors']?.toString() ?? 'Failed to add pincode';
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-                return;
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final pin     = ctrl.text.trim();
+          final valid6  = RegExp(r'^\d{6}$').hasMatch(pin);
+          final canAdd  = valid6 && lookup != null && !looking;
+
+          Future<void> runLookup(String p) async {
+            if (p == lastQueried) return;
+            lastQueried = p;
+            setLocal(() { looking = true; lookup = null; lookupError = null; });
+            final res = await ApiService.lookupIndianPincode(p);
+            if (!ctx.mounted) return;
+            setLocal(() {
+              looking = false;
+              if (res == null) {
+                lookupError = 'Pincode not found. Please check and try again.';
+              } else {
+                lookup = res;
               }
-              if (ctx.mounted) Navigator.pop(ctx);
-              setState(() => _area = res);
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: gold, foregroundColor: Colors.white),
-            child: const Text('Add'),
-          ),
-        ],
+            });
+          }
+
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            title: const Text('Add Pincode',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: ctrl,
+                  autofocus: true,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
+                  onChanged: (v) {
+                    final t = v.trim();
+                    setLocal(() {
+                      lookup = null;
+                      lookupError = null;
+                    });
+                    if (RegExp(r'^\d{6}$').hasMatch(t)) runLookup(t);
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Pincode *',
+                    hintText: 'Enter 6-digit pincode',
+                    prefixIcon: const Icon(Icons.pin_drop_outlined, color: gold),
+                    isDense: true,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: gold, width: 2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // ── Lookup feedback ────────────────────────────────────────
+                if (looking)
+                  const Row(children: [
+                    SizedBox(width: 14, height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: gold)),
+                    SizedBox(width: 8),
+                    Text('Checking pincode…',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  ])
+                else if (lookupError != null)
+                  Row(children: [
+                    const Icon(Icons.error_outline_rounded, size: 16, color: Colors.red),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(lookupError!,
+                        style: const TextStyle(fontSize: 12, color: Colors.red))),
+                  ])
+                else if (lookup != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF43A047).withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFF43A047).withValues(alpha: 0.30)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          const Icon(Icons.check_circle_rounded, size: 15, color: Color(0xFF2E7D32)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '${lookup!['city'] ?? ''}, ${lookup!['district'] ?? ''}',
+                              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700,
+                                  color: Color(0xFF2E7D32)),
+                            ),
+                          ),
+                        ]),
+                        if ((lookup!['state'] ?? '').toString().isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text('${lookup!['state']}, ${lookup!['country'] ?? 'India'}',
+                              style: const TextStyle(fontSize: 11, color: Colors.black54)),
+                        ],
+                        if ((lookup!['areas'] as List?)?.isNotEmpty ?? false) ...[
+                          const SizedBox(height: 6),
+                          Text('Post offices:',
+                              style: TextStyle(fontSize: 10.5, color: Colors.grey.shade600,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 3),
+                          Wrap(
+                            spacing: 4, runSpacing: 4,
+                            children: (lookup!['areas'] as List)
+                                .take(6)
+                                .map((a) => Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: Colors.grey.shade300),
+                                      ),
+                                      child: Text(a.toString(),
+                                          style: const TextStyle(fontSize: 9.5, color: Colors.black87)),
+                                    ))
+                                .toList(),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
+              ElevatedButton(
+                onPressed: canAdd
+                    ? () async {
+                        final res = await ApiService.addAreaPincodes(_areaId, [pin]);
+                        if (!mounted) return;
+                        if (res == null || res.containsKey('errors')) {
+                          final msg = res?['errors']?.toString() ?? 'Failed to add pincode';
+                          ScaffoldMessenger.of(context)
+                              .showSnackBar(SnackBar(content: Text(msg)));
+                          return;
+                        }
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        setState(() => _area = res);
+                      }
+                    : null,
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: gold, foregroundColor: Colors.white,
+                    disabledBackgroundColor: gold.withValues(alpha: 0.4)),
+                child: const Text('Add'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

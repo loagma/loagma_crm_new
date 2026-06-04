@@ -7,6 +7,7 @@ use App\Models\BeatPlanVisit;
 use App\Models\LeadsAccount;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 class BeatPlanController extends Controller
 {
@@ -18,9 +19,9 @@ class BeatPlanController extends Controller
 
     private function salesmanId(): string
     {
-        // JWT-authenticated salesman's mobile is stored as the subject
-        $user = auth()->user();
-        return (string) ($user?->mobile ?? $user?->getKey() ?? '');
+        // Default guard is `web`/session (auth() returns null for API requests),
+        // so parse the JWT explicitly — same pattern as OtpAuthController::me().
+        return (string) JWTAuth::parseToken()->authenticate()->mobile;
     }
 
     private function dayFiringQuery(\Illuminate\Database\Eloquent\Builder $q, Carbon $date): void
