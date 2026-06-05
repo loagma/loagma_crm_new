@@ -32,7 +32,7 @@ class AppDrawer extends StatelessWidget {
           {'title': 'Employee List',   'icon': Icons.people_alt_rounded,             'route': '/employee-list',     'color': const Color(0xFF26A69A)},
           {'title': 'Lead Account',    'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts',     'color': const Color(0xFF42A5F5)},
           {'title': 'Marketing Area',  'icon': Icons.location_on_rounded,            'route': '/marketing-area',    'color': const Color(0xFFEF5350), 'subtitle': 'Pincode allotment'},
-          {'title': 'Area Assign',     'icon': Icons.location_history_rounded,       'route': '/area-assign',       'color': const Color(0xFFFF7043), 'subtitle': 'Salesman & Incharge'},
+          {'title': 'Area Assign',     'icon': Icons.location_history_rounded,       'route': '/area-assign',       'color': const Color(0xFFFF7043), 'subtitle': 'Salesman, Telecaller & Incharge'},
           {'title': 'Incharge Assign', 'icon': Icons.supervisor_account_rounded,     'route': '/incharge-assign',   'color': const Color(0xFFAB47BC), 'subtitle': 'Head Incharge team'},
           {'title': 'Attendance',      'icon': Icons.fact_check_outlined,            'route': '/attendance-manage', 'color': const Color(0xFF66BB6A)},
           {'title': 'Settings',        'icon': Icons.settings_rounded,               'route': '/admin/settings',    'color': const Color(0xFF78909C)},

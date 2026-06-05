@@ -21,6 +21,9 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
   String _query = '';
   List<Map<String, dynamic>> _areas = [];
 
+  // areaId → list of {name, role} employees this area is assigned to
+  Map<int, List<Map<String, String>>> _assignees = {};
+
   @override
   void initState() {
     super.initState();
@@ -47,15 +50,103 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
         ? raw.map((e) => Map<String, dynamic>.from(e as Map)).toList()
         : <Map<String, dynamic>>[];
     setState(() {
-      _areas = list;
+      _areas   = list;
       _loading = false;
     });
+    // Load "assigned to" data separately so a slow employees/assigns fetch
+    // never blocks (or crashes) the area list. The dev server is single-threaded.
+    _loadAssignees();
+  }
+
+  // Builds areaId → [{name, role}] from area assignments + employees.
+  // Defensive: any failure leaves cards showing "Not assigned" instead of crashing.
+  Future<void> _loadAssignees() async {
+    try {
+      final assigns = await ApiService.getAllAreaAssigns();
+      final staff   = await ApiService.getEmployees(perPage: 500);
+      if (!mounted) return;
+
+      final staffByMobile = <String, Map<String, dynamic>>{
+        for (final e in staff) (e['mobile'] ?? '').toString(): e,
+      };
+
+      final assignees = <int, List<Map<String, String>>>{};
+      for (final a in assigns) {
+        final empId = (a['employee_id'] ?? '').toString();
+        final emp   = staffByMobile[empId];
+        if (emp == null) continue;
+        final ids = a['area_ids'];
+        if (ids is! List) continue;
+        for (final r in ids) {
+          final aid = int.tryParse(r.toString());
+          if (aid == null) continue;
+          assignees.putIfAbsent(aid, () => []).add({
+            'name': (emp['name'] ?? '').toString(),
+            'role': (emp['role'] ?? '').toString(),
+          });
+        }
+      }
+
+      if (mounted) setState(() => _assignees = assignees);
+    } catch (_) {
+      // leave _assignees as-is; cards show "Not assigned"
+    }
   }
 
   void _onSearchChanged(String v) {
     _query = v.trim();
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), _loadAreas);
+  }
+
+  void _toast(String msg, {bool success = true}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: success ? const Color(0xFF43A047) : Colors.red,
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  // Returns areas whose name matches (case-insensitive, trimmed) — for the
+  // duplicate-name guard.
+  Future<List<Map<String, dynamic>>> _findAreasByName(String name) async {
+    final target = name.trim().toLowerCase();
+    final res = await ApiService.getAreas(q: name, perPage: 200);
+    final data = res['data'];
+    if (data is! List) return [];
+    return data
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .where((a) => (a['area_name'] ?? '').toString().trim().toLowerCase() == target)
+        .toList();
+  }
+
+  // Generic yes/no confirmation for "already exists, create anyway?".
+  Future<bool?> _confirmDuplicate({required String title, required String message}) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        content: Text(message, style: const TextStyle(fontSize: 13.5)),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: gold, foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Yes, create'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showCreateOrEditDialog({Map<String, dynamic>? area}) async {
@@ -101,16 +192,28 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
               if (isEdit) {
                 res = await ApiService.updateArea(_idOf(area), areaName: name);
               } else {
+                // Duplicate-name guard: ask before creating a second area
+                // with the same name.
+                final existing = await _findAreasByName(name);
+                if (!mounted) return;
+                if (existing.isNotEmpty) {
+                  final proceed = await _confirmDuplicate(
+                    title: 'Area Already Exists',
+                    message: '"$name" already exists '
+                        '(${existing.length} area${existing.length == 1 ? '' : 's'}). '
+                        'Do you want to create one more with the same name?',
+                  );
+                  if (proceed != true) return; // keep dialog open
+                }
                 res = await ApiService.createArea(name);
               }
               if (!mounted) return;
               if (res == null || res.containsKey('errors')) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(isEdit ? 'Failed to update area' : 'Failed to create area')),
-                );
+                _toast(isEdit ? 'Failed to update area' : 'Failed to create area', success: false);
                 return;
               }
               if (ctx.mounted) Navigator.pop(ctx);
+              _toast(isEdit ? 'Area "$name" updated' : 'Area "$name" created');
               _loadAreas();
             },
             style: ElevatedButton.styleFrom(
@@ -145,9 +248,7 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
 
     final done = await ApiService.deleteArea(_idOf(area));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(done ? 'Area deleted' : 'Failed to delete area')),
-    );
+    _toast(done ? 'Area "${_nameOf(area)}" deleted' : 'Failed to delete area', success: done);
     if (done) _loadAreas();
   }
 
@@ -207,6 +308,7 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
                             return _AreaCard(
                               area: area,
                               pincodeCount: pins,
+                              assignees: _assignees[_idOf(area)] ?? const [],
                               onTap: () async {
                                 final changed = await context.push('/marketing-area/${_idOf(area)}', extra: area);
                                 if (changed == true) _loadAreas();
@@ -246,6 +348,7 @@ class _MarketingAreaScreenState extends State<MarketingAreaScreen> {
 class _AreaCard extends StatelessWidget {
   final Map<String, dynamic> area;
   final int pincodeCount;
+  final List<Map<String, String>> assignees;
   final VoidCallback onTap;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
@@ -253,6 +356,7 @@ class _AreaCard extends StatelessWidget {
   const _AreaCard({
     required this.area,
     required this.pincodeCount,
+    required this.assignees,
     required this.onTap,
     required this.onEdit,
     required this.onDelete,
@@ -272,38 +376,89 @@ class _AreaCard extends StatelessWidget {
         elevation: 1.5,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFD7BE69).withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.location_on_rounded, color: Color(0xFFD7BE69), size: 22),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 2),
-                    Text('ID: $id --- $pincodeCount pincodes ', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-                  ],
-                ),
-              ),
-              PopupMenuButton<String>(
-                onSelected: (v) {
-                  if (v == 'edit') onEdit();
-                  if (v == 'delete') onDelete();
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'edit', child: Text('Edit')),
-                  PopupMenuItem(value: 'delete', child: Text('Delete')),
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD7BE69).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.location_on_rounded, color: Color(0xFFD7BE69), size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 2),
+                        Text('ID: $id --- $pincodeCount pincodes ', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                      ],
+                    ),
+                  ),
+                  PopupMenuButton<String>(
+                    onSelected: (v) {
+                      if (v == 'edit') onEdit();
+                      if (v == 'delete') onDelete();
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'edit', child: Text('Edit')),
+                      PopupMenuItem(value: 'delete', child: Text('Delete')),
+                    ],
+                  ),
                 ],
               ),
+              // ── Assigned-to row ──────────────────────────────────────────
+              if (assignees.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                const Divider(height: 1, color: Color(0xFFEEEEEE)),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.people_alt_rounded, size: 13, color: Colors.grey.shade500),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Wrap(
+                        spacing: 5, runSpacing: 5,
+                        children: assignees.map((e) {
+                          final role = (e['role'] ?? '').replaceAll('_', ' ');
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFD7BE69).withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: const Color(0xFFD7BE69).withValues(alpha: 0.35)),
+                            ),
+                            child: Text(
+                              role.isEmpty ? (e['name'] ?? '') : '${e['name']} · $role',
+                              style: const TextStyle(
+                                  fontSize: 10, fontWeight: FontWeight.w600,
+                                  color: Color(0xFF8A6D1B)),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(Icons.person_off_outlined, size: 12, color: Colors.grey.shade400),
+                    const SizedBox(width: 6),
+                    Text('Not assigned to anyone',
+                        style: TextStyle(fontSize: 10.5, color: Colors.grey.shade400,
+                            fontStyle: FontStyle.italic)),
+                  ],
+                ),
+              ],
             ],
           ),
         ),

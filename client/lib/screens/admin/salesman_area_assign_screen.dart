@@ -19,6 +19,10 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
   static const greenLight  = Color(0xFFE8F5E9);
 
   final Set<int> _assignedIds = {};
+  // Snapshot of areas this person already had on load — used to detect newly-added.
+  final Set<int> _originalAssignedIds = {};
+  // areaId → other staff who already own it: [{id, name, role}]
+  Map<int, List<Map<String, String>>> _areaOwners = {};
   bool _loading = false;
   bool _saving  = false;
   List<Map<String, dynamic>> _areas = [];
@@ -80,18 +84,163 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
     setState(() {
       _areas = list;
       _assignedIds..clear()..addAll(preSelected);
+      _originalAssignedIds..clear()..addAll(preSelected);
       _loading = false;
     });
+
+    // Load same-role conflict data in the background (non-blocking, fail-open).
+    _loadAreaOwners();
+  }
+
+  // Builds areaId → other staff (excluding this person) who already own each area.
+  Future<void> _loadAreaOwners() async {
+    try {
+      final assigns = await ApiService.getAllAreaAssigns();
+      final staff   = await ApiService.getEmployees(perPage: 500);
+      if (!mounted) return;
+
+      final staffByMobile = <String, Map<String, dynamic>>{
+        for (final e in staff) (e['mobile'] ?? '').toString(): e,
+      };
+
+      final owners = <int, List<Map<String, String>>>{};
+      for (final a in assigns) {
+        final empId = (a['employee_id'] ?? '').toString();
+        if (empId == _employeeId) continue; // skip this person
+        final emp = staffByMobile[empId];
+        if (emp == null) continue;
+        final ids = a['area_ids'];
+        if (ids is! List) continue;
+        for (final r in ids) {
+          final aid = int.tryParse(r.toString());
+          if (aid == null) continue;
+          owners.putIfAbsent(aid, () => []).add({
+            'id':   empId,
+            'name': (emp['name'] ?? '').toString(),
+            'role': (emp['role'] ?? '').toString().toLowerCase().trim(),
+          });
+        }
+      }
+
+      if (mounted) setState(() => _areaOwners = owners);
+    } catch (_) {
+      // fail-open: no conflict data → save proceeds without warnings
+    }
   }
 
   int _idOf(Map<String, dynamic> area) =>
       int.tryParse((area['id'] ?? '').toString()) ?? 0;
 
+  String _areaNameOf(int aid) {
+    final a = _areas.firstWhere((e) => _idOf(e) == aid, orElse: () => const {});
+    return (a['area_name'] ?? 'Area $aid').toString();
+  }
+
+  String _roleLabel(String role) =>
+      role.isEmpty ? 'staff' : role.replaceAll('_', ' ');
+
+  // Returns 'assign' | 'skip' | 'cancel' | null
+  Future<String?> _showConflictDialog(Map<int, List<String>> conflicts, String role) {
+    final roleLabel = _roleLabel(role);
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Area Already Assigned',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('These areas are already assigned to other ${roleLabel}s:',
+                  style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 10),
+              ...conflicts.entries.map((e) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          const Icon(Icons.location_on_rounded, size: 14, color: gold),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(_areaNameOf(e.key),
+                                style: const TextStyle(
+                                    fontSize: 13, fontWeight: FontWeight.w700)),
+                          ),
+                        ]),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 18, top: 1),
+                          child: Text(e.value.join(', '),
+                              style: TextStyle(
+                                  fontSize: 11.5, color: Colors.grey.shade600)),
+                        ),
+                      ],
+                    ),
+                  )),
+              const SizedBox(height: 4),
+              const Text('Do you still want to assign these areas?',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'skip'),
+            child: const Text('Skip These',
+                style: TextStyle(color: Color(0xFFE65100), fontWeight: FontWeight.w600)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, 'assign'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: gold, foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Assign Anyway'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _save() async {
     if (_saving) return;
+
+    // ── Same-role conflict check (only for newly-added areas) ────────────────
+    final currentRole = (widget.salesman['role'] ?? '').toString().toLowerCase().trim();
+    final newlyAdded  = _assignedIds.difference(_originalAssignedIds);
+
+    // areaId → names of same-role staff already owning it
+    final conflicts = <int, List<String>>{};
+    for (final aid in newlyAdded) {
+      final owners = (_areaOwners[aid] ?? [])
+          .where((o) => o['role'] == currentRole)
+          .map((o) => o['name'] ?? '')
+          .where((n) => n.isNotEmpty)
+          .toList();
+      if (owners.isNotEmpty) conflicts[aid] = owners;
+    }
+
+    // Work on a mutable copy so "Skip" can drop conflicting areas
+    final toSave = Set<int>.from(_assignedIds);
+
+    if (conflicts.isNotEmpty) {
+      final choice = await _showConflictDialog(conflicts, currentRole);
+      if (!mounted) return;
+      if (choice == 'cancel' || choice == null) return; // abort, keep selection
+      if (choice == 'skip') toSave.removeAll(conflicts.keys);
+      // 'assign' → keep all
+    }
+
     setState(() => _saving = true);
 
-    final selectedAreas = _areas.where((a) => _assignedIds.contains(_idOf(a))).toList();
+    final selectedAreas = _areas.where((a) => toSave.contains(_idOf(a))).toList();
     final areaIds   = selectedAreas.map(_idOf).toList();
     final areaNames = selectedAreas.map((a) => (a['area_name'] ?? '').toString()).toList();
 
@@ -119,12 +268,6 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
     }
   }
 
-  String get _initials {
-    final name  = (widget.salesman['name'] as String? ?? '').trim();
-    final parts = name.split(' ').where((p) => p.isNotEmpty).toList();
-    if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    return name.isNotEmpty ? name[0].toUpperCase() : '?';
-  }
 
   // ── build ──────────────────────────────────────────────────────────────────
 
@@ -154,7 +297,6 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
       body: Column(
         children: [
           _buildHeader(name, mobile, role),
-          if (_assignedIds.isNotEmpty && _areas.isNotEmpty) _buildAssignedChips(),
           _buildSearchBar(),
           Expanded(
             child: _loading
@@ -171,165 +313,45 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
   Widget _buildHeader(String name, String mobile, String role) {
     final total    = _areas.length;
     final assigned = _assignedIds.length;
-    final progress = total == 0 ? 0.0 : assigned / total;
 
-    return Container(
-      decoration: const BoxDecoration(
-        color: gold,
-        borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
-      ),
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              // avatar
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.25),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.6), width: 2),
-                ),
-                child: Center(
-                  child: Text(_initials, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                ),
-              ),
-              const SizedBox(width: 12),
-              // name + mobile
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white)),
-                    if (mobile.isNotEmpty)
-                      Text(mobile, style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.85))),
-                    if (role.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      _RoleBadge(role: role),
-                    ],
-                  ],
-                ),
-              ),
-              // assigned count pill
-              Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.22),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.4)),
-                    ),
-                    child: Column(
-                      children: [
-                        Text(
-                          '$assigned',
-                          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.white, height: 1),
-                        ),
-                        Text('assigned', style: TextStyle(fontSize: 10, color: Colors.white.withValues(alpha: 0.85))),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          // progress bar
-          if (!_loading && total > 0) ...[
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: progress,
-                      backgroundColor: Colors.white.withValues(alpha: 0.25),
-                      valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-                      minHeight: 6,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  '$assigned / $total areas',
-                  style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.9), fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  // ── assigned chips ─────────────────────────────────────────────────────────
-
-  Widget _buildAssignedChips() {
-    final assignedAreas = _areas.where((a) => _assignedIds.contains(_idOf(a))).toList();
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      decoration: BoxDecoration(
-        color: greenLight,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFA5D6A7)),
+      decoration: const BoxDecoration(
+        color: gold,
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(16, 8, 12, 12),
+      child: Row(
         children: [
-          Row(
-            children: [
-              const Icon(Icons.check_circle_rounded, size: 14, color: greenCheck),
-              const SizedBox(width: 6),
-              const Text(
-                'Currently Assigned',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: greenCheck),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(color: greenCheck, borderRadius: BorderRadius.circular(10)),
-                child: Text('${assignedAreas.length}', style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w700)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: assignedAreas.map((a) {
-              final id = _idOf(a);
-              return GestureDetector(
-                onTap: () => setState(() => _assignedIds.remove(id)),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0xFFA5D6A7)),
-                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 4, offset: const Offset(0, 1))],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.location_on_rounded, size: 12, color: greenCheck),
-                      const SizedBox(width: 4),
-                      Text((a['area_name'] ?? '').toString(),
-                          style: const TextStyle(fontSize: 11, color: greenCheck, fontWeight: FontWeight.w600)),
-                      const SizedBox(width: 5),
-                      const Icon(Icons.close_rounded, size: 12, color: Color(0xFF81C784)),
-                    ],
-                  ),
+          // name + role only
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white)),
                 ),
-              );
-            }).toList(),
+                if (role.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  _RoleBadge(role: role),
+                ],
+              ],
+            ),
           ),
-          const SizedBox(height: 4),
-          Text('Tap a chip to remove', style: TextStyle(fontSize: 10, color: Colors.green.shade400)),
+          // compact assigned count
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.22),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text('$assigned / $total',
+                style: const TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)),
+          ),
         ],
       ),
     );
@@ -453,7 +475,7 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
           final pinList   = pins is List ? pins.map((p) => p.toString()).take(3).join(', ') : '';
 
           final prev   = i > 0 ? items[i - 1] : null;
-          final topGap = prev is _SectionHeader ? 0.0 : 6.0;
+          final topGap = prev is _SectionHeader ? 0.0 : 4.0;
 
           return Padding(
             padding: EdgeInsets.only(top: topGap),
@@ -465,7 +487,7 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
                 duration: const Duration(milliseconds: 200),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color: isAssign ? const Color(0xFFA5D6A7) : Colors.transparent,
                     width: 1.5,
@@ -475,68 +497,54 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
                       color: isAssign
                           ? greenCheck.withValues(alpha: 0.08)
                           : Colors.black.withValues(alpha: 0.04),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
                     ),
                   ],
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                  padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
                   child: Row(
                     children: [
-                      // icon box
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: isAssign ? greenLight : Colors.grey.shade50,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: isAssign ? const Color(0xFFA5D6A7) : Colors.grey.shade200,
-                          ),
-                        ),
-                        child: Icon(
-                          Icons.location_on_rounded,
-                          color: isAssign ? greenCheck : Colors.grey.shade400,
-                          size: 22,
-                        ),
+                      Icon(
+                        Icons.location_on_rounded,
+                        color: isAssign ? greenCheck : Colors.grey.shade400,
+                        size: 20,
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 10),
                       // text info
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(areaName, style: TextStyle(
-                              fontSize: 14,
+                              fontSize: 13.5,
                               fontWeight: FontWeight.w700,
                               color: isAssign ? const Color(0xFF1B5E20) : Colors.grey.shade900,
                             )),
-                            if (subtitle.isNotEmpty) ...[
-                              const SizedBox(height: 2),
-                              Text(subtitle, style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-                            ],
-                            if (pinList.isNotEmpty) ...[
-                              const SizedBox(height: 2),
-                              Text('Pin: $pinList', style: TextStyle(fontSize: 10, color: Colors.grey.shade400)),
-                            ],
+                            if (subtitle.isNotEmpty || pinList.isNotEmpty)
+                              Text(
+                                [subtitle, if (pinList.isNotEmpty) 'Pin: $pinList']
+                                    .where((s) => s.isNotEmpty).join('  •  '),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
+                              ),
                           ],
                         ),
                       ),
                       // checkbox
-                      Transform.scale(
-                        scale: 1.1,
-                        child: Checkbox(
-                          value: isAssign,
-                          activeColor: greenCheck,
-                          checkColor: Colors.white,
-                          side: BorderSide(color: isAssign ? greenCheck : Colors.grey.shade400, width: 1.5),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
-                          onChanged: (v) => setState(() {
-                            if (v == true) { _assignedIds.add(id); } else { _assignedIds.remove(id); }
-                          }),
-                        ),
+                      Checkbox(
+                        value: isAssign,
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        activeColor: greenCheck,
+                        checkColor: Colors.white,
+                        side: BorderSide(color: isAssign ? greenCheck : Colors.grey.shade400, width: 1.5),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                        onChanged: (v) => setState(() {
+                          if (v == true) { _assignedIds.add(id); } else { _assignedIds.remove(id); }
+                        }),
                       ),
                     ],
                   ),

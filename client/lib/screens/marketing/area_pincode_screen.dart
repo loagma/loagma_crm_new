@@ -57,6 +57,64 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
     return p.where((e) => e.contains(_query)).toList();
   }
 
+  void _toast(String msg, {bool success = true}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: success ? const Color(0xFF43A047) : Colors.red,
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  // Returns the name of another area that already contains [pin], or null.
+  Future<String?> _pincodeInOtherArea(String pin) async {
+    final res = await ApiService.getAreas(perPage: 1000);
+    final data = res['data'];
+    if (data is! List) return null;
+    for (final raw in data) {
+      final a   = Map<String, dynamic>.from(raw as Map);
+      final aid = int.tryParse((a['id'] ?? '').toString()) ?? 0;
+      if (aid == _areaId) continue; // skip the current area
+      final pins = a['pincodes'];
+      if (pins is List && pins.map((e) => e.toString()).contains(pin)) {
+        return (a['area_name'] ?? 'another area').toString();
+      }
+    }
+    return null;
+  }
+
+  Future<bool?> _confirmDuplicatePincode(String pin, String otherArea) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Pincode Already Exists',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        content: Text(
+          'Pincode $pin is already assigned to "$otherArea". '
+          'Do you want to add it to this area as well?',
+          style: const TextStyle(fontSize: 13.5),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: gold, foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Yes, add'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _showAddDialog() async {
     final ctrl = TextEditingController();
 
@@ -207,16 +265,24 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
               ElevatedButton(
                 onPressed: canAdd
                     ? () async {
+                        // Duplicate-pincode guard: is this pincode already in
+                        // another area? If so, confirm before adding here too.
+                        final otherArea = await _pincodeInOtherArea(pin);
+                        if (!mounted) return;
+                        if (otherArea != null) {
+                          final proceed = await _confirmDuplicatePincode(pin, otherArea);
+                          if (proceed != true) return; // keep dialog open
+                        }
                         final res = await ApiService.addAreaPincodes(_areaId, [pin]);
                         if (!mounted) return;
                         if (res == null || res.containsKey('errors')) {
                           final msg = res?['errors']?.toString() ?? 'Failed to add pincode';
-                          ScaffoldMessenger.of(context)
-                              .showSnackBar(SnackBar(content: Text(msg)));
+                          _toast(msg, success: false);
                           return;
                         }
                         if (ctx.mounted) Navigator.pop(ctx);
                         setState(() => _area = res);
+                        _toast('Pincode $pin added successfully');
                       }
                     : null,
                 style: ElevatedButton.styleFrom(
@@ -258,14 +324,16 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
           ElevatedButton(
             onPressed: () async {
               if (!formKey.currentState!.validate()) return;
-              final res = await ApiService.updateAreaPincode(_areaId, oldPin, ctrl.text.trim());
+              final newPin = ctrl.text.trim();
+              final res = await ApiService.updateAreaPincode(_areaId, oldPin, newPin);
               if (!mounted) return;
               if (res == null || res.containsKey('errors')) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to update pincode')));
+                _toast('Failed to update pincode', success: false);
                 return;
               }
               if (ctx.mounted) Navigator.pop(ctx);
               setState(() => _area = res);
+              _toast('Pincode updated to $newPin');
             },
             style: ElevatedButton.styleFrom(backgroundColor: gold, foregroundColor: Colors.white),
             child: const Text('Update'),
@@ -295,10 +363,11 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
     final done = await ApiService.deleteAreaPincode(_areaId, pincode);
     if (!mounted) return;
     if (!done) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to delete pincode')));
+      _toast('Failed to delete pincode', success: false);
       return;
     }
     await _loadArea();
+    _toast('Pincode $pincode deleted');
   }
 
   @override

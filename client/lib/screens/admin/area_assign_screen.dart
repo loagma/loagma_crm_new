@@ -55,7 +55,7 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
       }
     }
 
-    // Only salesman and incharge get area assignments
+    // Only salesman, telecaller and incharge get area assignments
     final normalized = staffList.map((e) {
       final role = (e['role'] ?? '').toString().trim().toLowerCase();
       final id   = (e['mobile'] ?? e['deli_id'] ?? '').toString();
@@ -67,7 +67,7 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
       };
     }).where((e) {
       final r = e['role'] as String;
-      return (r == 'salesman' || r == 'incharge') &&
+      return (r == 'salesman' || r == 'telecaller' || r == 'incharge') &&
           (e['name'].toString().isNotEmpty || e['mobile'].toString().isNotEmpty);
     }).toList();
 
@@ -96,7 +96,7 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
           preferredSize: const Size.fromHeight(20),
           child: Padding(
             padding: const EdgeInsets.only(bottom: 6),
-            child: Text('Salesman & Incharge only',
+            child: Text('Salesman, Telecaller & Incharge only',
                 style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.8))),
           ),
         ),
@@ -350,6 +350,10 @@ class _RoleBadge extends StatelessWidget {
         return (bg: const Color(0xFFE3F0FF), text: const Color(0xFF1565C0), label: 'Deli Staff');
       case 'salesman':
         return (bg: const Color(0xFFFFF8E1), text: const Color(0xFFB89A3E), label: 'Salesman');
+      case 'telecaller':
+        return (bg: const Color(0xFFE0F7FA), text: const Color(0xFF00838F), label: 'Telecaller');
+      case 'incharge':
+        return (bg: const Color(0xFFFFF3E0), text: const Color(0xFFE65100), label: 'Incharge');
       case 'admin':
         return (bg: const Color(0xFFFFEBEE), text: const Color(0xFFC62828), label: 'Admin');
       case 'manager':

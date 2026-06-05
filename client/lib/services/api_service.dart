@@ -113,16 +113,20 @@ class ApiService {
       if (perPage != null) 'per_page': perPage.toString(),
     });
 
-    final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
-    final decoded = jsonDecode(response.body);
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 30));
+      final decoded = jsonDecode(response.body);
 
-    if (decoded is Map && decoded.containsKey('data')) {
-      final data = decoded['data'];
-      if (data is List) {
-        return List<Map<String, dynamic>>.from(data.map((e) => Map<String, dynamic>.from(e as Map)));
+      if (decoded is Map && decoded.containsKey('data')) {
+        final data = decoded['data'];
+        if (data is List) {
+          return List<Map<String, dynamic>>.from(data.map((e) => Map<String, dynamic>.from(e as Map)));
+        }
+      } else if (decoded is List) {
+        return List<Map<String, dynamic>>.from(decoded.map((e) => Map<String, dynamic>.from(e as Map)));
       }
-    } else if (decoded is List) {
-      return List<Map<String, dynamic>>.from(decoded.map((e) => Map<String, dynamic>.from(e as Map)));
+    } catch (e) {
+      print('getEmployees failed for $uri: $e');
     }
 
     return <Map<String, dynamic>>[];
@@ -602,7 +606,7 @@ class ApiService {
   static Future<List<Map<String, dynamic>>> getAllAreaAssigns() async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/area-assign');
     try {
-      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 30));
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final decoded = jsonDecode(response.body) as Map<String, dynamic>;
         final data = decoded['data'];
