@@ -136,6 +136,77 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
     return (a['area_name'] ?? 'Area $aid').toString();
   }
 
+  // Toggle an area. Unchecking a checked area asks for confirmation and then
+  // PERSISTS the removal immediately. Checking just selects (saved via the
+  // Save Assignment button).
+  Future<void> _toggleArea(int id) async {
+    if (_assignedIds.contains(id)) {
+      final areaName = _areaNameOf(id);
+      final ok = await _confirmRemoveArea(areaName);
+      if (ok != true) return;
+
+      // optimistic remove
+      setState(() {
+        _assignedIds.remove(id);
+        _originalAssignedIds.remove(id);
+      });
+
+      // persist immediately
+      final selectedAreas = _areas.where((a) => _assignedIds.contains(_idOf(a))).toList();
+      final areaIds   = selectedAreas.map(_idOf).toList();
+      final areaNames = selectedAreas.map((a) => (a['area_name'] ?? '').toString()).toList();
+      final res = await ApiService.saveAreaAssign(_employeeId, areaIds, areaNames);
+      if (!mounted) return;
+
+      if (res == null || res.containsKey('errors')) {
+        // rollback on failure
+        setState(() {
+          _assignedIds.add(id);
+          _originalAssignedIds.add(id);
+        });
+        Fluttertoast.showToast(
+          msg: 'Failed to remove area. Try again.',
+          backgroundColor: Colors.red, textColor: Colors.white,
+        );
+      } else {
+        Fluttertoast.showToast(
+          msg: '"$areaName" removed from assignment',
+          backgroundColor: greenCheck, textColor: Colors.white,
+        );
+      }
+    } else {
+      setState(() => _assignedIds.add(id));
+    }
+  }
+
+  Future<bool?> _confirmRemoveArea(String areaName) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Remove Area',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        content: Text('Remove "$areaName" from this assignment?',
+            style: const TextStyle(fontSize: 13.5)),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red, foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Yes, remove'),
+          ),
+        ],
+      ),
+    );
+  }
+
   String _roleLabel(String role) =>
       role.isEmpty ? 'staff' : role.replaceAll('_', ' ');
 
@@ -480,9 +551,7 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
           return Padding(
             padding: EdgeInsets.only(top: topGap),
             child: GestureDetector(
-              onTap: () => setState(() {
-                if (isAssign) { _assignedIds.remove(id); } else { _assignedIds.add(id); }
-              }),
+              onTap: () => _toggleArea(id),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 decoration: BoxDecoration(
@@ -534,17 +603,20 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
                         ),
                       ),
                       // checkbox
-                      Checkbox(
-                        value: isAssign,
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        activeColor: greenCheck,
-                        checkColor: Colors.white,
-                        side: BorderSide(color: isAssign ? greenCheck : Colors.grey.shade400, width: 1.5),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
-                        onChanged: (v) => setState(() {
-                          if (v == true) { _assignedIds.add(id); } else { _assignedIds.remove(id); }
-                        }),
+                      // Display-only: the whole row's GestureDetector handles
+                      // the tap, so the checkbox must not also fire (double-tap
+                      // would remove then re-add the area).
+                      IgnorePointer(
+                        child: Checkbox(
+                          value: isAssign,
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          activeColor: greenCheck,
+                          checkColor: Colors.white,
+                          side: BorderSide(color: isAssign ? greenCheck : Colors.grey.shade400, width: 1.5),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                          onChanged: (_) {},
+                        ),
                       ),
                     ],
                   ),

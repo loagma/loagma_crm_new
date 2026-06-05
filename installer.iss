@@ -1,5 +1,5 @@
 #define MyAppName "Loagma CRM"
-#define MyAppVersion "1.0.3"
+#define MyAppVersion "1.0.5"
 #define MyAppPublisher "Loagma"
 #define MyAppExeName "client.exe"
 #define MySourceDir "client\build\windows\x64\runner\Release"

@@ -96,8 +96,38 @@ class AreaController extends Controller
         if (!$area) {
             return response()->json(['success' => false, 'message' => 'Area not found'], 404);
         }
+
         $area->delete();
-        return response()->json(['success' => true, 'message' => 'Area deleted']);
+
+        // Cascade: remove this area from every staff's area assignment so it
+        // no longer appears as "assigned" anywhere.
+        $cleaned = 0;
+        foreach (\App\Models\AreaAssign::all() as $assign) {
+            $ids   = array_map('intval', $assign->area_ids ?? []);
+            if (!in_array($id, $ids, true)) continue;
+
+            $names = array_values($assign->area_names ?? []);
+            $newIds   = [];
+            $newNames = [];
+            foreach ($ids as $i => $aid) {
+                if ($aid === $id) continue; // drop the deleted area
+                $newIds[]   = $aid;
+                $newNames[] = $names[$i] ?? (string) $aid;
+            }
+
+            if (empty($newIds)) {
+                $assign->delete(); // no areas left → remove the row entirely
+            } else {
+                $assign->update(['area_ids' => $newIds, 'area_names' => $newNames]);
+            }
+            $cleaned++;
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Area deleted',
+            'assignments_updated' => $cleaned,
+        ]);
     }
 
     public function addPincodes(int $id): JsonResponse

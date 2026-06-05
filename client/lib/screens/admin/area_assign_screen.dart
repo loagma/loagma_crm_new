@@ -101,13 +101,6 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
           ),
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _loadAll,
-        backgroundColor: gold,
-        foregroundColor: Colors.white,
-        tooltip: 'Refresh',
-        child: const Icon(Icons.assignment_ind_rounded),
-      ),
       body: Column(
         children: [
           Padding(
