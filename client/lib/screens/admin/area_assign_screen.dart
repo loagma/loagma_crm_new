@@ -306,18 +306,19 @@ class _StaffCard extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 4,
-                        runSpacing: 4,
-                        children: assignedAreas.map((areaName) => Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: gold.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: gold.withValues(alpha: 0.30)),
-                          ),
-                          child: Text(areaName, style: const TextStyle(fontSize: 10, color: Color(0xFFB89A3E), fontWeight: FontWeight.w500)),
-                        )).toList(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: gold.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: gold.withValues(alpha: 0.30)),
+                        ),
+                        child: Text(
+                          'Marketing Area: ${assignedAreas.join(', ')}',
+                          style: const TextStyle(fontSize: 10, color: Color(0xFFB89A3E), fontWeight: FontWeight.w600),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ],
                   ],

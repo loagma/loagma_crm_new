@@ -19,6 +19,8 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
   String _query = '';
   bool _loading = false;
   Map<String, dynamic>? _area;
+  // pincode → list of other area names that have it
+  Map<String, List<String>> _otherAreas = {};
 
   int get _areaId => int.tryParse((widget.area['id'] ?? '').toString()) ?? 0;
   String get _areaName => ((_area ?? widget.area)['area_name'] ?? 'Area').toString();
@@ -45,10 +47,36 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
     setState(() => _loading = true);
     final data = await ApiService.getArea(_areaId);
     if (!mounted) return;
-    setState(() {
-      _area = data ?? widget.area;
-      _loading = false;
-    });
+
+    // Build map of pincode → other areas that have it
+    final otherAreas = <String, List<String>>{};
+    try {
+      final allAreas = await ApiService.getAreas(perPage: 1000);
+      final areasList = (allAreas['data'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+      for (final area in areasList) {
+        final aid = int.tryParse((area['id'] ?? '').toString()) ?? 0;
+        if (aid == _areaId) continue; // skip current area
+        final areaName = (area['area_name'] ?? '').toString();
+        final pins = area['pincodes'];
+        if (pins is List) {
+          for (final p in pins) {
+            final pin = p.toString();
+            otherAreas.putIfAbsent(pin, () => []).add(areaName);
+          }
+        }
+      }
+    } catch (_) {
+      // if fetch fails, just leave map empty — no other areas shown
+    }
+
+    if (mounted) {
+      setState(() {
+        _area = data ?? widget.area;
+        _otherAreas = otherAreas;
+        _loading = false;
+      });
+    }
   }
 
   List<String> get _filtered {
@@ -440,41 +468,69 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
                           separatorBuilder: (_, _) => const SizedBox(height: 8),
                           itemBuilder: (context, i) {
                             final p = filtered[i];
+                            final others = _otherAreas[p] ?? [];
                             return Card(
                               color: Colors.white,
                               margin: EdgeInsets.zero,
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                               elevation: 1.5,
                               child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-                                child: Row(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Container(
-                                      width: 40,
-                                      height: 40,
-                                      decoration: BoxDecoration(
-                                        color: gold.withValues(alpha: 0.15),
-                                        borderRadius: BorderRadius.circular(10),
+                                    Row(
+                                      children: [
+                                        Container(
+                                          width: 40,
+                                          height: 40,
+                                          decoration: BoxDecoration(
+                                            color: gold.withValues(alpha: 0.15),
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                          child: const Icon(Icons.pin_drop_rounded, color: gold, size: 20),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            p,
+                                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: 1),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          onPressed: () => _showEditDialog(p),
+                                          icon: const Icon(Icons.edit_rounded, size: 18),
+                                          tooltip: 'Edit',
+                                        ),
+                                        IconButton(
+                                          onPressed: () => _deletePincode(p),
+                                          icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red),
+                                          tooltip: 'Delete',
+                                        ),
+                                      ],
+                                    ),
+                                    // "Also in" chip for other areas
+                                    if (others.isNotEmpty) ...[
+                                      const SizedBox(height: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                        decoration: BoxDecoration(
+                                          color: gold.withValues(alpha: 0.12),
+                                          borderRadius: BorderRadius.circular(20),
+                                          border: Border.all(color: gold.withValues(alpha: 0.3)),
+                                        ),
+                                        child: Text(
+                                          'marketing Area: ${others.join(', ')}',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            color: const Color(0xFF8A6D1B),
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
-                                      child: const Icon(Icons.pin_drop_rounded, color: gold, size: 20),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        p,
-                                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: 1),
-                                      ),
-                                    ),
-                                    IconButton(
-                                      onPressed: () => _showEditDialog(p),
-                                      icon: const Icon(Icons.edit_rounded, size: 18),
-                                      tooltip: 'Edit',
-                                    ),
-                                    IconButton(
-                                      onPressed: () => _deletePincode(p),
-                                      icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red),
-                                      tooltip: 'Delete',
-                                    ),
+                                    ],
                                   ],
                                 ),
                               ),
