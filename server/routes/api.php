@@ -113,7 +113,7 @@ Route::prefix('incharge-assign')->group(function () {
 // ---------------------------------------------------------------------------
 // Beat Plan (salesman self-assigns accounts to recurring schedule)
 // ---------------------------------------------------------------------------
-Route::prefix('beat-plan')->middleware('jwt.auth')->group(function () {
+Route::prefix('beat-plan')->group(function () {
     Route::get('/my-plans',         [BeatPlanController::class, 'myPlans']);
     Route::post('/assign',          [BeatPlanController::class, 'assign']);
     Route::post('/unassign-bulk',   [BeatPlanController::class, 'unassignBulk']);
