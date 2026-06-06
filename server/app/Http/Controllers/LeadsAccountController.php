@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\LeadsAccount;
+use App\Models\UserCustomer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Str;
 
@@ -256,5 +257,45 @@ class LeadsAccountController extends Controller
         $account->delete();
 
         return response()->json(['success' => true, 'message' => 'Lead account deleted successfully']);
+    }
+
+    // ── Get customers from user table ──────────────────────────────────────────
+
+    public function customers(): JsonResponse
+    {
+        $pincodes = array_filter((array) request()->query('pincodes', []));
+        $q = request()->query('q', '');
+
+        $query = UserCustomer::query();
+
+        if (!empty($pincodes)) {
+            $query->whereIn('pincode', $pincodes);
+        }
+
+        if ($q) {
+            $query->where(function ($x) use ($q) {
+                $x->where('name', 'like', "%$q%")
+                  ->orWhere('shop_name', 'like', "%$q%")
+                  ->orWhere('contactno', 'like', "%$q%");
+            });
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $query->get([
+                'userid',
+                'name',
+                'shop_name',
+                'contactno',
+                'address',
+                'shop_address',
+                'pincode',
+                'city',
+                'state',
+                'latitude',
+                'longitude',
+                'user_type',
+            ]),
+        ]);
     }
 }

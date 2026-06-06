@@ -286,14 +286,15 @@ class _DayCard extends StatelessWidget {
             else
               ...accounts!.map((item) {
                 final acc     = (item['account'] as Map<String, dynamic>?) ?? {};
-                final id      = acc['id']           as String? ?? '';
-                final name    = acc['businessName'] as String? ?? '—';
-                final code    = acc['accountCode']  as String? ?? '';
-                final phone   = acc['contactNumber']as String? ?? '';
-                final area    = acc['area']         as String? ?? '';
-                final pin     = acc['pincode']      as String? ?? '';
-                final visited = item['visited_today'] == true;
-                final sched   = _scheduleLabel(item);
+                final id      = (acc['id'] as dynamic)?.toString() ?? '';
+                final name    = (acc['businessName'] as dynamic)?.toString() ?? '—';
+                final code    = (acc['accountCode'] as dynamic)?.toString() ?? '';
+                final phone   = (acc['contactNumber'] as dynamic)?.toString() ?? '';
+                final area       = (acc['area'] as dynamic)?.toString() ?? '';
+                final pin        = (acc['pincode'] as dynamic)?.toString() ?? '';
+                final visited    = item['visited_today'] == true;
+                final sched      = _scheduleLabel(item);
+                final accountType = item['account_type'] as String? ?? 'lead';
 
                 return InkWell(
                   onTap: id.isNotEmpty
@@ -344,34 +345,57 @@ class _DayCard extends StatelessWidget {
                                       fontSize: 11, color: Colors.grey.shade500),
                                 ),
                               ],
-                              if (sched != null) ...[
-                                const SizedBox(height: 5),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF43A047)
-                                        .withValues(alpha: 0.10),
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
+                              const SizedBox(height: 5),
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: accountType == 'customer'
+                                          ? const Color(0xFFE3F2FD)
+                                          : const Color(0xFFFFF3E0),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      accountType.toUpperCase(),
+                                      style: TextStyle(
+                                          fontSize: 8.5,
+                                          fontWeight: FontWeight.w700,
+                                          color: accountType == 'customer'
+                                              ? const Color(0xFF1976D2)
+                                              : const Color(0xFFF57C00)),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  if (sched != null)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
                                         color: const Color(0xFF43A047)
-                                            .withValues(alpha: 0.30)),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(Icons.event_repeat_rounded,
-                                          size: 12, color: Color(0xFF2E7D32)),
-                                      const SizedBox(width: 4),
-                                      Text(sched,
-                                          style: const TextStyle(
-                                              fontSize: 10.5,
-                                              fontWeight: FontWeight.w700,
-                                              color: Color(0xFF2E7D32))),
-                                    ],
-                                  ),
-                                ),
-                              ],
+                                            .withValues(alpha: 0.10),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                            color: const Color(0xFF43A047)
+                                                .withValues(alpha: 0.30)),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.event_repeat_rounded,
+                                              size: 12, color: Color(0xFF2E7D32)),
+                                          const SizedBox(width: 4),
+                                          Text(sched,
+                                              style: const TextStyle(
+                                                  fontSize: 10.5,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: Color(0xFF2E7D32))),
+                                        ],
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ],
                           ),
                         ),

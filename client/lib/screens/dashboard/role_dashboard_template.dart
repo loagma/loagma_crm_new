@@ -161,7 +161,7 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
                   crossAxisCount: 2,
                   crossAxisSpacing: 14,
                   mainAxisSpacing: 14,
-                  childAspectRatio: 1.05,
+                  childAspectRatio: 0.95,
                 ),
                 itemCount: featureItems.length,
                 itemBuilder: (context, index) {
@@ -220,14 +220,18 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
                             ),
                           ),
                           if (it['subtitle'] != null) ...[
-                            const SizedBox(height: 3),
-                            Text(
-                              it['subtitle'] as String,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontSize: 9.5,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.black45,
+                            const SizedBox(height: 4),
+                            Container(
+                              color: Colors.red.withValues(alpha: 0.3),
+                              padding: const EdgeInsets.all(2),
+                              child: Text(
+                                it['subtitle'] as String,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.black54,
+                                ),
                               ),
                             ),
                           ],

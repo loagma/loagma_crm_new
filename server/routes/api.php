@@ -37,6 +37,8 @@ Route::prefix('auth')->group(function () {
 // ---------------------------------------------------------------------------
 // Lead Accounts CRUD
 // ---------------------------------------------------------------------------
+Route::get('/customers', [LeadsAccountController::class, 'customers']);
+
 Route::prefix('lead-accounts')->group(function () {
     Route::get('/',                [LeadsAccountController::class, 'index']);
     Route::post('/',               [LeadsAccountController::class, 'store']);

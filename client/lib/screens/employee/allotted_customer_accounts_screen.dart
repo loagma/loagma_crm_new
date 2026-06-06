@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../services/user_service.dart';
+import 'customer_detail_screen.dart';
 
 // Flow:
 //  1. getAreaAssign(mobile)  → salesman's area IDs
@@ -103,9 +104,31 @@ class _AllottedCustomerAccountsScreenState
         perPage: 1000,
       );
       final raw = result['data'];
-      final allAccounts = raw is List
-          ? raw.map((e) => Map<String, dynamic>.from(e as Map)).toList()
+      final leads = raw is List
+          ? raw.map((e) {
+              final m = Map<String, dynamic>.from(e as Map);
+              m['_type'] = 'lead';
+              return m;
+            }).toList()
           : <Map<String, dynamic>>[];
+
+      // Also fetch customers from user table (same pincodes)
+      final customerRaw = await ApiService.getCustomers(pincodes: pincodes);
+      final customers = customerRaw.map((u) => <String, dynamic>{
+        'id':            u['userid'].toString(),
+        'accountCode':   '',
+        'businessName':  (u['shop_name'] as String?)?.isNotEmpty == true
+            ? u['shop_name']
+            : (u['name'] ?? '').toString(),
+        'personName':    (u['name'] ?? '').toString(),
+        'contactNumber': (u['contactno'] ?? '').toString(),
+        'address':       (u['shop_address'] ?? u['address'] ?? '').toString(),
+        'pincode':       (u['pincode'] ?? '').toString(),
+        '_type':         'customer',
+      }).toList();
+
+      // Merge leads + customers
+      final allAccounts = [...leads, ...customers];
 
       // Step 3 — group client-side by pincode
       // Pre-seed with ALL pincodes from areas so empty ones still appear
@@ -313,18 +336,24 @@ class _AllottedCustomerAccountsScreenState
     final intervalDays= result['interval_days']as int?;
     final startDate   = result['start_date']  as String?;
 
-    final accountIds = _groups
-        .expand((g) => (g['accounts'] as List<Map<String, dynamic>>))
-        .where((a) => _selected.contains(_key(a)))
-        .map((a) => a['id'] as String? ?? '')
-        .where((id) => id.isNotEmpty)
-        .toList();
+    final selected = <Map<String, dynamic>>[];
+    for (final g in _groups) {
+      for (final a in (g['accounts'] as List<Map<String, dynamic>>)) {
+        if (_selected.contains(_key(a))) {
+          selected.add(a);
+        }
+      }
+    }
+
+    final accountIds = selected.map((a) => a['id'] as String? ?? '').where((id) => id.isNotEmpty).toList();
+    final accountTypes = selected.map((a) => (a['_type'] as String?) == 'customer' ? 'customer' : 'lead').toList();
 
     if (accountIds.isEmpty) return;
 
     if (mounted) setState(() => _actionLoading = true);
     final res = await ApiService.assignBeatPlan(
       accountIds:   accountIds,
+      accountTypes: accountTypes,
       frequency:    frequency,
       days:         days,
       monthDate:    monthDate,
@@ -353,7 +382,16 @@ class _AllottedCustomerAccountsScreenState
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
-        title: const Text('Customer List Allotment'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Customer List Allotment'),
+            const Text(
+              'Lead , User',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+            ),
+          ],
+        ),
         backgroundColor: _gold,
         foregroundColor: Colors.white,
         elevation: 0,
@@ -475,12 +513,29 @@ class _AllottedCustomerAccountsScreenState
             final isOpen   = _expanded.contains(pin);
             final selCount = accounts.where((a) => _selected.contains(_key(a))).length;
             final s = _stats[pin];
+
+            // Separate leads and customers
+            final leads = accounts.where((a) => (a['_type'] as String?) == 'lead').toList();
+            final customers = accounts.where((a) => (a['_type'] as String?) == 'customer').toList();
+
+            // Count with beat plans
+            final leadsWithPlan = leads.where((a) => _beatPlans.containsKey(a['id'] as String? ?? '')).length;
+            final customersWithPlan = customers.where((a) => _beatPlans.containsKey(a['id'] as String? ?? '')).length;
+
+            // Selected by type
+            final selectedLeads = leads.where((a) => _selected.contains(_key(a))).length;
+            final selectedCustomers = customers.where((a) => _selected.contains(_key(a))).length;
+
             return _PincodeSection(
               pincode:   pin,
-              existing:  s?['existing']  ?? accounts.length,
-              assign:    s?['assign']    ?? 0,
-              remaining: s?['remaining'] ?? accounts.length,
-              selected:  selCount,
+              existingL: leads.length,
+              existingC: customers.length,
+              assignL:   leadsWithPlan,
+              assignC:   customersWithPlan,
+              remainingL: leads.length - leadsWithPlan,
+              remainingC: customers.length - customersWithPlan,
+              selectedL:  selectedLeads,
+              selectedC:  selectedCustomers,
               expanded:  isOpen,
               onToggle:  () => setState(() => isOpen ? _expanded.remove(pin) : _expanded.add(pin)),
               onSelectAll: () => _selectAllIn(accounts),
@@ -508,36 +563,35 @@ class _AllottedCustomerAccountsScreenState
     ),
     child: Row(
       children: [
-        Text('${_selected.length} selected  |  0 day',
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-        const Spacer(),
-        OutlinedButton.icon(
+        Expanded(
+          child: Text('${_selected.length} selected',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+        OutlinedButton(
           onPressed: (_selected.isEmpty || _actionLoading) ? null : _unassignSelected,
-          icon: const Icon(Icons.remove_circle_outline_rounded, size: 15),
-          label: const Text('Unassign', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           style: OutlinedButton.styleFrom(
             foregroundColor: Colors.red,
             side: const BorderSide(color: Colors.red),
             disabledForegroundColor: Colors.red.withValues(alpha: 0.3),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           ),
+          child: const Text('Unassign', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
         ),
-        const SizedBox(width: 10),
-        ElevatedButton.icon(
+        const SizedBox(width: 8),
+        ElevatedButton(
           onPressed: (_selected.isEmpty || _actionLoading) ? null : _showAssignDayDialog,
-          icon: _actionLoading
-              ? const SizedBox(width: 15, height: 15,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Icon(Icons.save_rounded, size: 15),
-          label: const Text('Assign Day', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           style: ElevatedButton.styleFrom(
             backgroundColor: _gold,
             foregroundColor: Colors.white,
             disabledBackgroundColor: _gold.withValues(alpha: 0.4),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           ),
+          child: _actionLoading
+              ? const SizedBox(width: 12, height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.white))
+              : const Text('Assign', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
         ),
       ],
     ),
@@ -548,10 +602,14 @@ class _AllottedCustomerAccountsScreenState
 
 class _PincodeSection extends StatefulWidget {
   final String                       pincode;
-  final int                          existing;
-  final int                          assign;
-  final int                          remaining;
-  final int                          selected;
+  final int                          existingL;
+  final int                          existingC;
+  final int                          assignL;
+  final int                          assignC;
+  final int                          remainingL;
+  final int                          remainingC;
+  final int                          selectedL;
+  final int                          selectedC;
   final bool                         expanded;
   final VoidCallback                 onToggle;
   final VoidCallback                 onSelectAll;
@@ -565,10 +623,14 @@ class _PincodeSection extends StatefulWidget {
 
   const _PincodeSection({
     required this.pincode,
-    required this.existing,
-    required this.assign,
-    required this.remaining,
-    required this.selected,
+    required this.existingL,
+    required this.existingC,
+    required this.assignL,
+    required this.assignC,
+    required this.remainingL,
+    required this.remainingC,
+    required this.selectedL,
+    required this.selectedC,
     required this.expanded,
     required this.onToggle,
     required this.onSelectAll,
@@ -685,25 +747,25 @@ class _PincodeSectionState extends State<_PincodeSection> {
                 Row(
                   children: [
                     Expanded(child: _FilterBtn(
-                      label: 'Existing', count: widget.existing,
+                      label: 'Existing', countL: widget.existingL, countC: widget.existingC,
                       active: _filter == 'existing',
                       onTap: () => setState(() { _filter = 'existing'; if (!expanded) widget.onToggle(); }),
                     )),
                     const SizedBox(width: 5),
                     Expanded(child: _FilterBtn(
-                      label: 'Assign', count: widget.assign,
+                      label: 'Assign', countL: widget.assignL, countC: widget.assignC,
                       active: _filter == 'assign',
                       onTap: () => setState(() { _filter = 'assign'; if (!expanded) widget.onToggle(); }),
                     )),
                     const SizedBox(width: 5),
                     Expanded(child: _FilterBtn(
-                      label: 'Remaining', count: widget.remaining,
+                      label: 'Remaining', countL: widget.remainingL, countC: widget.remainingC,
                       active: _filter == 'remaining',
                       onTap: () => setState(() { _filter = 'remaining'; if (!expanded) widget.onToggle(); }),
                     )),
                     const SizedBox(width: 5),
                     Expanded(child: _FilterBtn(
-                      label: 'Selected', count: widget.selected,
+                      label: 'Selected', countL: widget.selectedL, countC: widget.selectedC,
                       active: _filter == 'selected',
                       onTap: () => setState(() { _filter = 'selected'; if (!expanded) widget.onToggle(); }),
                     )),
@@ -833,6 +895,44 @@ class _AccountCard extends StatelessWidget {
     _launch('https://wa.me/$number');
   }
 
+  String _formatAccountId(String code) {
+    // Use code if available, otherwise parse ID and remove leading zeros
+    if (code.isNotEmpty) return code;
+
+    final accountId = (account['id'] as String?) ?? '';
+    if (accountId.isEmpty) return '';
+
+    // Try to parse as integer to remove leading zeros
+    final num = int.tryParse(accountId);
+    if (num != null) return num.toString();
+
+    // If not numeric, just truncate UUID to first 8 chars
+    return accountId.length > 8 ? accountId.substring(0, 8).toUpperCase() : accountId.toUpperCase();
+  }
+
+  Widget _buildTypeChip(String type) {
+    final isLead = type == 'lead';
+    final gold = const Color(0xFFD7BE69);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: isLead ? gold.withValues(alpha: 0.12) : Colors.green.shade50,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isLead ? gold : Colors.green.shade400,
+        ),
+      ),
+      child: Text(
+        isLead ? 'Lead' : 'Customer',
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          color: isLead ? const Color(0xFFB89A3E) : Colors.green.shade700,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final id      = (account['id']           as String?) ?? '';
@@ -842,10 +942,23 @@ class _AccountCard extends StatelessWidget {
     final phone   = account['contactNumber'] as String? ?? '';
     final address = account['address']       as String? ?? '';
     final area    = account['area']          as String? ?? '';
+    final type    = (account['_type']        as String?) ?? 'lead';
+    final isLead  = type == 'lead';
 
     return GestureDetector(
       onTap: () {
-        if (id.isNotEmpty) context.push('/lead-accounts/$id', extra: account);
+        if (id.isNotEmpty) {
+          if (isLead) {
+            context.push('/lead-accounts/$id', extra: account);
+          } else {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (ctx) => CustomerDetailScreen(customer: account),
+              ),
+            );
+          }
+        }
       },
       child: Container(
         margin: const EdgeInsets.fromLTRB(10, 4, 10, 4),
@@ -860,18 +973,31 @@ class _AccountCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Code + person name
+            // Account type + ID/code + person name
             Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Text(code,
-                    style: const TextStyle(fontSize: 11, color: Colors.black45, letterSpacing: 0.4)),
-                const Spacer(),
-                if (person.isNotEmpty)
-                  Text(person,
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                Expanded(
+                  child: Text('${isLead ? 'Lead' : 'User'} Ac :${_formatAccountId(code)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11, color: Colors.black45, letterSpacing: 0.4)),
+                ),
+                if (person.isNotEmpty) ...[
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(person,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 4),
+            // Lead/Customer type chip
+            _buildTypeChip((account['_type'] ?? 'lead').toString()),
+            const SizedBox(height: 6),
             Text(name,
                 style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
             const SizedBox(height: 2),
@@ -904,7 +1030,7 @@ class _AccountCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 8),
-            // Checkbox + phone + call + whatsapp
+            // Checkbox + phone pill + call + whatsapp buttons
             Row(
               children: [
                 // Checkbox — stops tap propagating to card
@@ -925,34 +1051,40 @@ class _AccountCard extends StatelessWidget {
                         : null,
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.grey.shade300),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.phone_rounded, size: 13, color: Colors.grey.shade600),
-                        const SizedBox(width: 5),
-                        Text(phone,
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                      ],
+                const SizedBox(width: 8),
+                // Phone pill (compact)
+                if (phone.isNotEmpty)
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.phone_rounded, size: 12, color: Colors.grey.shade600),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(phone,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 // Call button
                 _ActionBtn(
                   icon: Icons.call_rounded,
                   color: Colors.grey.shade600,
                   onTap: phone.isNotEmpty ? () => _call(phone) : null,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 // WhatsApp button
                 _ActionBtn(
                   icon: Icons.chat_rounded,
@@ -972,12 +1104,14 @@ class _AccountCard extends StatelessWidget {
 
 class _FilterBtn extends StatelessWidget {
   final String       label;
-  final int          count;
+  final int          countL;
+  final int          countC;
   final bool         active;
   final VoidCallback onTap;
   const _FilterBtn({
     required this.label,
-    required this.count,
+    required this.countL,
+    required this.countC,
     required this.active,
     required this.onTap,
   });
@@ -990,7 +1124,7 @@ class _FilterBtn extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         decoration: BoxDecoration(
           color: active ? _gold.withValues(alpha: 0.18) : Colors.grey.shade100,
           borderRadius: BorderRadius.circular(8),
@@ -998,21 +1132,20 @@ class _FilterBtn extends StatelessWidget {
               color: active ? _gold : Colors.grey.shade300,
               width: active ? 1.5 : 1),
         ),
-        child: Row(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Flexible(
-              child: Text(label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 8.5, fontWeight: FontWeight.w600, color: fg)),
-            ),
-            const SizedBox(width: 2),
-            Text('$count',
+            Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: 11, fontWeight: FontWeight.w800, color: fg)),
+                    fontSize: 8, fontWeight: FontWeight.w600, color: fg)),
+            const SizedBox(height: 1),
+            Text('L:$countL C:$countC',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 9, fontWeight: FontWeight.w800, color: fg)),
           ],
         ),
       ),

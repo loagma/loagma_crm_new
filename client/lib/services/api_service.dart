@@ -251,6 +251,28 @@ class ApiService {
     }
   }
 
+  /// Fetch customers from user table, optionally filtered by pincodes.
+  static Future<List<Map<String, dynamic>>> getCustomers({List<String>? pincodes}) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/customers');
+    var finalUri = uri;
+    if (pincodes != null && pincodes.isNotEmpty) {
+      final params = <String, List<String>>{'pincodes[]': pincodes};
+      finalUri = uri.replace(queryParameters: params);
+    }
+    try {
+      final response = await http.get(finalUri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = (decoded['data'] as List?) ?? [];
+        return data.cast<Map<String, dynamic>>();
+      }
+      print('getCustomers status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getCustomers error: $e');
+    }
+    return [];
+  }
+
   /// Fetch a single lead account by id.
   static Future<Map<String, dynamic>?> getLeadAccount(String id) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/$id');
@@ -1014,17 +1036,19 @@ class ApiService {
 
   static Future<Map<String, dynamic>?> assignBeatPlan({
     required List<String> accountIds,
-    required String frequency,         // 'weekly' | 'monthly' | 'n_days'
-    List<String>? days,                // weekly only
-    int? monthDate,                    // monthly only
-    int? intervalDays,                 // n_days only
-    String? startDate,                 // n_days only (YYYY-MM-DD)
+    required List<String> accountTypes,  // 'lead' or 'customer' for each account
+    required String frequency,           // 'weekly' | 'monthly' | 'n_days'
+    List<String>? days,                  // weekly only
+    int? monthDate,                      // monthly only
+    int? intervalDays,                   // n_days only
+    String? startDate,                   // n_days only (YYYY-MM-DD)
   }) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/assign');
     try {
       final body = <String, dynamic>{
-        'account_ids': accountIds,
-        'frequency':   frequency,
+        'account_ids':  accountIds,
+        'account_types': accountTypes,
+        'frequency':    frequency,
         if (days != null)         'days':          days,
         if (monthDate != null)    'month_date':    monthDate,
         if (intervalDays != null) 'interval_days': intervalDays,

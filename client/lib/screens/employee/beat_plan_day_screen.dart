@@ -138,8 +138,9 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                               final address = acc['address']       as String? ?? '';
                               final area    = acc['area']          as String? ?? '';
                               final pin     = acc['pincode']       as String? ?? '';
-                              final visited = item['visited_today'] == true;
-                              final sched   = _scheduleLabel(item);
+                              final visited    = item['visited_today'] == true;
+                              final sched      = _scheduleLabel(item);
+                              final accountType = item['account_type'] as String? ?? 'lead';
 
                               return GestureDetector(
                                 onTap: () {
@@ -193,6 +194,32 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                                                       fontWeight:
                                                           FontWeight.w700)),
                                             ),
+                                            Container(
+                                              padding: const EdgeInsets
+                                                  .symmetric(
+                                                  horizontal: 6,
+                                                  vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: accountType == 'customer'
+                                                    ? const Color(0xFFE3F2FD)
+                                                    : const Color(0xFFFFF3E0),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
+                                              child: Text(
+                                                  accountType.toUpperCase(),
+                                                  style: TextStyle(
+                                                      fontSize: 9,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      color: accountType ==
+                                                              'customer'
+                                                          ? const Color(
+                                                              0xFF1976D2)
+                                                          : const Color(
+                                                              0xFFF57C00))),
+                                            ),
+                                            const SizedBox(width: 6),
                                             if (visited)
                                               Container(
                                                 padding: const EdgeInsets

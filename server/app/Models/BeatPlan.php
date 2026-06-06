@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class BeatPlan extends Model
 {
@@ -12,6 +11,7 @@ class BeatPlan extends Model
 
     protected $fillable = [
         'account_id',
+        'account_type',
         'salesman_id',
         'frequency',
         'days',
@@ -28,11 +28,6 @@ class BeatPlan extends Model
         'start_date'     => 'date',
         'is_active'      => 'boolean',
     ];
-
-    public function account(): BelongsTo
-    {
-        return $this->belongsTo(LeadsAccount::class, 'account_id', 'id');
-    }
 
     public function visits(): HasMany
     {

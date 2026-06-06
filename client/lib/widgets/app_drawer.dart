@@ -46,7 +46,7 @@ class AppDrawer extends StatelessWidget {
         return [
           {'title': 'My Areas',     'icon': Icons.location_on_rounded,           'route': '/my-areas',      'color': const Color(0xFFEF5350), 'subtitle': 'Assigned areas'},
           {'title': 'My Team',      'icon': Icons.groups_rounded,                'route': '/my-team',       'color': const Color(0xFF26A69A), 'subtitle': 'Salesmen in my areas'},
-          {'title': 'Lead Accounts','icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts', 'color': const Color(0xFF42A5F5)},
+          {'title': 'Create Lead Accounts','icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts', 'color': const Color(0xFF42A5F5)},
         ];
       case 'head_incharge':
         return [
@@ -55,17 +55,17 @@ class AppDrawer extends StatelessWidget {
         ];
       case 'salesman':
         return [
-          {'title': 'Lead Accounts',        'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts',             'color': const Color(0xFF42A5F5)},
+          {'title': 'Create Lead Accounts',        'icon': Icons.account_balance_wallet_rounded, 'route': '/lead-accounts',             'color': const Color(0xFF42A5F5)},
           {'title': 'My Areas',             'icon': Icons.location_on_rounded,            'route': '/my-areas',                  'color': const Color(0xFFEF5350), 'subtitle': 'Assigned areas'},
-          {'title': 'Alloted Customers',    'icon': Icons.people_alt_rounded,             'route': '/allotted-customer-accounts', 'color': const Color(0xFF26A69A)},
+          {'title': 'Alloted Customers',    'icon': Icons.people_alt_rounded,             'route': '/allotted-customer-accounts', 'color': const Color(0xFF26A69A), 'subtitle': 'Lead & Customers'},
           {'title': 'Todays Beat Plan',     'icon': Icons.today_rounded,                  'route': '/todays-beat-plan',           'color': const Color(0xFF66BB6A)},
           {'title': 'All Beat Plan',        'icon': Icons.calendar_month_rounded,         'route': '/all-beat-plan',             'color': const Color(0xFF5C6BC0)},
-          {'title': 'Apply  Leave',      'icon': Icons.beach_access_rounded,          'route': '/apply-leave',              'color': const Color(0xFFFF7043)},
+          // {'title': 'Apply  Leave',      'icon': Icons.beach_access_rounded,          'route': '/apply-leave',              'color': const Color(0xFFFF7043)},
         ];
       case 'telecaller':
         return [
           {'title': 'Home',                      'icon': Icons.home_rounded,           'route': '/dashboard/telecaller',       'color': const Color(0xFF5C6BC0)},
-          {'title': 'Lead Accounts',             'icon': Icons.people_alt_rounded,     'route': '/lead-accounts',              'color': const Color(0xFF42A5F5)},
+          {'title': 'Create Lead Accounts',             'icon': Icons.people_alt_rounded,     'route': '/lead-accounts',              'color': const Color(0xFF42A5F5)},
           {'title': 'Allotted Customer Accounts','icon': Icons.assignment_ind_rounded,  'route': '/allotted-customer-accounts', 'color': const Color(0xFF26A69A)},
           {'title': 'Verify Lead Accounts',      'icon': Icons.verified_user_rounded,   'route': '/verify-lead-accounts',       'color': const Color(0xFF66BB6A)},
           {'title': 'Profile',                   'icon': Icons.person_rounded,          'route': '/profile',                    'color': const Color(0xFF78909C)},

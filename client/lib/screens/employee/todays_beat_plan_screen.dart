@@ -74,7 +74,10 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
           : _error.isNotEmpty
               ? Center(child: Text(_error,
                     style: const TextStyle(color: Colors.red)))
-              : ListView(
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  color: _gold,
+                  child: ListView(
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
                   children: [
                     // Summary card
@@ -156,6 +159,7 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
                         child: _CustomerCard(item: _items[i]),
                       )),
                   ],
+                  ),
                 ),
     );
   }
@@ -196,17 +200,18 @@ class _CustomerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final acc     = _account;
-    final code    = acc['accountCode']   as String? ?? '';
-    final name    = acc['businessName']  as String? ?? '—';
-    final person  = acc['personName']    as String? ?? '';
-    final phone   = acc['contactNumber'] as String? ?? '';
-    final address = acc['address']       as String? ?? '';
-    final area    = acc['area']          as String? ?? '';
-    final pin     = acc['pincode']       as String? ?? '';
-    final freq    = item['frequency']    as String? ?? 'weekly';
-    final days    = item['days']         as List?;
-    final visited = item['visited_today'] == true;
+    final acc        = _account;
+    final code       = acc['accountCode']   as String? ?? '';
+    final name       = acc['businessName']  as String? ?? '—';
+    final person     = acc['personName']    as String? ?? '';
+    final phone      = acc['contactNumber'] as String? ?? '';
+    final address    = acc['address']       as String? ?? '';
+    final area       = acc['area']          as String? ?? '';
+    final pin        = acc['pincode']       as String? ?? '';
+    final freq       = item['frequency']    as String? ?? 'weekly';
+    final days       = item['days']         as List?;
+    final visited    = item['visited_today'] == true;
+    final accountType = item['account_type'] as String? ?? 'lead';
 
     return GestureDetector(
       onTap: () {
@@ -233,13 +238,23 @@ class _CustomerCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Code + freq chip
+            // Code + freq chip + account type
             Row(children: [
               Text(code,
                   style: const TextStyle(
                       fontSize: 11, color: Colors.grey,
                       letterSpacing: 0.5)),
               const Spacer(),
+              _Tag(
+                label: accountType.toUpperCase(),
+                bg: accountType == 'customer'
+                    ? const Color(0xFFE3F2FD)
+                    : const Color(0xFFFFF3E0),
+                fg: accountType == 'customer'
+                    ? const Color(0xFF1976D2)
+                    : const Color(0xFFF57C00),
+              ),
+              const SizedBox(width: 6),
               if (visited)
                 _Tag(label: '✓ Visited',
                     bg: const Color(0xFFE8F5E9),

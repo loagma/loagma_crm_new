@@ -56,56 +56,86 @@ class BeatPlanController extends Controller
 
     public function assign(): JsonResponse
     {
-        $salesman = $this->salesmanId();
+        try {
+            $data = request()->validate([
+                'account_ids'   => 'required|array|min:1',
+                'account_ids.*' => 'required|string',
+                'account_types' => 'required|array',
+                'account_types.*' => 'required|string|in:lead,customer',
+                'frequency'     => 'required|in:weekly,monthly,n_days',
+                'days'          => 'required_if:frequency,weekly|nullable|array',
+                'days.*'        => 'string|in:Mon,Tue,Wed,Thu,Fri,Sat,Sun',
+                'month_date'    => 'required_if:frequency,monthly|nullable|integer|min:1|max:31',
+                'interval_days' => 'required_if:frequency,n_days|nullable|integer|min:1',
+                'start_date'    => 'required_if:frequency,n_days|nullable|date',
+                'salesman_id'   => 'nullable|string', // allow optional override for admin
+            ]);
 
-        $data = request()->validate([
-            'account_ids'   => 'required|array|min:1',
-            'account_ids.*' => 'required|string',
-            'frequency'     => 'required|in:weekly,monthly,n_days',
-            'days'          => 'required_if:frequency,weekly|nullable|array',
-            'days.*'        => 'string|in:Mon,Tue,Wed,Thu,Fri,Sat,Sun',
-            'month_date'    => 'required_if:frequency,monthly|nullable|integer|min:1|max:31',
-            'interval_days' => 'required_if:frequency,n_days|nullable|integer|min:1',
-            'start_date'    => 'required_if:frequency,n_days|nullable|date',
-        ]);
+            // Use provided salesman_id or fall back to JWT authenticated user
+            $salesman = $data['salesman_id'] ?? $this->salesmanId();
 
-        $saved = [];
-        foreach ($data['account_ids'] as $accountId) {
-            $plan = BeatPlan::updateOrCreate(
-                ['account_id' => $accountId, 'salesman_id' => $salesman],
-                [
-                    'frequency'     => $data['frequency'],
-                    'days'          => $data['days']          ?? null,
-                    'month_date'    => $data['month_date']    ?? null,
-                    'interval_days' => $data['interval_days'] ?? null,
-                    'start_date'    => $data['start_date']    ?? null,
-                    'is_active'     => true,
-                ]
-            );
-            $saved[] = $plan->id;
+            $saved = [];
+            foreach ($data['account_ids'] as $i => $accountId) {
+                $accountType = $data['account_types'][$i] ?? 'lead';
+                $plan = BeatPlan::updateOrCreate(
+                    ['account_id' => $accountId, 'salesman_id' => $salesman],
+                    [
+                        'account_type'  => $accountType,
+                        'frequency'     => $data['frequency'],
+                        'days'          => $data['days']          ?? null,
+                        'month_date'    => $data['month_date']    ?? null,
+                        'interval_days' => $data['interval_days'] ?? null,
+                        'start_date'    => $data['start_date']    ?? null,
+                        'is_active'     => true,
+                    ]
+                );
+                $saved[] = $plan->id;
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => count($saved) . ' account(s) assigned to beat plan',
+                'ids'     => $saved,
+            ]);
+        } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
+            return response()->json([
+                'success' => false,
+                'error'   => 'Authentication failed: ' . $e->getMessage(),
+            ], 401);
+        } catch (\Exception $e) {
+            \Log::error('Beat plan assign error', ['exception' => $e]);
+            return response()->json([
+                'success' => false,
+                'error'   => $e->getMessage(),
+            ], 500);
         }
-
-        return response()->json([
-            'success' => true,
-            'message' => count($saved) . ' account(s) assigned to beat plan',
-            'ids'     => $saved,
-        ]);
     }
 
     // ── 2. Today's beat plan ──────────────────────────────────────────────────
 
     public function today(): JsonResponse
     {
-        $salesman = $this->salesmanId();
+        try {
+            $salesman = $this->salesmanId();
         $today    = Carbon::today(self::TZ);
 
-        $query = BeatPlan::with('account')
-            ->where('salesman_id', $salesman)
+        $query = BeatPlan::where('salesman_id', $salesman)
             ->where('is_active', true);
 
         $this->dayFiringQuery($query, $today);
 
         $plans = $query->get();
+
+        // Separate leads and customers
+        $leadIds = $plans->where('account_type', 'lead')->pluck('account_id')->unique()->values()->toArray();
+        $customerIds = $plans->where('account_type', 'customer')->pluck('account_id')->unique()->values()->toArray();
+
+        $leads = !empty($leadIds)
+            ? LeadsAccount::whereIn('id', $leadIds)->get()->keyBy('id')
+            : collect();
+        $customers = !empty($customerIds)
+            ? \DB::table('user')->whereIn('userid', $customerIds)->get()->keyBy('userid')
+            : collect();
 
         // Build response with visit status for today
         $visitedIds = BeatPlanVisit::where('salesman_id', $salesman)
@@ -113,36 +143,63 @@ class BeatPlanController extends Controller
             ->pluck('beat_plan_id')
             ->flip();
 
-        $data = $plans->map(function (BeatPlan $plan) use ($visitedIds) {
-            $account = $plan->account;
+        $data = $plans->map(function (BeatPlan $plan) use ($visitedIds, $leads, $customers) {
+            $account = null;
+            if ($plan->account_type === 'customer') {
+                $user = $customers->get($plan->account_id);
+                $account = $user ? [
+                    'id'            => $user->userid,
+                    'accountCode'   => '',
+                    'businessName'  => $user->shop_name ?? '',
+                    'personName'    => $user->name ?? '',
+                    'contactNumber' => $user->contactno ?? '',
+                    'address'       => $user->shop_address ?? $user->address ?? '',
+                    'area'          => '',
+                    'pincode'       => $user->pincode ?? '',
+                    'latitude'      => null,
+                    'longitude'     => null,
+                ] : null;
+            } else {
+                $lead = $leads->get($plan->account_id);
+                $account = $lead ? [
+                    'id'            => $lead->id,
+                    'accountCode'   => $lead->accountCode,
+                    'businessName'  => $lead->businessName,
+                    'personName'    => $lead->personName,
+                    'contactNumber' => $lead->contactNumber,
+                    'address'       => $lead->address,
+                    'area'          => $lead->area,
+                    'pincode'       => $lead->pincode,
+                    'latitude'      => $lead->latitude,
+                    'longitude'     => $lead->longitude,
+                ] : null;
+            }
+
             return [
-                'beat_plan_id'  => $plan->id,
-                'frequency'     => $plan->frequency,
-                'days'          => $plan->days,
-                'month_date'    => $plan->month_date,
-                'interval_days' => $plan->interval_days,
-                'visited_today' => $visitedIds->has($plan->id),
-                'account' => $account ? [
-                    'id'            => $account->id,
-                    'accountCode'   => $account->accountCode,
-                    'businessName'  => $account->businessName,
-                    'personName'    => $account->personName,
-                    'contactNumber' => $account->contactNumber,
-                    'address'       => $account->address,
-                    'area'          => $account->area,
-                    'pincode'       => $account->pincode,
-                    'latitude'      => $account->latitude,
-                    'longitude'     => $account->longitude,
-                ] : null,
+                'beat_plan_id'   => $plan->id,
+                'frequency'      => $plan->frequency,
+                'days'           => $plan->days,
+                'month_date'     => $plan->month_date,
+                'interval_days'  => $plan->interval_days,
+                'visited_today'  => $visitedIds->has($plan->id),
+                'account_type'   => $plan->account_type,
+                'account'        => $account,
             ];
         })->filter(fn($r) => $r['account'] !== null)->values();
 
-        return response()->json([
-            'success' => true,
-            'date'    => $today->toDateString(),
-            'total'   => $data->count(),
-            'data'    => $data,
-        ]);
+            return response()->json([
+                'success' => true,
+                'date'    => $today->toDateString(),
+                'total'   => $data->count(),
+                'data'    => $data,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Beat plan today error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
     }
 
     // ── 3. Current-week beat plan ─────────────────────────────────────────────
@@ -155,36 +212,64 @@ class BeatPlanController extends Controller
         // If a specific date is requested, return accounts for that day
         if ($dateParam) {
             $date  = Carbon::parse($dateParam, self::TZ);
-            $query = BeatPlan::with('account')
-                ->where('salesman_id', $salesman)
+            $query = BeatPlan::where('salesman_id', $salesman)
                 ->where('is_active', true);
             $this->dayFiringQuery($query, $date);
             $plans = $query->get();
+
+            // Separate leads and customers
+            $leadIds = $plans->where('account_type', 'lead')->pluck('account_id')->unique()->values()->toArray();
+            $customerIds = $plans->where('account_type', 'customer')->pluck('account_id')->unique()->values()->toArray();
+
+            $leads = !empty($leadIds)
+                ? LeadsAccount::whereIn('id', $leadIds)->get()->keyBy('id')
+                : collect();
+            $customers = !empty($customerIds)
+                ? \DB::table('user')->whereIn('userid', $customerIds)->get()->keyBy('userid')
+                : collect();
 
             $visitedIds = BeatPlanVisit::where('salesman_id', $salesman)
                 ->where('visit_date', $date->toDateString())
                 ->pluck('beat_plan_id')
                 ->flip();
 
-            $data = $plans->map(function (BeatPlan $plan) use ($visitedIds) {
-                $account = $plan->account;
+            $data = $plans->map(function (BeatPlan $plan) use ($visitedIds, $leads, $customers) {
+                $account = null;
+                if ($plan->account_type === 'customer') {
+                    $user = $customers->get($plan->account_id);
+                    $account = $user ? [
+                        'id'            => $user->userid,
+                        'accountCode'   => '',
+                        'businessName'  => $user->shop_name ?? '',
+                        'personName'    => $user->name ?? '',
+                        'contactNumber' => $user->contactno ?? '',
+                        'address'       => $user->shop_address ?? $user->address ?? '',
+                        'area'          => '',
+                        'pincode'       => $user->pincode ?? '',
+                    ] : null;
+                } else {
+                    $lead = $leads->get($plan->account_id);
+                    $account = $lead ? [
+                        'id'            => $lead->id,
+                        'accountCode'   => $lead->accountCode,
+                        'businessName'  => $lead->businessName,
+                        'personName'    => $lead->personName,
+                        'contactNumber' => $lead->contactNumber,
+                        'address'       => $lead->address,
+                        'area'          => $lead->area,
+                        'pincode'       => $lead->pincode,
+                    ] : null;
+                }
+
                 return [
-                    'beat_plan_id'  => $plan->id,
-                    'visited_today' => $visitedIds->has($plan->id),
-                    'frequency'     => $plan->frequency,
-                    'days'          => $plan->days,
-                    'month_date'    => $plan->month_date,
-                    'interval_days' => $plan->interval_days,
-                    'account' => $account ? [
-                        'id'            => $account->id,
-                        'accountCode'   => $account->accountCode,
-                        'businessName'  => $account->businessName,
-                        'personName'    => $account->personName,
-                        'contactNumber' => $account->contactNumber,
-                        'address'       => $account->address,
-                        'area'          => $account->area,
-                        'pincode'       => $account->pincode,
-                    ] : null,
+                    'beat_plan_id'   => $plan->id,
+                    'visited_today'  => $visitedIds->has($plan->id),
+                    'frequency'      => $plan->frequency,
+                    'days'           => $plan->days,
+                    'month_date'     => $plan->month_date,
+                    'interval_days'  => $plan->interval_days,
+                    'account_type'   => $plan->account_type,
+                    'account'        => $account,
                 ];
             })->filter(fn($r) => $r['account'] !== null)->values();
 
