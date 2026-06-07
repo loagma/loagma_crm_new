@@ -85,6 +85,24 @@ class ApiService {
     }
   }
 
+  /// Fetch roles from role_crm table. Returns list of {id, name, label}.
+  static Future<List<Map<String, dynamic>>> getRoles() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/masters/roles');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['data'] is List) {
+          return List<Map<String, dynamic>>.from(
+            (decoded['data'] as List).map((e) => Map<String, dynamic>.from(e as Map)));
+        }
+      }
+    } catch (e) {
+      print('getRoles error: $e');
+    }
+    return [];
+  }
+
   /// Fetch list of employees from the API.
   /// Supports optional server-side search (`q`) and pagination (`page`, `perPage`).
   /// Returns a list of employee maps.
@@ -95,16 +113,20 @@ class ApiService {
       if (perPage != null) 'per_page': perPage.toString(),
     });
 
-    final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
-    final decoded = jsonDecode(response.body);
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 30));
+      final decoded = jsonDecode(response.body);
 
-    if (decoded is Map && decoded.containsKey('data')) {
-      final data = decoded['data'];
-      if (data is List) {
-        return List<Map<String, dynamic>>.from(data.map((e) => Map<String, dynamic>.from(e as Map)));
+      if (decoded is Map && decoded.containsKey('data')) {
+        final data = decoded['data'];
+        if (data is List) {
+          return List<Map<String, dynamic>>.from(data.map((e) => Map<String, dynamic>.from(e as Map)));
+        }
+      } else if (decoded is List) {
+        return List<Map<String, dynamic>>.from(decoded.map((e) => Map<String, dynamic>.from(e as Map)));
       }
-    } else if (decoded is List) {
-      return List<Map<String, dynamic>>.from(decoded.map((e) => Map<String, dynamic>.from(e as Map)));
+    } catch (e) {
+      print('getEmployees failed for $uri: $e');
     }
 
     return <Map<String, dynamic>>[];
@@ -194,12 +216,30 @@ class ApiService {
 
   /// Fetch paginated/searched list of lead accounts.
   /// Returns {'data': [...], 'meta': {...}} or {'data': [...]}.
-  static Future<Map<String, dynamic>> getLeadAccounts({String? q, int? page, int? perPage}) async {
-    final uri = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts').replace(queryParameters: {
+  static Future<Map<String, dynamic>> getLeadAccounts({
+    String? q,
+    int? page,
+    int? perPage,
+    String? pincode,
+    List<String>? pincodes,
+    List<int>? areaIds,
+  }) async {
+    final params = <String, dynamic>{
       if (q != null && q.isNotEmpty) 'q': q,
       if (page != null) 'page': page.toString(),
       if (perPage != null) 'per_page': perPage.toString(),
-    });
+      if (pincode != null && pincode.isNotEmpty) 'pincode': pincode,
+    };
+    // Uri.replace doesn't support repeated keys — build manually for list params
+    var uri = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts').replace(queryParameters: params);
+    if (pincodes != null && pincodes.isNotEmpty) {
+      final extra = pincodes.map((p) => 'pincodes[]=${Uri.encodeQueryComponent(p)}').join('&');
+      uri = Uri.parse('${uri.toString()}&$extra');
+    }
+    if (areaIds != null && areaIds.isNotEmpty) {
+      final extra = areaIds.map((id) => 'area_ids[]=$id').join('&');
+      uri = Uri.parse('${uri.toString()}&$extra');
+    }
 
     try {
       final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
@@ -209,6 +249,28 @@ class ApiService {
       print('getLeadAccounts failed for $uri: $e');
       return {'success': false, 'data': <dynamic>[]};
     }
+  }
+
+  /// Fetch customers from user table, optionally filtered by pincodes.
+  static Future<List<Map<String, dynamic>>> getCustomers({List<String>? pincodes}) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/customers');
+    var finalUri = uri;
+    if (pincodes != null && pincodes.isNotEmpty) {
+      final params = <String, List<String>>{'pincodes[]': pincodes};
+      finalUri = uri.replace(queryParameters: params);
+    }
+    try {
+      final response = await http.get(finalUri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = (decoded['data'] as List?) ?? [];
+        return data.cast<Map<String, dynamic>>();
+      }
+      print('getCustomers status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getCustomers error: $e');
+    }
+    return [];
   }
 
   /// Fetch a single lead account by id.
@@ -566,7 +628,7 @@ class ApiService {
   static Future<List<Map<String, dynamic>>> getAllAreaAssigns() async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/area-assign');
     try {
-      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 30));
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final decoded = jsonDecode(response.body) as Map<String, dynamic>;
         final data = decoded['data'];
@@ -625,5 +687,469 @@ class ApiService {
       print('deleteAreaAssign failed for $url: $e');
       return false;
     }
+  }
+
+  // ── Incharge Assign (head_incharge → incharge mapping) ───────────────────
+
+  static Future<List<Map<String, dynamic>>> getAllInchargeAssigns() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/incharge-assign');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = decoded['data'];
+        if (data is List) {
+          return List<Map<String, dynamic>>.from(data.map((e) => Map<String, dynamic>.from(e as Map)));
+        }
+      }
+    } catch (e) {
+      print('getAllInchargeAssigns failed: $e');
+    }
+    return [];
+  }
+
+  static Future<Map<String, dynamic>?> getInchargeAssign(String headInchargeId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/incharge-assign/$headInchargeId');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('getInchargeAssign failed: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> saveInchargeAssign(
+      String headInchargeId, List<int> inchargeIds, List<String> inchargeNames) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/incharge-assign/$headInchargeId');
+    try {
+      final body = {'incharge_ids': inchargeIds, 'incharge_names': inchargeNames};
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      final status = response.statusCode;
+      if (status >= 200 && status < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      if (status == 422) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
+      }
+    } catch (e) {
+      print('saveInchargeAssign failed: $e');
+    }
+    return null;
+  }
+
+  static Future<bool> deleteInchargeAssign(String headInchargeId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/incharge-assign/$headInchargeId');
+    try {
+      final response = await http.delete(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('deleteInchargeAssign failed: $e');
+      return false;
+    }
+  }
+
+  // ── Attendance (employee) ─────────────────────────────────────────────────
+
+  static Future<String?> uploadAttendancePhoto(String filePath) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/upload-photo');
+    try {
+      final req = http.MultipartRequest('POST', url)
+        ..headers['Accept'] = 'application/json'
+        ..headers['Authorization'] = 'Bearer ${UserService.token}'
+        ..files.add(await http.MultipartFile.fromPath('image', filePath));
+
+      final streamed = await req.send().timeout(const Duration(seconds: 30));
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['path'] != null) {
+          return decoded['path'].toString();
+        }
+      }
+      print('uploadAttendancePhoto unexpected status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('uploadAttendancePhoto error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> attendancePunchIn({
+    String? lateReason,
+    String? earlyInReason,
+    String? punchInPhoto,
+    Map<String, dynamic>? punchInLocation,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/punch-in');
+    try {
+      final body = <String, dynamic>{
+        if (lateReason     != null) 'late_reason':       lateReason,
+        if (earlyInReason  != null) 'early_in_reason':   earlyInReason,
+        if (punchInPhoto   != null) 'punch_in_photo':    punchInPhoto,
+        if (punchInLocation != null) 'punch_in_location': punchInLocation,
+      };
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('attendancePunchIn failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('attendancePunchIn error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> attendancePunchOut({
+    String? earlyReason,
+    int workMinutes = 0,
+    int breakMinutes = 0,
+    String? punchOutPhoto,
+    Map<String, dynamic>? punchOutLocation,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/punch-out');
+    try {
+      final body = <String, dynamic>{
+        'total_work_minutes':  workMinutes,
+        'total_break_minutes': breakMinutes,
+        if (earlyReason != null)      'early_out_reason':    earlyReason,
+        if (punchOutPhoto != null)    'punch_out_photo':     punchOutPhoto,
+        if (punchOutLocation != null) 'punch_out_location':  punchOutLocation,
+      };
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('attendancePunchOut failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('attendancePunchOut error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> attendanceConfirmPunch({
+    required String type, // 'in' | 'out'
+    String? photo,
+    Map<String, dynamic>? location,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/confirm-punch');
+    try {
+      final body = <String, dynamic>{
+        'type': type,
+        if (photo != null)    'photo':    photo,
+        if (location != null) 'location': location,
+      };
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('attendanceConfirmPunch failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('attendanceConfirmPunch error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> attendanceBreak({
+    required String type,
+    required String action,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/break');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'type': type, 'action': action}))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('attendanceBreak failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('attendanceBreak error: $e');
+    }
+    return null;
+  }
+
+  /// Returns {'success', 'data': attendance_record|null, 'settings': {punch_in_time, punch_out_time, grace_minutes}}
+  static Future<Map<String, dynamic>?> attendanceToday() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/today');
+    try {
+      final response = await http
+          .get(url, headers: _authHeaders)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('attendanceToday error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>> attendanceHistory({int page = 1}) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/attendance/history')
+        .replace(queryParameters: {'page': page.toString()});
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('attendanceHistory error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  // ── Attendance (admin) ────────────────────────────────────────────────────
+
+  static Future<Map<String, dynamic>> adminAttendanceForEmployee(
+    String employeeMobile, {
+    int page = 1,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/$employeeMobile')
+        .replace(queryParameters: {'page': page.toString()});
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('adminAttendanceForEmployee error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  static Future<bool> adminAttendanceApprove(int id, {String? notes}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/$id/approve');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'admin_notes': notes ?? ''}))
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('adminAttendanceApprove error: $e');
+      return false;
+    }
+  }
+
+  static Future<bool> adminAttendanceReject(int id, {String? notes}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/$id/reject');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'admin_notes': notes ?? ''}))
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('adminAttendanceReject error: $e');
+      return false;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> adminGetAttendanceSettings(String employeeMobile) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/settings/$employeeMobile');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
+      }
+    } catch (e) {
+      print('adminGetAttendanceSettings error: $e');
+    }
+    return null;
+  }
+
+  static Future<bool> adminUpdateAttendanceSettings(
+    String employeeMobile, {
+    required String punchIn,
+    required String punchOut,
+    required int graceMinutes,
+    bool approvalRequired = true,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/settings/$employeeMobile');
+    try {
+      final body = {
+        'punch_in_time':     punchIn,
+        'punch_out_time':    punchOut,
+        'grace_minutes':     graceMinutes,
+        'approval_required': approvalRequired,
+      };
+      final response = await http
+          .put(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('adminUpdateAttendanceSettings error: $e');
+      return false;
+    }
+  }
+
+  static Future<int> adminPendingCount() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/pending-count');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        return (decoded['count'] as int?) ?? 0;
+      }
+    } catch (e) {
+      print('adminPendingCount error: $e');
+    }
+    return 0;
+  }
+
+  static Future<Map<String, dynamic>> adminPendingList({int page = 1}) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/pending')
+        .replace(queryParameters: {'page': page.toString()});
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('adminPendingList error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  // ── Beat Plan ───────────────────────────────────────────────────────────────
+
+  static Future<Map<String, dynamic>> getMyBeatPlans() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/my-plans');
+    try {
+      final res = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('getMyBeatPlans error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  static Future<Map<String, dynamic>?> assignBeatPlan({
+    required List<String> accountIds,
+    required List<String> accountTypes,  // 'lead' or 'customer' for each account
+    required String frequency,           // 'weekly' | 'monthly' | 'n_days'
+    List<String>? days,                  // weekly only
+    int? monthDate,                      // monthly only
+    int? intervalDays,                   // n_days only
+    String? startDate,                   // n_days only (YYYY-MM-DD)
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/assign');
+    try {
+      final body = <String, dynamic>{
+        'account_ids':  accountIds,
+        'account_types': accountTypes,
+        'frequency':    frequency,
+        if (days != null)         'days':          days,
+        if (monthDate != null)    'month_date':    monthDate,
+        if (intervalDays != null) 'interval_days': intervalDays,
+        if (startDate != null)    'start_date':    startDate,
+      };
+      final res = await http.post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+      print('assignBeatPlan status ${res.statusCode}: ${res.body}');
+    } catch (e) {
+      print('assignBeatPlan error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>> getTodayBeatPlan() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/today');
+    try {
+      final res = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+      return decoded;
+    } catch (e) {
+      print('getTodayBeatPlan error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  static Future<Map<String, dynamic>> getWeekBeatPlan({String? date, String? weekOf}) async {
+    var uri = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/week');
+    final qp = <String, String>{
+      if (date != null) 'date': date,
+      if (weekOf != null) 'week_of': weekOf,
+    };
+    if (qp.isNotEmpty) uri = uri.replace(queryParameters: qp);
+    try {
+      final res = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('getWeekBeatPlan error: $e');
+    }
+    return {'success': false, 'days': <dynamic>{}};
+  }
+
+  static Future<Map<String, dynamic>> getBeatPlanStats({
+    required List<int> areaIds,
+    List<String>? pincodes,
+  }) async {
+    var uri = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/stats');
+    final extra = [
+      ...areaIds.map((id) => 'area_ids[]=$id'),
+      if (pincodes != null) ...pincodes.map((p) => 'pincodes[]=${Uri.encodeQueryComponent(p)}'),
+    ].join('&');
+    if (extra.isNotEmpty) uri = Uri.parse('${uri.toString()}?$extra');
+    try {
+      final res = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('getBeatPlanStats error: $e');
+    }
+    return {'success': false, 'data': <dynamic>{}};
+  }
+
+  static Future<bool> unassignBeatPlanBulk(List<String> accountIds) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/unassign-bulk');
+    try {
+      final res = await http.post(url,
+          headers: _authHeaders,
+          body: jsonEncode({'account_ids': accountIds}))
+          .timeout(const Duration(seconds: 15));
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (e) {
+      print('unassignBeatPlanBulk error: $e');
+    }
+    return false;
+  }
+
+  static Future<bool> deleteBeatPlan(int id) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/$id');
+    try {
+      final res = await http.delete(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (e) {
+      print('deleteBeatPlan error: $e');
+    }
+    return false;
+  }
+
+  static Future<bool> recordBeatPlanVisit(int id, {String? notes}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/$id/visit');
+    try {
+      final body = <String, dynamic>{
+        if (notes != null && notes.isNotEmpty) 'notes': notes,
+      };
+      final res = await http.post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 12));
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (e) {
+      print('recordBeatPlanVisit error: $e');
+    }
+    return false;
   }
 }

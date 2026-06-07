@@ -26,6 +26,10 @@ class DeliStaff extends Authenticatable implements JWTSubject
         'lat',
         'lng',
         'is_locked',
+        'punch_in_time',
+        'punch_out_time',
+        'grace_minutes',
+        'approval_required',
     ];
 
     protected $hidden = ['password', 'sess_id', 'otp', 'otp_expires_at'];
@@ -36,6 +40,7 @@ class DeliStaff extends Authenticatable implements JWTSubject
         'lat'                    => 'float',
         'lng'                    => 'float',
         'is_locked'              => 'boolean',
+        'approval_required'      => 'boolean',
     ];
 
     public function getJWTIdentifier(): mixed

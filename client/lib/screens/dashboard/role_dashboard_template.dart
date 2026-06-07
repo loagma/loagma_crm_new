@@ -6,10 +6,33 @@ import '../../services/api_service.dart';
 import '../../services/user_service.dart';
 import '../../widgets/app_drawer.dart';
 
-class RoleDashboardTemplate extends StatelessWidget {
+class RoleDashboardTemplate extends StatefulWidget {
   final String role;
 
   const RoleDashboardTemplate({super.key, required this.role});
+
+  @override
+  State<RoleDashboardTemplate> createState() => _RoleDashboardTemplateState();
+}
+
+class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
+  int _pendingCount = 0;
+
+  bool get _showBell {
+    final r = widget.role.toLowerCase();
+    return r == 'admin' || r == 'incharge' || r == 'head_incharge';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (_showBell) _loadPendingCount();
+  }
+
+  Future<void> _loadPendingCount() async {
+    final count = await ApiService.adminPendingCount();
+    if (mounted) setState(() => _pendingCount = count);
+  }
 
   Future<void> _logout(BuildContext context) async {
     showDialog(
@@ -31,12 +54,8 @@ class RoleDashboardTemplate extends StatelessWidget {
                   await ApiService.logout();
                   await UserService.logout();
                   Fluttertoast.showToast(msg: 'Logged out successfully');
-                  if (context.mounted) {
-                    context.go('/login');
-                  }
+                  if (context.mounted) context.go('/login');
                 } catch (e) {
-                  print('Logout error: $e');
-                  // Always clear local data and navigate, even if API fails
                   await UserService.logout();
                   if (context.mounted) {
                     Fluttertoast.showToast(msg: 'Logged out');
@@ -44,7 +63,8 @@ class RoleDashboardTemplate extends StatelessWidget {
                   }
                 }
               },
-              child: const Text('Yes', style: TextStyle(color: Color.fromARGB(255, 225, 85, 30))),
+              child: const Text('Yes',
+                  style: TextStyle(color: Color.fromARGB(255, 225, 85, 30))),
             ),
           ],
         );
@@ -53,13 +73,15 @@ class RoleDashboardTemplate extends StatelessWidget {
   }
 
   Widget _buildDrawer(BuildContext context) {
-    // Use the centralized AppDrawer so menu changes based on `role`.
-    return AppDrawer(role: role, userName: UserService.currentName ?? '', onLogout: _logout);
+    return AppDrawer(
+        role: widget.role,
+        userName: UserService.currentName ?? '',
+        onLogout: _logout);
   }
 
   @override
   Widget build(BuildContext context) {
-    final menuItems = AppDrawer.menuForRole(role);
+    final menuItems  = AppDrawer.menuForRole(widget.role);
     final featureItems = menuItems.where((m) {
       final t = (m['title'] as String).toLowerCase();
       return t != 'dashboard' && t != 'home' && t != 'settings';
@@ -75,7 +97,7 @@ class RoleDashboardTemplate extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${role[0].toUpperCase()}${role.substring(1)} Dashboard',
+              '${widget.role[0].toUpperCase()}${widget.role.substring(1)} Dashboard',
               style: const TextStyle(
                   color: Colors.white, fontWeight: FontWeight.bold),
             ),
@@ -86,14 +108,51 @@ class RoleDashboardTemplate extends StatelessWidget {
             ),
           ],
         ),
+        actions: [
+          if (_showBell)
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.notifications_outlined,
+                      color: Colors.white),
+                  tooltip: 'Pending Approvals',
+                  onPressed: () async {
+                    await context.push('/admin-notifications');
+                    if (mounted) _loadPendingCount();
+                  },
+                ),
+                if (_pendingCount > 0)
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints:
+                          const BoxConstraints(minWidth: 16, minHeight: 16),
+                      child: Text(
+                        _pendingCount > 99 ? '99+' : '$_pendingCount',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-          
-            // Feature icons grid (built from drawer nav links)
             Expanded(
               flex: 3,
               child: GridView.builder(
@@ -102,11 +161,12 @@ class RoleDashboardTemplate extends StatelessWidget {
                   crossAxisCount: 2,
                   crossAxisSpacing: 14,
                   mainAxisSpacing: 14,
-                  childAspectRatio: 1.05,
+                  childAspectRatio: 0.95,
                 ),
                 itemCount: featureItems.length,
                 itemBuilder: (context, index) {
                   final it = featureItems[index];
+                  final ic = (it['color'] as Color?) ?? const Color(0xFFC09E3E);
                   return GestureDetector(
                     onTap: () {
                       final route = it['route'] as String?;
@@ -116,13 +176,9 @@ class RoleDashboardTemplate extends StatelessWidget {
                     },
                     child: Container(
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Colors.white, Color(0xFFFFFCF4)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
+                        color: Colors.white,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0xFFF1E3B2)),
+                        border: Border.all(color: const Color(0xFFEEEEEE)),
                         boxShadow: const [
                           BoxShadow(
                             color: Colors.black12,
@@ -140,13 +196,13 @@ class RoleDashboardTemplate extends StatelessWidget {
                             height: 52,
                             width: 52,
                             decoration: BoxDecoration(
-                              color: const Color(0xFFD7BE69).withValues(alpha: 0.14),
+                              color: ic.withValues(alpha: 0.14),
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
                               it['icon'] as IconData,
                               size: 28,
-                              color: const Color(0xFFC09E3E),
+                              color: ic,
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -164,14 +220,18 @@ class RoleDashboardTemplate extends StatelessWidget {
                             ),
                           ),
                           if (it['subtitle'] != null) ...[
-                            const SizedBox(height: 3),
-                            Text(
-                              it['subtitle'] as String,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontSize: 9.5,
-                                fontWeight: FontWeight.w500,
-                                color: Color(0xFFB89A3E),
+                            const SizedBox(height: 4),
+                            Container(
+                              color: Colors.red.withValues(alpha: 0.3),
+                              padding: const EdgeInsets.all(2),
+                              child: Text(
+                                it['subtitle'] as String,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.black54,
+                                ),
                               ),
                             ),
                           ],

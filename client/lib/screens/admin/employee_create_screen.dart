@@ -33,6 +33,11 @@ class _EmployeeCreateScreenState extends State<EmployeeCreateScreen> {
   bool _obscurePass   = true;
   Map<String, String?> _fieldErrors = {};
 
+  // roles from role_crm table
+  List<String> _roles = [];
+  bool _rolesLoading = true;
+  String? _selectedRole;
+
   bool get _isEditing => widget.initialData != null;
 
   @override
@@ -42,7 +47,6 @@ class _EmployeeCreateScreenState extends State<EmployeeCreateScreen> {
     if (d != null) {
       _nameCtrl.text    = d['name']?.toString()     ?? '';
       _mobileCtrl.text  = (d['mobile'] ?? d['id'] ?? '').toString();
-      _roleCtrl.text    = d['role']?.toString()     ?? '';
       _pinCtrl.text     = d['pincode']?.toString()  ?? '';
       _cityCtrl.text    = d['city']?.toString()     ?? '';
       _stateCtrl.text   = d['state']?.toString()    ?? '';
@@ -50,7 +54,23 @@ class _EmployeeCreateScreenState extends State<EmployeeCreateScreen> {
       _latCtrl.text     = d['lat']?.toString()      ?? '';
       _lngCtrl.text     = d['lng']?.toString()      ?? '';
       _isLocked         = d['is_locked'] == true || d['is_locked'] == 1;
+      _selectedRole     = d['role']?.toString();
     }
+    _loadRoles();
+  }
+
+  Future<void> _loadRoles() async {
+    setState(() => _rolesLoading = true);
+    final list = await ApiService.getRoles();
+    if (!mounted) return;
+    setState(() {
+      _roles = list.map((e) => e['name'] as String).toList();
+      // If editing and the saved role is not in the list, add it so it stays selectable
+      if (_selectedRole != null && !_roles.contains(_selectedRole)) {
+        _roles.insert(0, _selectedRole!);
+      }
+      _rolesLoading = false;
+    });
   }
 
   @override
@@ -141,7 +161,7 @@ class _EmployeeCreateScreenState extends State<EmployeeCreateScreen> {
     final payload = <String, dynamic>{
       'name'      : _nameCtrl.text.trim(),
       'mobile'    : _mobileCtrl.text.trim(),
-      'role'      : _roleCtrl.text.trim(),
+      'role'      : _selectedRole ?? '',
       'pincode'   : _pinCtrl.text.trim(),
       'city'      : _cityCtrl.text.trim(),
       'state'     : _stateCtrl.text.trim(),
@@ -235,15 +255,37 @@ class _EmployeeCreateScreenState extends State<EmployeeCreateScreen> {
                   },
                 ),
                 _gap,
-                _field(
-                  _roleCtrl, 'Role *', Icons.badge_outlined,
-                  errorKey: 'role',
-                  caps: TextCapitalization.words,
-                  validator: (v) {
-                    if (v == null || v.trim().isEmpty) return 'Role is required';
-                    return null;
-                  },
-                ),
+                _rolesLoading
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 14),
+                        child: Row(children: [
+                          SizedBox(width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2)),
+                          SizedBox(width: 10),
+                          Text('Loading roles…',
+                              style: TextStyle(fontSize: 13, color: Colors.black54)),
+                        ]),
+                      )
+                    : DropdownButtonFormField<String>(
+                        initialValue: _selectedRole,
+                        decoration: InputDecoration(
+                          labelText: 'Role *',
+                          prefixIcon: const Icon(Icons.badge_outlined, size: 20),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                          errorText: _fieldErrors['role'],
+                        ),
+                        items: _roles.map((r) => DropdownMenuItem(
+                          value: r,
+                          child: Text(
+                            r.split('_').map((w) => w.isEmpty ? '' : w[0].toUpperCase() + w.substring(1)).join(' '),
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                        )).toList(),
+                        onChanged: (v) => setState(() => _selectedRole = v),
+                        validator: (v) =>
+                            (v == null || v.isEmpty) ? 'Role is required' : null,
+                      ),
                 _gap,
                 _field(
                   _adminIdCtrl, 'Admin ID', Icons.admin_panel_settings_outlined,

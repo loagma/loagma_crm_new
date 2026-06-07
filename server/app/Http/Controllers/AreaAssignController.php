@@ -29,17 +29,21 @@ class AreaAssignController extends Controller
     public function save(string $employeeId): JsonResponse
     {
         $validated = validator(request()->all(), [
-            'area_ids'     => 'required|array',
+            'area_ids'     => 'nullable|array',
             'area_ids.*'   => 'integer',
-            'area_names'   => 'required|array',
+            'area_names'   => 'nullable|array',
             'area_names.*' => 'string|max:255',
         ])->validate();
+
+        // Convert null to empty array for consistency
+        $areaIds = $validated['area_ids'] ?? [];
+        $areaNames = $validated['area_names'] ?? [];
 
         $assign = AreaAssign::updateOrCreate(
             ['employee_id' => (int) $employeeId],
             [
-                'area_ids'   => array_values(array_map('intval', $validated['area_ids'])),
-                'area_names' => array_values(array_map('strval', $validated['area_names'])),
+                'area_ids'   => array_values(array_map('intval', $areaIds)),
+                'area_names' => array_values(array_map('strval', $areaNames)),
             ]
         );
 

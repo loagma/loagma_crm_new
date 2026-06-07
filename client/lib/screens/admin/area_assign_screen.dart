@@ -55,9 +55,10 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
       }
     }
 
+    // Only salesman, telecaller and incharge get area assignments
     final normalized = staffList.map((e) {
       final role = (e['role'] ?? '').toString().trim().toLowerCase();
-      final id   = (e['deli_id'] ?? e['mobile'] ?? '').toString();
+      final id   = (e['mobile'] ?? e['deli_id'] ?? '').toString();
       return <String, dynamic>{
         'id':     id,
         'name':   (e['name'] ?? '').toString(),
@@ -65,7 +66,9 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
         'role':   role,
       };
     }).where((e) {
-      return e['name'].toString().isNotEmpty || e['mobile'].toString().isNotEmpty;
+      final r = e['role'] as String;
+      return (r == 'salesman' || r == 'telecaller' || r == 'incharge') &&
+          (e['name'].toString().isNotEmpty || e['mobile'].toString().isNotEmpty);
     }).toList();
 
     setState(() {
@@ -89,13 +92,14 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
         title: const Text('Area Assign'),
         backgroundColor: gold,
         foregroundColor: Colors.white,
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _loadAll,
-        backgroundColor: gold,
-        foregroundColor: Colors.white,
-        tooltip: 'Refresh',
-        child: const Icon(Icons.assignment_ind_rounded),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(20),
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text('Salesman, Telecaller & Incharge only',
+                style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.8))),
+          ),
+        ),
       ),
       body: Column(
         children: [
@@ -302,18 +306,19 @@ class _StaffCard extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 4,
-                        runSpacing: 4,
-                        children: assignedAreas.map((areaName) => Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: gold.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: gold.withValues(alpha: 0.30)),
-                          ),
-                          child: Text(areaName, style: const TextStyle(fontSize: 10, color: Color(0xFFB89A3E), fontWeight: FontWeight.w500)),
-                        )).toList(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: gold.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: gold.withValues(alpha: 0.30)),
+                        ),
+                        child: Text(
+                          'Marketing Area: ${assignedAreas.join(', ')}',
+                          style: const TextStyle(fontSize: 10, color: Color(0xFFB89A3E), fontWeight: FontWeight.w600),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ],
                   ],
@@ -339,6 +344,10 @@ class _RoleBadge extends StatelessWidget {
         return (bg: const Color(0xFFE3F0FF), text: const Color(0xFF1565C0), label: 'Deli Staff');
       case 'salesman':
         return (bg: const Color(0xFFFFF8E1), text: const Color(0xFFB89A3E), label: 'Salesman');
+      case 'telecaller':
+        return (bg: const Color(0xFFE0F7FA), text: const Color(0xFF00838F), label: 'Telecaller');
+      case 'incharge':
+        return (bg: const Color(0xFFFFF3E0), text: const Color(0xFFE65100), label: 'Incharge');
       case 'admin':
         return (bg: const Color(0xFFFFEBEE), text: const Color(0xFFC62828), label: 'Admin');
       case 'manager':

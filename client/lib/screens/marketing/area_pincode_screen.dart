@@ -19,6 +19,8 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
   String _query = '';
   bool _loading = false;
   Map<String, dynamic>? _area;
+  // pincode → list of other area names that have it
+  Map<String, List<String>> _otherAreas = {};
 
   int get _areaId => int.tryParse((widget.area['id'] ?? '').toString()) ?? 0;
   String get _areaName => ((_area ?? widget.area)['area_name'] ?? 'Area').toString();
@@ -45,10 +47,36 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
     setState(() => _loading = true);
     final data = await ApiService.getArea(_areaId);
     if (!mounted) return;
-    setState(() {
-      _area = data ?? widget.area;
-      _loading = false;
-    });
+
+    // Build map of pincode → other areas that have it
+    final otherAreas = <String, List<String>>{};
+    try {
+      final allAreas = await ApiService.getAreas(perPage: 1000);
+      final areasList = (allAreas['data'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+      for (final area in areasList) {
+        final aid = int.tryParse((area['id'] ?? '').toString()) ?? 0;
+        if (aid == _areaId) continue; // skip current area
+        final areaName = (area['area_name'] ?? '').toString();
+        final pins = area['pincodes'];
+        if (pins is List) {
+          for (final p in pins) {
+            final pin = p.toString();
+            otherAreas.putIfAbsent(pin, () => []).add(areaName);
+          }
+        }
+      }
+    } catch (_) {
+      // if fetch fails, just leave map empty — no other areas shown
+    }
+
+    if (mounted) {
+      setState(() {
+        _area = data ?? widget.area;
+        _otherAreas = otherAreas;
+        _loading = false;
+      });
+    }
   }
 
   List<String> get _filtered {
@@ -57,63 +85,242 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
     return p.where((e) => e.contains(_query)).toList();
   }
 
-  Future<void> _showAddDialog() async {
-    final ctrl = TextEditingController();
-    final formKey = GlobalKey<FormState>();
+  void _toast(String msg, {bool success = true}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: success ? const Color(0xFF43A047) : Colors.red,
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 2),
+    ));
+  }
 
-    await showDialog(
+  // Returns the name of another area that already contains [pin], or null.
+  Future<String?> _pincodeInOtherArea(String pin) async {
+    final res = await ApiService.getAreas(perPage: 1000);
+    final data = res['data'];
+    if (data is! List) return null;
+    for (final raw in data) {
+      final a   = Map<String, dynamic>.from(raw as Map);
+      final aid = int.tryParse((a['id'] ?? '').toString()) ?? 0;
+      if (aid == _areaId) continue; // skip the current area
+      final pins = a['pincodes'];
+      if (pins is List && pins.map((e) => e.toString()).contains(pin)) {
+        return (a['area_name'] ?? 'another area').toString();
+      }
+    }
+    return null;
+  }
+
+  Future<bool?> _confirmDuplicatePincode(String pin, String otherArea) {
+    return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: const Text('Add Pincode', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        content: Form(
-          key: formKey,
-          child: TextFormField(
-            controller: ctrl,
-            autofocus: true,
-            keyboardType: TextInputType.number,
-            inputFormatters: [
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(6),
-            ],
-            decoration: InputDecoration(
-              labelText: 'Pincode *',
-              hintText: 'Enter 6-digit pincode',
-              prefixIcon: const Icon(Icons.pin_drop_outlined, color: gold),
-              isDense: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: gold, width: 2),
-              ),
-            ),
-            validator: (v) {
-              if (v == null || v.trim().isEmpty) return 'Pincode is required';
-              if (!RegExp(r'^\d{6}$').hasMatch(v.trim())) return 'Enter valid 6-digit pincode';
-              return null;
-            },
-          ),
+        title: const Text('Pincode Already Exists',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        content: Text(
+          'Pincode $pin is already assigned to "$otherArea". '
+          'Do you want to add it to this area as well?',
+          style: const TextStyle(fontSize: 13.5),
         ),
         actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No', style: TextStyle(color: Colors.grey)),
+          ),
           ElevatedButton(
-            onPressed: () async {
-              if (!formKey.currentState!.validate()) return;
-              final res = await ApiService.addAreaPincodes(_areaId, [ctrl.text.trim()]);
-              if (!mounted) return;
-              if (res == null || res.containsKey('errors')) {
-                final msg = res?['errors']?.toString() ?? 'Failed to add pincode';
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-                return;
-              }
-              if (ctx.mounted) Navigator.pop(ctx);
-              setState(() => _area = res);
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: gold, foregroundColor: Colors.white),
-            child: const Text('Add'),
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: gold, foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Yes, add'),
           ),
         ],
+      ),
+    );
+  }
+
+  Future<void> _showAddDialog() async {
+    final ctrl = TextEditingController();
+
+    // Lookup state, scoped to the dialog
+    bool                  looking = false;
+    Map<String, dynamic>? lookup;   // {country, state, district, city, areas}
+    String?               lookupError;
+    String                lastQueried = '';
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final pin     = ctrl.text.trim();
+          final valid6  = RegExp(r'^\d{6}$').hasMatch(pin);
+          final canAdd  = valid6 && lookup != null && !looking;
+
+          Future<void> runLookup(String p) async {
+            if (p == lastQueried) return;
+            lastQueried = p;
+            setLocal(() { looking = true; lookup = null; lookupError = null; });
+            final res = await ApiService.lookupIndianPincode(p);
+            if (!ctx.mounted) return;
+            setLocal(() {
+              looking = false;
+              if (res == null) {
+                lookupError = 'Pincode not found. Please check and try again.';
+              } else {
+                lookup = res;
+              }
+            });
+          }
+
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            title: const Text('Add Pincode',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: ctrl,
+                  autofocus: true,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
+                  onChanged: (v) {
+                    final t = v.trim();
+                    setLocal(() {
+                      lookup = null;
+                      lookupError = null;
+                    });
+                    if (RegExp(r'^\d{6}$').hasMatch(t)) runLookup(t);
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Pincode *',
+                    hintText: 'Enter 6-digit pincode',
+                    prefixIcon: const Icon(Icons.pin_drop_outlined, color: gold),
+                    isDense: true,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: gold, width: 2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // ── Lookup feedback ────────────────────────────────────────
+                if (looking)
+                  const Row(children: [
+                    SizedBox(width: 14, height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: gold)),
+                    SizedBox(width: 8),
+                    Text('Checking pincode…',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  ])
+                else if (lookupError != null)
+                  Row(children: [
+                    const Icon(Icons.error_outline_rounded, size: 16, color: Colors.red),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(lookupError!,
+                        style: const TextStyle(fontSize: 12, color: Colors.red))),
+                  ])
+                else if (lookup != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF43A047).withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFF43A047).withValues(alpha: 0.30)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          const Icon(Icons.check_circle_rounded, size: 15, color: Color(0xFF2E7D32)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '${lookup!['city'] ?? ''}, ${lookup!['district'] ?? ''}',
+                              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700,
+                                  color: Color(0xFF2E7D32)),
+                            ),
+                          ),
+                        ]),
+                        if ((lookup!['state'] ?? '').toString().isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text('${lookup!['state']}, ${lookup!['country'] ?? 'India'}',
+                              style: const TextStyle(fontSize: 11, color: Colors.black54)),
+                        ],
+                        if ((lookup!['areas'] as List?)?.isNotEmpty ?? false) ...[
+                          const SizedBox(height: 6),
+                          Text('Post offices:',
+                              style: TextStyle(fontSize: 10.5, color: Colors.grey.shade600,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 3),
+                          Wrap(
+                            spacing: 4, runSpacing: 4,
+                            children: (lookup!['areas'] as List)
+                                .take(6)
+                                .map((a) => Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: Colors.grey.shade300),
+                                      ),
+                                      child: Text(a.toString(),
+                                          style: const TextStyle(fontSize: 9.5, color: Colors.black87)),
+                                    ))
+                                .toList(),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
+              ElevatedButton(
+                onPressed: canAdd
+                    ? () async {
+                        // Duplicate-pincode guard: is this pincode already in
+                        // another area? If so, confirm before adding here too.
+                        final otherArea = await _pincodeInOtherArea(pin);
+                        if (!mounted) return;
+                        if (otherArea != null) {
+                          final proceed = await _confirmDuplicatePincode(pin, otherArea);
+                          if (proceed != true) return; // keep dialog open
+                        }
+                        final res = await ApiService.addAreaPincodes(_areaId, [pin]);
+                        if (!mounted) return;
+                        if (res == null || res.containsKey('errors')) {
+                          final msg = res?['errors']?.toString() ?? 'Failed to add pincode';
+                          _toast(msg, success: false);
+                          return;
+                        }
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        setState(() => _area = res);
+                        _toast('Pincode $pin added successfully');
+                      }
+                    : null,
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: gold, foregroundColor: Colors.white,
+                    disabledBackgroundColor: gold.withValues(alpha: 0.4)),
+                child: const Text('Add'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -145,14 +352,16 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
           ElevatedButton(
             onPressed: () async {
               if (!formKey.currentState!.validate()) return;
-              final res = await ApiService.updateAreaPincode(_areaId, oldPin, ctrl.text.trim());
+              final newPin = ctrl.text.trim();
+              final res = await ApiService.updateAreaPincode(_areaId, oldPin, newPin);
               if (!mounted) return;
               if (res == null || res.containsKey('errors')) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to update pincode')));
+                _toast('Failed to update pincode', success: false);
                 return;
               }
               if (ctx.mounted) Navigator.pop(ctx);
               setState(() => _area = res);
+              _toast('Pincode updated to $newPin');
             },
             style: ElevatedButton.styleFrom(backgroundColor: gold, foregroundColor: Colors.white),
             child: const Text('Update'),
@@ -182,10 +391,11 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
     final done = await ApiService.deleteAreaPincode(_areaId, pincode);
     if (!mounted) return;
     if (!done) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to delete pincode')));
+      _toast('Failed to delete pincode', success: false);
       return;
     }
     await _loadArea();
+    _toast('Pincode $pincode deleted');
   }
 
   @override
@@ -258,41 +468,69 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
                           separatorBuilder: (_, _) => const SizedBox(height: 8),
                           itemBuilder: (context, i) {
                             final p = filtered[i];
+                            final others = _otherAreas[p] ?? [];
                             return Card(
                               color: Colors.white,
                               margin: EdgeInsets.zero,
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                               elevation: 1.5,
                               child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-                                child: Row(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Container(
-                                      width: 40,
-                                      height: 40,
-                                      decoration: BoxDecoration(
-                                        color: gold.withValues(alpha: 0.15),
-                                        borderRadius: BorderRadius.circular(10),
+                                    Row(
+                                      children: [
+                                        Container(
+                                          width: 40,
+                                          height: 40,
+                                          decoration: BoxDecoration(
+                                            color: gold.withValues(alpha: 0.15),
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                          child: const Icon(Icons.pin_drop_rounded, color: gold, size: 20),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            p,
+                                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: 1),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          onPressed: () => _showEditDialog(p),
+                                          icon: const Icon(Icons.edit_rounded, size: 18),
+                                          tooltip: 'Edit',
+                                        ),
+                                        IconButton(
+                                          onPressed: () => _deletePincode(p),
+                                          icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red),
+                                          tooltip: 'Delete',
+                                        ),
+                                      ],
+                                    ),
+                                    // "Also in" chip for other areas
+                                    if (others.isNotEmpty) ...[
+                                      const SizedBox(height: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                        decoration: BoxDecoration(
+                                          color: gold.withValues(alpha: 0.12),
+                                          borderRadius: BorderRadius.circular(20),
+                                          border: Border.all(color: gold.withValues(alpha: 0.3)),
+                                        ),
+                                        child: Text(
+                                          'marketing Area: ${others.join(', ')}',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            color: const Color(0xFF8A6D1B),
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
-                                      child: const Icon(Icons.pin_drop_rounded, color: gold, size: 20),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        p,
-                                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: 1),
-                                      ),
-                                    ),
-                                    IconButton(
-                                      onPressed: () => _showEditDialog(p),
-                                      icon: const Icon(Icons.edit_rounded, size: 18),
-                                      tooltip: 'Edit',
-                                    ),
-                                    IconButton(
-                                      onPressed: () => _deletePincode(p),
-                                      icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red),
-                                      tooltip: 'Delete',
-                                    ),
+                                    ],
                                   ],
                                 ),
                               ),

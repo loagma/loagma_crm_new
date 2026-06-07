@@ -10,7 +10,7 @@ class ApiConfig {
   static const bool useProduction = true;
 
   /// Optional override for local testing, for example:
-  /// `--dart-define=API_BASE_URL=http://192.168.1.27:8000`
+  /// `--dart-define=API_BASE_URL=http://192.168.1.10:8000`
   static const String _baseUrlOverride =
       String.fromEnvironment('API_BASE_URL', defaultValue: '');
 
@@ -33,8 +33,10 @@ class ApiConfig {
 
     try {
       if (Platform.isAndroid) {
-        // Physical Android devices need the machine's LAN IP.
-        return 'http://192.168.1.14:$_laravelPort';
+        // Android Studio emulator reaches the host machine via 10.0.2.2
+        // (maps to the host's 127.0.0.1). For a physical device, use the
+        // machine's LAN IP instead, e.g. http://192.168.1.10:$_laravelPort
+        return 'http://10.0.2.2:$_laravelPort';
       }
       return 'http://localhost:$_laravelPort';
     } catch (_) {

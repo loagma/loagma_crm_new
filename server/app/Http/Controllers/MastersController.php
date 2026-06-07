@@ -3,23 +3,37 @@
 namespace App\Http\Controllers;
 
 use App\Models\DeliStaff;
+use App\Models\RoleCrm;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class MastersController extends Controller
 {
     public function roles(): JsonResponse
     {
-        $roles = DeliStaff::select('role')
-            ->distinct()
-            ->whereNotNull('role')
-            ->orderBy('role')
+        $roles = RoleCrm::orderBy('role_name')
             ->get()
-            ->map(fn ($r) => ['name' => $r->role, 'label' => ucfirst($r->role)]);
+            ->map(fn ($r) => [
+                'id'    => $r->id,
+                'name'  => $r->role_name,
+                'label' => implode(' ', array_map('ucfirst', explode('_', $r->role_name))),
+            ]);
 
-        return response()->json([
-            'success' => true,
-            'data'    => $roles,
-        ]);
+        return response()->json(['success' => true, 'data' => $roles]);
+    }
+
+    public function storeRole(Request $request): JsonResponse
+    {
+        $request->validate(['role_name' => 'required|string|max:50|unique:role_crm,role_name']);
+        $role = RoleCrm::create(['role_name' => strtolower(trim($request->role_name))]);
+        return response()->json(['success' => true, 'data' => $role], 201);
+    }
+
+    public function destroyRole(int $id): JsonResponse
+    {
+        $role = RoleCrm::findOrFail($id);
+        $role->delete();
+        return response()->json(['success' => true]);
     }
 
     public function employees(): JsonResponse
