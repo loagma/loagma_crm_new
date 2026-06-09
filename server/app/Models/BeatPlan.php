@@ -18,6 +18,7 @@ class BeatPlan extends Model
         'month_date',
         'specific_dates',
         'appointment_date',
+        'week_anchor_date',
         'interval_days',
         'start_date',
         'is_active',
@@ -28,6 +29,7 @@ class BeatPlan extends Model
         'month_date'        => 'integer',
         'specific_dates'    => 'array',
         'appointment_date'  => 'datetime',
+        'week_anchor_date'  => 'date',
         'interval_days'     => 'integer',
         'start_date'        => 'date',
         'is_active'         => 'boolean',
@@ -44,7 +46,9 @@ class BeatPlan extends Model
     public function firesOn(\Carbon\Carbon $date): bool
     {
         return match ($this->frequency) {
-            'weekly'  => in_array($date->shortDayName, $this->days ?? []),
+            'weekly'  => in_array($date->shortDayName, $this->days ?? [])
+                       && ($this->week_anchor_date === null
+                           || (int)$date->diffInDays($this->week_anchor_date) % 14 < 7),
             'monthly' => $this->month_date === $date->day,
             'specific_dates' => in_array($date->format('Y-m-d'), $this->specific_dates ?? []),
             'appointment' => $this->appointment_date !== null

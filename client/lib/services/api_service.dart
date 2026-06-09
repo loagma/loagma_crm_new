@@ -1042,6 +1042,7 @@ class ApiService {
     int? monthDate,                      // monthly only
     List<String>? specificDates,         // specific_dates only (array of YYYY-MM-DD)
     String? appointmentDate,             // appointment only (ISO8601 datetime)
+    String? weekAnchorDate,              // weekly only - anchor date for alternate weeks (YYYY-MM-DD)
     int? intervalDays,                   // n_days only
     String? startDate,                   // n_days only (YYYY-MM-DD)
   }) async {
@@ -1055,6 +1056,7 @@ class ApiService {
         if (monthDate != null)    'month_date':    monthDate,
         if (specificDates != null) 'specific_dates': specificDates,
         if (appointmentDate != null) 'appointment_date': appointmentDate,
+        if (weekAnchorDate != null) 'week_anchor_date': weekAnchorDate,
         if (intervalDays != null) 'interval_days': intervalDays,
         if (startDate != null)    'start_date':    startDate,
       };

@@ -335,6 +335,7 @@ class _AllottedCustomerAccountsScreenState
     final monthDate   = result['month_date']  as int?;
     final specificDates = (result['specific_dates'] as List?)?.cast<String>();
     final appointmentDate = result['appointment_date'] as String?;
+    final weekAnchorDate = result['week_anchor_date'] as String?;
     final intervalDays= result['interval_days']as int?;
     final startDate   = result['start_date']  as String?;
 
@@ -361,6 +362,7 @@ class _AllottedCustomerAccountsScreenState
       monthDate:    monthDate,
       specificDates: specificDates,
       appointmentDate: appointmentDate,
+      weekAnchorDate: weekAnchorDate,
       intervalDays: intervalDays,
       startDate:    startDate,
     );
@@ -876,7 +878,8 @@ class _AccountCard extends StatelessWidget {
     switch (freq) {
       case 'weekly':
         final days = (p['days'] as List?)?.cast<dynamic>() ?? [];
-        return days.isEmpty ? 'Weekly' : 'Weekly: ${days.join(', ')}';
+        final alt = p['week_anchor_date'] != null ? ' (Alt)' : '';
+        return days.isEmpty ? 'Weekly$alt' : 'Weekly: ${days.join(', ')}$alt';
       case 'monthly':
         final d = p['month_date'];
         return d == null ? 'Monthly' : 'Monthly: Day $d';
@@ -1214,6 +1217,7 @@ class _AssignDayDialogState extends State<_AssignDayDialog> {
   // frequency: 'weekly' | 'monthly' | 'n_days' | 'specific_dates' | 'appointment'
   String          _frequency    = 'weekly';
   final Set<String> _days       = {};         // weekly
+  bool            _alternateWeek = false;     // weekly: alternate weeks toggle
   final _monthCtrl = TextEditingController(); // monthly: 1-31 (legacy)
   final _nCtrl     = TextEditingController(); // n_days: interval
   DateTime?       _startDate;                // n_days: anchor date
@@ -1243,7 +1247,11 @@ class _AssignDayDialogState extends State<_AssignDayDialog> {
     if (!_canSubmit) return;
     switch (_frequency) {
       case 'weekly':
-        Navigator.pop(context, {'frequency': 'weekly', 'days': _days.toList()});
+        Navigator.pop(context, {
+          'frequency': 'weekly',
+          'days': _days.toList(),
+          if (_alternateWeek) 'week_anchor_date': DateTime.now().toIso8601String().substring(0, 10),
+        });
       case 'monthly':
         Navigator.pop(context, {'frequency': 'monthly', 'month_date': int.parse(_monthCtrl.text.trim())});
       case 'specific_dates':
@@ -1421,6 +1429,18 @@ class _AssignDayDialogState extends State<_AssignDayDialog> {
                       ),
                     );
                   }).toList(),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Checkbox(
+                      value: _alternateWeek,
+                      activeColor: _gold,
+                      onChanged: (v) => setState(() => _alternateWeek = v ?? false),
+                    ),
+                    const Text('Alternate weeks only',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                  ],
                 ),
               ],
 

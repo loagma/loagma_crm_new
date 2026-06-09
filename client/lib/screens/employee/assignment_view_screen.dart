@@ -210,7 +210,8 @@ class _DayCard extends StatelessWidget {
     switch (freq) {
       case 'weekly':
         final days = (item['days'] as List?)?.cast<dynamic>() ?? [];
-        return days.isEmpty ? 'Weekly' : 'Weekly: ${days.join(', ')}';
+        final alt = item['week_anchor_date'] != null ? ' (Alt)' : '';
+        return days.isEmpty ? 'Weekly$alt' : 'Weekly: ${days.join(', ')}$alt';
       case 'monthly':
         final d = item['month_date'];
         return d == null ? 'Monthly' : 'Monthly: Day $d';

@@ -186,7 +186,8 @@ class _CustomerCard extends StatelessWidget {
     switch (freq) {
       case 'weekly':
         final d = days?.cast<dynamic>() ?? [];
-        return d.isEmpty ? 'WEEKLY' : d.join(', ').toUpperCase();
+        final alt = item['week_anchor_date'] != null ? ' (ALT)' : '';
+        return d.isEmpty ? 'WEEKLY$alt' : '${d.join(', ').toUpperCase()}$alt';
       case 'monthly':
         final md = item['month_date'];
         return md == null ? 'MONTHLY' : 'DAY $md / MONTH';
