@@ -1037,9 +1037,11 @@ class ApiService {
   static Future<Map<String, dynamic>?> assignBeatPlan({
     required List<String> accountIds,
     required List<String> accountTypes,  // 'lead' or 'customer' for each account
-    required String frequency,           // 'weekly' | 'monthly' | 'n_days'
+    required String frequency,           // 'weekly' | 'monthly' | 'n_days' | 'specific_dates' | 'appointment'
     List<String>? days,                  // weekly only
     int? monthDate,                      // monthly only
+    List<String>? specificDates,         // specific_dates only (array of YYYY-MM-DD)
+    String? appointmentDate,             // appointment only (ISO8601 datetime)
     int? intervalDays,                   // n_days only
     String? startDate,                   // n_days only (YYYY-MM-DD)
   }) async {
@@ -1051,6 +1053,8 @@ class ApiService {
         'frequency':    frequency,
         if (days != null)         'days':          days,
         if (monthDate != null)    'month_date':    monthDate,
+        if (specificDates != null) 'specific_dates': specificDates,
+        if (appointmentDate != null) 'appointment_date': appointmentDate,
         if (intervalDays != null) 'interval_days': intervalDays,
         if (startDate != null)    'start_date':    startDate,
       };

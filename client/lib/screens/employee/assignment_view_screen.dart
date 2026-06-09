@@ -204,16 +204,32 @@ class _DayCard extends StatelessWidget {
 
   // Build a short schedule label from a day item's plan fields
   String? _scheduleLabel(Map<String, dynamic> item) {
-    switch (item['frequency'] as String?) {
+    final freq = item['frequency'] as String?;
+    if (freq == null) return null;
+
+    switch (freq) {
       case 'weekly':
         final days = (item['days'] as List?)?.cast<dynamic>() ?? [];
-        return days.isEmpty ? null : days.join(', ');
+        return days.isEmpty ? 'Weekly' : 'Weekly: ${days.join(', ')}';
       case 'monthly':
         final d = item['month_date'];
-        return d == null ? null : 'Day $d / month';
+        return d == null ? 'Monthly' : 'Monthly: Day $d';
+      case 'specific_dates':
+        final dates = (item['specific_dates'] as List?)?.cast<String>() ?? [];
+        if (dates.isEmpty) return 'Specific Dates';
+        return dates.length == 1 ? 'Specific: ${dates[0]}' : 'Specific: ${dates.length} dates';
+      case 'appointment':
+        final apt = item['appointment_date'] as String?;
+        if (apt == null) return 'Appointment';
+        try {
+          final dt = DateTime.parse(apt);
+          return 'Appt: ${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+        } catch (e) {
+          return 'Appointment';
+        }
       case 'n_days':
         final n = item['interval_days'];
-        return n == null ? null : 'Every $n days';
+        return n == null ? 'N Days' : 'Every $n days';
       default:
         return null;
     }

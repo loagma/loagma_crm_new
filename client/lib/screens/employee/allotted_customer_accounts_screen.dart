@@ -333,6 +333,8 @@ class _AllottedCustomerAccountsScreenState
     final frequency   = result['frequency'] as String;
     final days        = (result['days']       as List?)?.cast<String>();
     final monthDate   = result['month_date']  as int?;
+    final specificDates = (result['specific_dates'] as List?)?.cast<String>();
+    final appointmentDate = result['appointment_date'] as String?;
     final intervalDays= result['interval_days']as int?;
     final startDate   = result['start_date']  as String?;
 
@@ -357,6 +359,8 @@ class _AllottedCustomerAccountsScreenState
       frequency:    frequency,
       days:         days,
       monthDate:    monthDate,
+      specificDates: specificDates,
+      appointmentDate: appointmentDate,
       intervalDays: intervalDays,
       startDate:    startDate,
     );
@@ -866,16 +870,32 @@ class _AccountCard extends StatelessWidget {
   String? get _planLabel {
     final p = plan;
     if (p == null) return null;
-    switch (p['frequency'] as String?) {
+    final freq = p['frequency'] as String?;
+    if (freq == null) return null;
+
+    switch (freq) {
       case 'weekly':
         final days = (p['days'] as List?)?.cast<dynamic>() ?? [];
-        return days.isEmpty ? null : days.join(', ');
+        return days.isEmpty ? 'Weekly' : 'Weekly: ${days.join(', ')}';
       case 'monthly':
         final d = p['month_date'];
-        return d == null ? null : 'Day $d/month';
+        return d == null ? 'Monthly' : 'Monthly: Day $d';
+      case 'specific_dates':
+        final dates = (p['specific_dates'] as List?)?.cast<String>() ?? [];
+        if (dates.isEmpty) return 'Specific Dates';
+        return dates.length == 1 ? 'Specific: ${dates[0]}' : 'Specific: ${dates.length} dates';
+      case 'appointment':
+        final apt = p['appointment_date'] as String?;
+        if (apt == null) return 'Appointment';
+        try {
+          final dt = DateTime.parse(apt);
+          return 'Appt: ${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+        } catch (e) {
+          return 'Appointment';
+        }
       case 'n_days':
         final n = p['interval_days'];
-        return n == null ? null : 'Every $n days';
+        return n == null ? 'N Days' : 'Every $n days';
       default:
         return null;
     }
@@ -1191,12 +1211,15 @@ class _AssignDayDialogState extends State<_AssignDayDialog> {
   static const _gold = Color(0xFFD7BE69);
   static const _allDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-  // frequency: 'weekly' | 'monthly' | 'n_days'
+  // frequency: 'weekly' | 'monthly' | 'n_days' | 'specific_dates' | 'appointment'
   String          _frequency    = 'weekly';
   final Set<String> _days       = {};         // weekly
-  final _monthCtrl = TextEditingController(); // monthly: 1-31
+  final _monthCtrl = TextEditingController(); // monthly: 1-31 (legacy)
   final _nCtrl     = TextEditingController(); // n_days: interval
   DateTime?       _startDate;                // n_days: anchor date
+  final Set<DateTime> _specificDates = {};   // specific_dates: multi-date picker
+  DateTime?       _appointmentDate;          // appointment: date + time
+  TimeOfDay?      _appointmentTime;          // appointment: time
 
   @override
   void dispose() {
@@ -1209,6 +1232,8 @@ class _AssignDayDialogState extends State<_AssignDayDialog> {
     switch (_frequency) {
       case 'weekly':  return _days.isNotEmpty;
       case 'monthly': final v = int.tryParse(_monthCtrl.text.trim()); return v != null && v >= 1 && v <= 31;
+      case 'specific_dates': return _specificDates.isNotEmpty;
+      case 'appointment': return _appointmentDate != null && _appointmentTime != null;
       case 'n_days':  final n = int.tryParse(_nCtrl.text.trim()); return n != null && n >= 1 && _startDate != null;
       default:        return false;
     }
@@ -1221,6 +1246,26 @@ class _AssignDayDialogState extends State<_AssignDayDialog> {
         Navigator.pop(context, {'frequency': 'weekly', 'days': _days.toList()});
       case 'monthly':
         Navigator.pop(context, {'frequency': 'monthly', 'month_date': int.parse(_monthCtrl.text.trim())});
+      case 'specific_dates':
+        Navigator.pop(context, {
+          'frequency': 'specific_dates',
+          'specific_dates': _specificDates
+              .map((d) => d.toIso8601String().substring(0, 10))
+              .toList()
+              ..sort(),
+        });
+      case 'appointment':
+        final dateTime = DateTime(
+          _appointmentDate!.year,
+          _appointmentDate!.month,
+          _appointmentDate!.day,
+          _appointmentTime!.hour,
+          _appointmentTime!.minute,
+        );
+        Navigator.pop(context, {
+          'frequency': 'appointment',
+          'appointment_date': dateTime.toIso8601String(),
+        });
       case 'n_days':
         Navigator.pop(context, {
           'frequency':    'n_days',
@@ -1244,6 +1289,63 @@ class _AssignDayDialogState extends State<_AssignDayDialog> {
       ),
     );
     if (picked != null) setState(() => _startDate = picked);
+  }
+
+  Future<void> _showDayPicker() async {
+    final result = await showDialog<int>(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Select Day of Month',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 16),
+              GridView.count(
+                crossAxisCount: 7,
+                shrinkWrap: true,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                children: List.generate(31, (i) {
+                  final day = i + 1;
+                  final selected = _monthCtrl.text.isNotEmpty &&
+                      int.tryParse(_monthCtrl.text.trim()) == day;
+                  return GestureDetector(
+                    onTap: () => Navigator.pop(ctx, day),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: selected ? _gold : Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: selected ? _gold : Colors.grey.shade300,
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          day.toString(),
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: selected ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (result != null) {
+      setState(() => _monthCtrl.text = result.toString());
+    }
   }
 
   @override
@@ -1279,17 +1381,15 @@ class _AssignDayDialogState extends State<_AssignDayDialog> {
               RadioGroup<String>(
                 groupValue: _frequency,
                 onChanged: (v) { if (v != null) setState(() => _frequency = v); },
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _FreqRadio(value: 'weekly',  label: 'Weekly',  freq: _frequency, onTap: () => setState(() => _frequency = 'weekly')),
-                      const SizedBox(width: 4),
-                      _FreqRadio(value: 'monthly', label: 'Monthly', freq: _frequency, onTap: () => setState(() => _frequency = 'monthly')),
-                      const SizedBox(width: 4),
-                      _FreqRadio(value: 'n_days',  label: 'N Days',  freq: _frequency, onTap: () => setState(() => _frequency = 'n_days')),
-                    ],
-                  ),
+                child: Wrap(
+               
+                  children: [
+                    _FreqRadio(value: 'weekly',  label: 'Weekly',  freq: _frequency, onTap: () => setState(() => _frequency = 'weekly')),
+                    _FreqRadio(value: 'monthly', label: 'Monthly', freq: _frequency, onTap: () => setState(() => _frequency = 'monthly')),
+                    _FreqRadio(value: 'specific_dates', label: 'Specific', freq: _frequency, onTap: () => setState(() => _frequency = 'specific_dates')),
+                    _FreqRadio(value: 'appointment',  label: 'Appointment',  freq: _frequency, onTap: () => setState(() => _frequency = 'appointment')),
+                    _FreqRadio(value: 'n_days',  label: 'N Days',  freq: _frequency, onTap: () => setState(() => _frequency = 'n_days')),
+                  ],
                 ),
               ),
 
@@ -1329,20 +1429,164 @@ class _AssignDayDialogState extends State<_AssignDayDialog> {
                 const Text('Day of month (1 – 31):',
                     style: TextStyle(fontSize: 12, color: Colors.black54)),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: _monthCtrl,
-                  keyboardType: TextInputType.number,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: 'e.g. 5  →  5th of every month',
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: _gold, width: 2),
+                InkWell(
+                  onTap: _showDayPicker,
+                  borderRadius: BorderRadius.circular(10),
+                  child: TextField(
+                    controller: _monthCtrl,
+                    enabled: false,
+                    keyboardType: TextInputType.number,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      hintText: 'e.g. 5  →  5th of every month',
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: _gold, width: 2),
+                      ),
+                      suffixIcon: const Icon(Icons.calendar_today_rounded, color: _gold),
                     ),
                   ),
+                ),
+              ],
+
+              // ── Specific Dates body ────────────────────────────────────────
+              if (_frequency == 'specific_dates') ...[
+                const Text('Select specific dates:',
+                    style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 12),
+                _MultiDateCalendar(
+                  selectedDates: _specificDates,
+                  onChanged: () => setState(() {}),
+                ),
+              ],
+
+              // ── Appointment body ────────────────────────────────────────────
+              if (_frequency == 'appointment') ...[
+                const Text('Select date and time:',
+                    style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: _appointmentDate ?? DateTime.now(),
+                            firstDate: DateTime.now(),
+                            lastDate: DateTime.now().add(const Duration(days: 365)),
+                            builder: (ctx, child) => Theme(
+                              data: Theme.of(ctx).copyWith(
+                                colorScheme: const ColorScheme.light(primary: _gold),
+                              ),
+                              child: child!,
+                            ),
+                          );
+                          if (picked != null) setState(() => _appointmentDate = picked);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: _appointmentDate != null ? _gold : Colors.grey.shade400,
+                            ),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.calendar_today_rounded, size: 16,
+                                  color: _appointmentDate != null ? _gold : Colors.grey),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _appointmentDate != null
+                                      ? '${_appointmentDate!.day.toString().padLeft(2,'0')}/'
+                                        '${_appointmentDate!.month.toString().padLeft(2,'0')}/'
+                                        '${_appointmentDate!.year}'
+                                      : 'Pick date',
+                                  style: TextStyle(
+                                    fontSize: 13, fontWeight: FontWeight.w500,
+                                    color: _appointmentDate != null ? Colors.black87 : Colors.grey,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: InkWell(
+                        onTap: () async {
+                          final picked = await showTimePicker(
+                            context: context,
+                            initialTime: _appointmentTime ?? TimeOfDay.now(),
+                            builder: (ctx, child) => Theme(
+                              data: Theme.of(ctx).copyWith(
+                                colorScheme: const ColorScheme.light(primary: _gold),
+                              ),
+                              child: child!,
+                            ),
+                          );
+                          if (!mounted) return;
+                          if (picked != null) {
+                            // Check if time is in the past (for today's date)
+                            final now = DateTime.now();
+                            final selectedDate = _appointmentDate ?? now;
+                            final isToday = selectedDate.year == now.year &&
+                                          selectedDate.month == now.month &&
+                                          selectedDate.day == now.day;
+
+                            if (isToday) {
+                              final pickedTime = DateTime(now.year, now.month, now.day, picked.hour, picked.minute);
+                              if (pickedTime.isBefore(now)) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Cannot select past time'),
+                                    backgroundColor: Colors.red,
+                                    duration: Duration(seconds: 2),
+                                  ),
+                                );
+                                return;
+                              }
+                            }
+                            setState(() => _appointmentTime = picked);
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: _appointmentTime != null ? _gold : Colors.grey.shade400,
+                            ),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.access_time_rounded, size: 16,
+                                  color: _appointmentTime != null ? _gold : Colors.grey),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _appointmentTime != null
+                                      ? _appointmentTime!.format(context)
+                                      : 'Pick time',
+                                  style: TextStyle(
+                                    fontSize: 13, fontWeight: FontWeight.w500,
+                                    color: _appointmentTime != null ? Colors.black87 : Colors.grey,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
 
@@ -1458,6 +1702,188 @@ class _FreqRadio extends StatelessWidget {
       ]),
     );
   }
+}
+
+// ── Multi-Date Calendar ───────────────────────────────────────────────────────
+
+class _MultiDateCalendar extends StatefulWidget {
+  final Set<DateTime> selectedDates;
+  final VoidCallback onChanged;
+
+  const _MultiDateCalendar({required this.selectedDates, required this.onChanged});
+
+  @override
+  State<_MultiDateCalendar> createState() => _MultiDateCalendarState();
+}
+
+class _MultiDateCalendarState extends State<_MultiDateCalendar> {
+  static const _gold = Color(0xFFD7BE69);
+  late DateTime _displayMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    _displayMonth = DateTime(DateTime.now().year, DateTime.now().month);
+  }
+
+  void _prevMonth() => setState(() => _displayMonth = DateTime(_displayMonth.year, _displayMonth.month - 1));
+  void _nextMonth() => setState(() => _displayMonth = DateTime(_displayMonth.year, _displayMonth.month + 1));
+
+  bool _isPastDate(DateTime date) => date.isBefore(DateTime.now()) && !_isSameDay(date, DateTime.now());
+
+  bool _isSameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
+
+  bool _isToday(DateTime date) => _isSameDay(date, DateTime.now());
+
+  @override
+  Widget build(BuildContext context) {
+    final firstDay = DateTime(_displayMonth.year, _displayMonth.month, 1);
+    final lastDay = DateTime(_displayMonth.year, _displayMonth.month + 1, 0);
+    final daysInMonth = lastDay.day;
+    final startingWeekday = firstDay.weekday; // 1=Monday, 7=Sunday
+
+    final dayLabels = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+    final days = <DateTime>[];
+
+    // Empty cells for days before month starts
+    for (var i = 1; i < startingWeekday; i++) {
+      days.add(DateTime(2000)); // placeholder
+    }
+
+    // Days of the month
+    for (var i = 1; i <= daysInMonth; i++) {
+      days.add(DateTime(_displayMonth.year, _displayMonth.month, i));
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Month header with navigation
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.chevron_left_rounded),
+              onPressed: _prevMonth,
+              color: _gold,
+              iconSize: 24,
+            ),
+            Text(
+              '${_monthName(_displayMonth.month)} ${_displayMonth.year}',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            IconButton(
+              icon: const Icon(Icons.chevron_right_rounded),
+              onPressed: _nextMonth,
+              color: _gold,
+              iconSize: 24,
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        // Day labels
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: dayLabels
+              .map((d) => Expanded(
+                    child: Center(
+                      child: Text(d,
+                          style: const TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.w600, color: Colors.black54)),
+                    ),
+                  ))
+              .toList(),
+        ),
+        const SizedBox(height: 4),
+
+        // Calendar grid
+        GridView.count(
+          crossAxisCount: 7,
+          childAspectRatio: 1.2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 2,
+          crossAxisSpacing: 2,
+          children: days.map((date) {
+            if (date.year == 2000) {
+              return const SizedBox();
+            }
+
+            final isSelected = widget.selectedDates.any((d) => _isSameDay(d, date));
+            final isPast = _isPastDate(date);
+            final isToday = _isToday(date);
+
+            return GestureDetector(
+              onTap: isPast ? null : () {
+                setState(() {
+                  if (isSelected) {
+                    widget.selectedDates.removeWhere((d) => _isSameDay(d, date));
+                  } else {
+                    widget.selectedDates.add(date);
+                  }
+                });
+                widget.onChanged();
+              },
+              child: Container(
+                decoration: BoxDecoration(
+                  color: isSelected ? _gold : (isPast ? Colors.grey.shade100 : Colors.white),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: isToday ? _gold : (isSelected ? _gold : Colors.grey.shade300),
+                    width: isToday && !isSelected ? 2 : 1,
+                  ),
+                ),
+                child: Center(
+                  child: Text(
+                    date.day.toString(),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isSelected ? Colors.white : (isPast ? Colors.grey.shade400 : Colors.black87),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 12),
+
+        // Selected dates chips
+        if (widget.selectedDates.isNotEmpty) ...[
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: () {
+                final sorted = widget.selectedDates.toList()..sort((a, b) => a.compareTo(b));
+                return sorted.map((date) => Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Chip(
+                    label: Text(
+                      '${date.day}/${date.month}/${date.year}',
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                    ),
+                    backgroundColor: _gold.withValues(alpha: 0.12),
+                    side: const BorderSide(color: _gold),
+                    onDeleted: () {
+                      setState(() => widget.selectedDates.removeWhere((d) => _isSameDay(d, date)));
+                      widget.onChanged();
+                    },
+                  ),
+                )).toList();
+              }(),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  String _monthName(int month) => [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ][month - 1];
 }
 
 // ── Action button ─────────────────────────────────────────────────────────────
