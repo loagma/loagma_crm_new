@@ -222,7 +222,6 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
                           if (it['subtitle'] != null) ...[
                             const SizedBox(height: 4),
                             Container(
-                              color: Colors.red.withValues(alpha: 0.3),
                               padding: const EdgeInsets.all(2),
                               child: Text(
                                 it['subtitle'] as String,

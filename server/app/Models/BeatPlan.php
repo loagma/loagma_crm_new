@@ -16,17 +16,23 @@ class BeatPlan extends Model
         'frequency',
         'days',
         'month_date',
+        'specific_dates',
+        'appointment_date',
+        'week_anchor_date',
         'interval_days',
         'start_date',
         'is_active',
     ];
 
     protected $casts = [
-        'days'           => 'array',
-        'month_date'     => 'integer',
-        'interval_days'  => 'integer',
-        'start_date'     => 'date',
-        'is_active'      => 'boolean',
+        'days'              => 'array',
+        'month_date'        => 'integer',
+        'specific_dates'    => 'array',
+        'appointment_date'  => 'datetime',
+        'week_anchor_date'  => 'date',
+        'interval_days'     => 'integer',
+        'start_date'        => 'date',
+        'is_active'         => 'boolean',
     ];
 
     public function visits(): HasMany
@@ -40,8 +46,13 @@ class BeatPlan extends Model
     public function firesOn(\Carbon\Carbon $date): bool
     {
         return match ($this->frequency) {
-            'weekly'  => in_array($date->shortDayName, $this->days ?? []),
+            'weekly'  => in_array($date->shortDayName, $this->days ?? [])
+                       && ($this->week_anchor_date === null
+                           || (int)$date->diffInDays($this->week_anchor_date) % 14 < 7),
             'monthly' => $this->month_date === $date->day,
+            'specific_dates' => in_array($date->format('Y-m-d'), $this->specific_dates ?? []),
+            'appointment' => $this->appointment_date !== null
+                           && $this->appointment_date->format('Y-m-d') === $date->format('Y-m-d'),
             'n_days'  => $this->start_date !== null
                          && $this->interval_days > 0
                          && $date->diffInDays($this->start_date) % $this->interval_days === 0,

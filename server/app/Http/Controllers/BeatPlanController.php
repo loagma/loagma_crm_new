@@ -30,15 +30,32 @@ class BeatPlanController extends Controller
         $dayOfMonth = $date->day;
 
         $q->where(function ($sub) use ($dayName, $dayOfMonth, $date) {
-            // Weekly: today's short day name is in days JSON array
-            $sub->where(function ($w) use ($dayName) {
+            // Weekly: today's short day name is in days JSON array, and alternate week logic (if set)
+            $sub->where(function ($w) use ($dayName, $date) {
                 $w->where('frequency', 'weekly')
-                  ->whereJsonContains('days', $dayName);
+                  ->whereJsonContains('days', $dayName)
+                  ->where(function ($alt) use ($date) {
+                      $alt->whereNull('week_anchor_date')
+                          ->orWhereRaw(
+                              'MOD(DATEDIFF(?, week_anchor_date), 14) < 7',
+                              [$date->toDateString()]
+                          );
+                  });
             })
             // Monthly: month_date matches today's day-of-month
             ->orWhere(function ($m) use ($dayOfMonth) {
                 $m->where('frequency', 'monthly')
                   ->where('month_date', $dayOfMonth);
+            })
+            // Specific Dates: today's date is in specific_dates JSON array
+            ->orWhere(function ($s) use ($date) {
+                $s->where('frequency', 'specific_dates')
+                  ->whereJsonContains('specific_dates', $date->format('Y-m-d'));
+            })
+            // Appointment: appointment_date matches today's date
+            ->orWhere(function ($a) use ($date) {
+                $a->where('frequency', 'appointment')
+                  ->whereDate('appointment_date', $date->toDateString());
             })
             // N Days: (today - start_date) days % interval_days === 0
             ->orWhere(function ($n) use ($date) {
@@ -62,10 +79,14 @@ class BeatPlanController extends Controller
                 'account_ids.*' => 'required|string',
                 'account_types' => 'required|array',
                 'account_types.*' => 'required|string|in:lead,customer',
-                'frequency'     => 'required|in:weekly,monthly,n_days',
+                'frequency'     => 'required|in:weekly,monthly,n_days,specific_dates,appointment',
                 'days'          => 'required_if:frequency,weekly|nullable|array',
                 'days.*'        => 'string|in:Mon,Tue,Wed,Thu,Fri,Sat,Sun',
                 'month_date'    => 'required_if:frequency,monthly|nullable|integer|min:1|max:31',
+                'specific_dates' => 'required_if:frequency,specific_dates|nullable|array',
+                'specific_dates.*' => 'date_format:Y-m-d',
+                'appointment_date' => 'required_if:frequency,appointment|nullable|date',
+                'week_anchor_date' => 'nullable|date',
                 'interval_days' => 'required_if:frequency,n_days|nullable|integer|min:1',
                 'start_date'    => 'required_if:frequency,n_days|nullable|date',
                 'salesman_id'   => 'nullable|string', // allow optional override for admin
@@ -84,6 +105,9 @@ class BeatPlanController extends Controller
                         'frequency'     => $data['frequency'],
                         'days'          => $data['days']          ?? null,
                         'month_date'    => $data['month_date']    ?? null,
+                        'specific_dates' => $data['specific_dates'] ?? null,
+                        'appointment_date' => $data['appointment_date'] ?? null,
+                        'week_anchor_date' => $data['week_anchor_date'] ?? null,
                         'interval_days' => $data['interval_days'] ?? null,
                         'start_date'    => $data['start_date']    ?? null,
                         'is_active'     => true,
@@ -180,6 +204,8 @@ class BeatPlanController extends Controller
                 'frequency'      => $plan->frequency,
                 'days'           => $plan->days,
                 'month_date'     => $plan->month_date,
+                'specific_dates' => $plan->specific_dates,
+                'appointment_date' => $plan->appointment_date,
                 'interval_days'  => $plan->interval_days,
                 'visited_today'  => $visitedIds->has($plan->id),
                 'account_type'   => $plan->account_type,
@@ -415,7 +441,7 @@ class BeatPlanController extends Controller
             $salesman = $this->salesmanId();
             $plans = BeatPlan::where('salesman_id', $salesman)
                 ->where('is_active', true)
-                ->get(['id', 'account_id', 'frequency', 'days', 'month_date', 'interval_days', 'start_date']);
+                ->get(['id', 'account_id', 'frequency', 'days', 'month_date', 'specific_dates', 'appointment_date', 'week_anchor_date', 'interval_days', 'start_date']);
 
             return response()->json(['success' => true, 'data' => $plans]);
         } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {

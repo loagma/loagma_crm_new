@@ -18,7 +18,7 @@ class ApiConfig {
   static const int _laravelPort = 8000;
 
   /// Production API URL (Render hosting)
-  static const String _productionUrl = 'https://loagma-crm-new.onrender.com';
+  static const String _productionUrl = 'https://loagma-crm-new-1.onrender.com';
 
   static String get baseUrl {
     if (_baseUrlOverride.isNotEmpty) {

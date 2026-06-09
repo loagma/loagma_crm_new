@@ -186,10 +186,23 @@ class _CustomerCard extends StatelessWidget {
     switch (freq) {
       case 'weekly':
         final d = days?.cast<dynamic>() ?? [];
-        return d.isEmpty ? 'WEEKLY' : d.join(', ').toUpperCase();
+        final alt = item['week_anchor_date'] != null ? ' (ALT)' : '';
+        return d.isEmpty ? 'WEEKLY$alt' : '${d.join(', ').toUpperCase()}$alt';
       case 'monthly':
         final md = item['month_date'];
         return md == null ? 'MONTHLY' : 'DAY $md / MONTH';
+      case 'specific_dates':
+        final dates = (item['specific_dates'] as List?)?.cast<String>() ?? [];
+        return dates.isEmpty ? 'SPECIFIC DATES' : 'SPECIFIC: ${dates.length} DATES';
+      case 'appointment':
+        final apt = item['appointment_date'] as String?;
+        if (apt == null) return 'APPOINTMENT';
+        try {
+          final dt = DateTime.parse(apt);
+          return 'APPT: ${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+        } catch (e) {
+          return 'APPOINTMENT';
+        }
       case 'n_days':
         final n = item['interval_days'];
         return n == null ? 'RECURRING' : 'EVERY $n DAYS';
