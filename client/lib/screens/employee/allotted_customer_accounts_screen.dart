@@ -322,7 +322,86 @@ class _AllottedCustomerAccountsScreenState
     }
   }
 
+  String _planLabelFrom(Map<String, dynamic> p) {
+    final freq = p['frequency'] as String? ?? '';
+    switch (freq) {
+      case 'weekly':
+        final days = (p['days'] as List?)?.cast<dynamic>() ?? [];
+        final alt = p['week_anchor_date'] != null ? ' (Alt)' : '';
+        return days.isEmpty ? 'Weekly$alt' : 'Weekly: ${days.join(', ')}$alt';
+      case 'monthly':
+        final d = p['month_date'];
+        return d == null ? 'Monthly' : 'Monthly: Day $d';
+      case 'specific_dates':
+        final dates = (p['specific_dates'] as List?)?.cast<String>() ?? [];
+        return dates.isEmpty ? 'Specific Dates' : 'Specific: ${dates.length} dates';
+      case 'appointment':
+        final apt = p['appointment_date'] as String?;
+        if (apt == null) return 'Appointment';
+        try {
+          final dt = DateTime.parse(apt);
+          return 'Appt: ${dt.day}/${dt.month} ${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+        } catch (_) {
+          return 'Appointment';
+        }
+      case 'n_days':
+        final n = p['interval_days'];
+        return n == null ? 'N Days' : 'Every $n days';
+      default:
+        return freq;
+    }
+  }
+
   Future<void> _showAssignDayDialog() async {
+    // Check if any selected accounts already have a beat plan
+    final alreadyAssigned = <Map<String, dynamic>>[];
+    for (final g in _groups) {
+      for (final a in (g['accounts'] as List<Map<String, dynamic>>)) {
+        if (_selected.contains(_key(a))) {
+          final id = a['id'] as String? ?? '';
+          if (id.isNotEmpty && _beatPlans.containsKey(id)) {
+            final plan = _beatPlans[id];
+            // Only add if plan has a valid frequency (not null/empty)
+            final freq = plan?['frequency'] as String?;
+            if (freq != null && freq.isNotEmpty) {
+              alreadyAssigned.add(a);
+            }
+          }
+        }
+      }
+    }
+
+    if (alreadyAssigned.isNotEmpty && mounted) {
+      final lines = alreadyAssigned.map((a) {
+        final plan = _beatPlans[a['id'] as String]!;
+        final name = a['businessName'] as String? ?? a['shop_name'] as String? ?? 'Account';
+        return '• $name  (${_planLabelFrom(plan)})';
+      }).join('\n');
+
+      final proceed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Already Assigned'),
+          content: Text(
+            'The following account(s) already have a beat plan:\n\n$lines\n\nDo you want to reassign them?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(backgroundColor: _gold),
+              child: const Text('Reassign', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !mounted) return;
+    }
+
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       barrierDismissible: false,
