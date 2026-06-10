@@ -51,5 +51,10 @@ RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cac
 
 EXPOSE 80
 
-# Default command
-CMD ["apache2-foreground"]
+# Create startup script to run migrations then start Apache
+RUN mkdir -p /var/www/html/storage/logs
+RUN echo '#!/bin/bash\nphp artisan migrate --force\napache2-foreground' > /start.sh
+RUN chmod +x /start.sh
+
+# Run migrations on startup, then start Apache
+CMD ["/start.sh"]

@@ -645,7 +645,7 @@ class ApiService {
   static Future<Map<String, dynamic>?> getAreaAssign(String employeeId) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/area-assign/$employeeId');
     try {
-      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 30));
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
@@ -1075,7 +1075,7 @@ class ApiService {
   static Future<Map<String, dynamic>> getTodayBeatPlan() async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/today');
     try {
-      final res = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      final res = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 30));
       final decoded = jsonDecode(res.body) as Map<String, dynamic>;
       return decoded;
     } catch (e) {
