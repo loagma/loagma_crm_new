@@ -200,11 +200,22 @@ class _LoginScreenState extends State<LoginScreen> {
           },
         );
       } else {
-        Fluttertoast.showToast(msg: response['message'] ?? "Error");
+        final errorMsg = response['message'] ?? "Error";
+        final isNotFound = errorMsg.toLowerCase().contains('not found') ||
+                          errorMsg.toLowerCase().contains('no user') ||
+                          errorMsg.toLowerCase().contains('invalid');
+
+        Fluttertoast.showToast(
+          msg: isNotFound ? "Phone number not found" : errorMsg,
+          backgroundColor: Colors.red,
+        );
       }
     } catch (e) {
       if (mounted) setState(() => isLoading = false);
-      Fluttertoast.showToast(msg: "Error: $e");
+      Fluttertoast.showToast(
+        msg: "Phone number not found",
+        backgroundColor: Colors.red,
+      );
     }
   }
 
