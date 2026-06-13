@@ -290,49 +290,54 @@ class _PincodeCard extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                     child: Row(
-            children: [
-              // Left: pincode + area
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(pincode,
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.black87)),
-                    if (areaName.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(areaName,
-                          style: const TextStyle(fontSize: 12, color: Colors.black45)),
-                    ],
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
                       children: [
-                        _CountChip(label: 'L: $leadCount', color: const Color(0xFFD7BE69)),
-                        _CountChip(label: 'C: $customerCount', color: Colors.green.shade400),
+                        // Left: pincode + area
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(pincode,
+                                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.black87)),
+                              if (areaName.isNotEmpty) ...[
+                                const SizedBox(height: 3),
+                                Text(areaName,
+                                    style: const TextStyle(fontSize: 12, color: Colors.black45)),
+                              ],
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 6,
+                                children: [
+                                  _CountChip(label: 'L: $leadCount', color: const Color(0xFFD7BE69)),
+                                  _CountChip(label: 'C: $customerCount', color: Colors.green.shade400),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Right: total badge + chevron
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: _gold.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: _gold.withValues(alpha: 0.4)),
+                              ),
+                              child: Text('$total contact${total == 1 ? '' : 's'}',
+                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFC09E3E))),
+                            ),
+                            const SizedBox(height: 8),
+                            const Icon(Icons.chevron_right_rounded, color: Colors.black26, size: 22),
+                          ],
+                        ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-              // Right: total badge + chevron
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _gold.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: _gold.withValues(alpha: 0.4)),
-                    ),
-                    child: Text('$total contact${total == 1 ? '' : 's'}',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFC09E3E))),
                   ),
-                  const SizedBox(height: 8),
-                  const Icon(Icons.chevron_right_rounded, color: Colors.black26, size: 22),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
