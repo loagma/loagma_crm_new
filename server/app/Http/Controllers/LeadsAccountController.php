@@ -103,6 +103,13 @@ class LeadsAccountController extends Controller
             });
         }
 
+        if (request()->has('is_approved')) {
+            $val = filter_var(request()->query('is_approved'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            if ($val !== null) {
+                $query->where('isApproved', $val);
+            }
+        }
+
         if (request()->has('page')) {
             $page = (int) request()->query('page', 1);
             $p    = $query->paginate($perPage, ['*'], 'page', $page);

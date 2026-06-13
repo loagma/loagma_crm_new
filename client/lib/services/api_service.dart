@@ -408,6 +408,42 @@ class ApiService {
     return null;
   }
 
+  // ── Call Logs ──────────────────────────────────────────────────────────────
+
+  /// Save a post-call log entry. Returns the created record or null on error.
+  static Future<Map<String, dynamic>?> createCallLog(Map<String, dynamic> body) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/call-logs');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 201) return decoded['data'] as Map<String, dynamic>?;
+      print('createCallLog unexpected status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('createCallLog failed: $e');
+    }
+    return null;
+  }
+
+  /// Fetch call logs for the current employee. Optionally filter by [accountId].
+  static Future<List<Map<String, dynamic>>> getCallLogs({String? accountId}) async {
+    var uri = Uri.parse('${ApiConfig.baseUrl}/api/call-logs');
+    if (accountId != null && accountId.isNotEmpty) {
+      uri = uri.replace(queryParameters: {'account_id': accountId});
+    }
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return ((decoded['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+      }
+    } catch (e) {
+      print('getCallLogs failed: $e');
+    }
+    return [];
+  }
+
   /// Lookup Indian pincode details using public postal API.
   /// Returns normalized shape:
   /// {

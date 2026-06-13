@@ -31,6 +31,9 @@ import '../screens/lead/lead_account_list_screen.dart';
 import '../screens/lead/lead_account_detail_screen.dart';
 import '../screens/marketing/marketing_area_screen.dart';
 import '../screens/marketing/area_pincode_screen.dart';
+import '../screens/telecaller/verify_lead_accounts_screen.dart';
+import '../screens/telecaller/verify_pincode_detail_screen.dart';
+import '../screens/telecaller/telecaller_call_screen.dart';
 import '../services/user_service.dart';
 import 'auth_guard.dart';
 import 'role_guard.dart';
@@ -199,6 +202,28 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/allotted-customer-accounts',
       builder: (context, state) => const AllottedCustomerAccountsScreen(),
+    ),
+    GoRoute(
+      path: '/verify-lead-accounts',
+      builder: (context, state) => const VerifyLeadAccountsScreen(),
+    ),
+    GoRoute(
+      path: '/verify-lead-accounts/:pincode',
+      builder: (context, state) {
+        final pincode = state.pathParameters['pincode'] ?? '';
+        final extra   = state.extra as Map<String, dynamic>? ?? {};
+        return VerifyPincodeDetailScreen(pincode: pincode, initialData: extra);
+      },
+    ),
+    GoRoute(
+      path: '/telecaller/call',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? {};
+        return TelecallerCallScreen(
+          account:     extra['account']     as Map<String, dynamic>? ?? {},
+          accountType: extra['accountType'] as String?               ?? 'lead',
+        );
+      },
     ),
     GoRoute(
       path: '/todays-beat-plan',

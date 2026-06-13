@@ -65,7 +65,7 @@ class AppDrawer extends StatelessWidget {
       case 'telecaller':
         return [
           {'title': 'Home',                      'icon': Icons.home_rounded,           'route': '/dashboard/telecaller',       'color': const Color(0xFF5C6BC0)},
-          {'title': 'Create Lead Accounts',             'icon': Icons.people_alt_rounded,     'route': '/lead-accounts',              'color': const Color(0xFF42A5F5)},
+          {'title': 'Create Lead Accounts',             'icon': Icons.people_alt_rounded,     'route': '/lead-account',               'color': const Color(0xFF42A5F5)},
           {'title': 'My Area',             'icon': Icons.location_on_rounded,     'route': '/my-areas',              'color': const Color.fromARGB(255, 140, 33, 157), 'subtitle': 'Assigned areas'},
           {'title': 'Allotted Customer Accounts','icon': Icons.assignment_ind_rounded,  'route': '/allotted-customer-accounts', 'color': const Color(0xFF26A69A)},
           {'title': 'Verify Lead Accounts',      'icon': Icons.verified_user_rounded,   'route': '/verify-lead-accounts',       'color': const Color(0xFF66BB6A)},

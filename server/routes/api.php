@@ -10,6 +10,7 @@ use App\Http\Controllers\AreaAssignController;
 use App\Http\Controllers\InchargeAssignController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\BeatPlanController;
+use App\Http\Controllers\CallLogController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -123,3 +124,7 @@ Route::prefix('beat-plan')->group(function () {
     Route::delete('/{id}',          [BeatPlanController::class, 'unassign']);
     Route::post('/{id}/visit',      [BeatPlanController::class, 'recordVisit']);
 });
+
+// ---------------------------------------------------------------------------
+Route::get('/call-logs',  [CallLogController::class, 'index']);
+Route::post('/call-logs', [CallLogController::class, 'store']);

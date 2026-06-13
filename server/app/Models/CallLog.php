@@ -1,0 +1,25 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class CallLog extends Model
+{
+    protected $table = 'call_log_crm';
+
+    protected $fillable = [
+        'employee_mobile',
+        'account_id',
+        'account_type',
+        'call_outcome',
+        'notes',
+        'follow_up_date',
+        'called_at',
+    ];
+
+    protected $casts = [
+        'follow_up_date' => 'date',
+        'called_at'      => 'datetime',
+    ];
+}
