@@ -3,6 +3,13 @@ import 'package:flutter/material.dart';
 import '../../services/api_service.dart';
 import '../../services/user_service.dart';
 
+/// Shows the logged-in incharge's full downward hierarchy:
+///   Head Incharge  → Zonal Incharges → Area Incharges → Salesmen
+///   Zonal Incharge → Area Incharges  → Salesmen
+///   Area Incharge  → Salesmen
+///
+/// Built by recursively walking the generic incharge-assign map
+/// (parent mobile → child mobiles) starting from the current user.
 class MyInchargesScreen extends StatefulWidget {
   const MyInchargesScreen({super.key});
 
@@ -13,10 +20,11 @@ class MyInchargesScreen extends StatefulWidget {
 class _MyInchargesScreenState extends State<MyInchargesScreen> {
   static const gold = Color(0xFFD7BE69);
 
-  bool   _loading = true;
-  String _error   = '';
+  bool _loading = true;
+  String _error = '';
 
-  List<Map<String, dynamic>> _incharges = [];
+  // Direct children of the logged-in user, each a fully-expanded subtree.
+  List<_Node> _roots = [];
 
   @override
   void initState() {
@@ -25,187 +33,126 @@ class _MyInchargesScreenState extends State<MyInchargesScreen> {
   }
 
   Future<void> _load() async {
-    setState(() { _loading = true; _error = ''; });
+    setState(() {
+      _loading = true;
+      _error = '';
+    });
 
-    final mobile = UserService.currentMobile ?? '';
+    final mobile = (UserService.currentMobile ?? '').trim();
     if (mobile.isEmpty) {
-      setState(() { _loading = false; _error = 'Not logged in'; });
+      setState(() {
+        _loading = false;
+        _error = 'Not logged in';
+      });
       return;
     }
 
     try {
       final results = await Future.wait([
-        ApiService.getInchargeAssign(mobile),
+        ApiService.getAllInchargeAssigns(),
         ApiService.getEmployees(perPage: 500),
         ApiService.getAllAreaAssigns(),
       ]);
+      final areasResp = await ApiService.getAreas(perPage: 1000);
 
       if (!mounted) return;
 
-      final assignRes      = results[0] as Map<String, dynamic>?;
-      final allStaff       = results[1] as List<Map<String, dynamic>>;
-      final allAreaAssigns = results[2] as List<Map<String, dynamic>>;
+      final allAssigns = results[0];
+      final allStaff = results[1];
+      final allAreaAssigns = results[2];
+      final allAreas = (areasResp['data'] as List?) ?? const [];
 
-      // ── Parse my assigned incharge IDs ──────────────────────────────────
-      final myInchargeIds = <int>{};
-      final assignData = assignRes?['data'];
-      if (assignData is Map) {
-        final ids = assignData['incharge_ids'];
-        if (ids is List) {
-          for (final id in ids) {
-            final n = int.tryParse(id.toString());
-            if (n != null) myInchargeIds.add(n);
-          }
-        }
+      // parent mobile → list of child mobile-id strings
+      final childIdsOf = <String, List<String>>{};
+      for (final a in allAssigns) {
+        final parentId = (a['head_incharge_id'] ?? '').toString();
+        final ids = a['incharge_ids'];
+        if (parentId.isEmpty || parentId == '0' || ids is! List) continue;
+        childIdsOf[parentId] = ids
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty && s != '0')
+            .toList();
       }
 
-      if (myInchargeIds.isEmpty) {
-        setState(() { _incharges = []; _loading = false; });
-        return;
-      }
-
-      // ── Build lookup: empKey → employee ─────────────────────────────────
-      // empKey = mobile string (preferred) or deli_id string
-      final allStaffByKey = <String, Map<String, dynamic>>{};
+      // employee lookup keyed by mobile and deli_id
+      final empByKey = <String, Map<String, dynamic>>{};
       for (final e in allStaff) {
-        final mob  = (e['mobile']  ?? '').toString().trim();
+        final mob = (e['mobile'] ?? '').toString().trim();
         final deli = (e['deli_id'] ?? '').toString().trim();
-        if (mob.isNotEmpty)  allStaffByKey[mob]  = e;
-        if (deli.isNotEmpty) allStaffByKey[deli] = e;
+        if (mob.isNotEmpty) empByKey[mob] = e;
+        if (deli.isNotEmpty) empByKey[deli] = e;
       }
 
-      // ── Build area lookups keyed by employee_id (same key as stored) ────
-      // employee_id in area_assign_crm is stored as int (the mobile number)
-      final empAreaIds   = <String, Set<int>>{};   // key → set of area int IDs
-      final empAreaNames = <String, List<String>>{}; // key → area name list
+      // area id → pincodes
+      final pincodesByAreaId = <String, List<String>>{};
+      for (final ar in allAreas) {
+        if (ar is! Map) continue;
+        final id = (ar['id'] ?? '').toString();
+        final pins = (ar['pincodes'] as List?)?.map((p) => p.toString()).toList() ?? const [];
+        if (id.isNotEmpty) pincodesByAreaId[id] = pins;
+      }
 
+      // employee key → assigned areas (name + its pincodes)
+      final areaInfoOf = <String, List<_AreaInfo>>{};
       for (final a in allAreaAssigns) {
         final empKey = (a['employee_id'] ?? '').toString().trim();
-        if (empKey.isEmpty || empKey == '0') continue;
-
-        final rawIds   = a['area_ids']   as List?;
-        final rawNames = a['area_names'] as List?;
-
-        if (rawIds != null) {
-          empAreaIds[empKey] = rawIds
-              .map((x) => int.tryParse(x.toString()))
-              .whereType<int>()
-              .toSet();
+        if (empKey.isEmpty) continue;
+        final ids = (a['area_ids'] as List?) ?? const [];
+        final names = (a['area_names'] as List?) ?? const [];
+        final infos = <_AreaInfo>[];
+        for (var i = 0; i < names.length; i++) {
+          final id = i < ids.length ? ids[i].toString() : '';
+          infos.add(_AreaInfo(
+            name: names[i].toString(),
+            pincodes: pincodesByAreaId[id] ?? const [],
+          ));
         }
-        if (rawNames != null) {
-          empAreaNames[empKey] =
-              rawNames.map((n) => n.toString()).toList();
-        }
+        areaInfoOf[empKey] = infos;
       }
 
-      // ── Build salesman list (role = salesman) ────────────────────────────
-      final salesmen = <Map<String, dynamic>>[];
-      for (final e in allStaff) {
-        final role = (e['role'] ?? '').toString().toLowerCase();
-        if (role == 'salesman') salesmen.add(e);
+      List<_AreaInfo> areasFor(Map<String, dynamic>? emp, String key) {
+        final mob = (emp?['mobile'] ?? '').toString().trim();
+        final deli = (emp?['deli_id'] ?? '').toString().trim();
+        return areaInfoOf[mob] ?? areaInfoOf[deli] ?? areaInfoOf[key] ?? const [];
       }
 
-      // ── Build each incharge entry ────────────────────────────────────────
-      final incharges = <Map<String, dynamic>>[];
-
-      for (final incId in myInchargeIds) {
-        // Find the employee whose mobile or deli_id equals incId
-        Map<String, dynamic>? emp;
-        final incKey = incId.toString();
-        emp = allStaffByKey[incKey]; // try mobile/deli_id match directly
-
-        if (emp == null) {
-          // fallback: linear scan
-          for (final e in allStaff) {
-            final mobInt  = int.tryParse((e['mobile']  ?? '').toString());
-            final deliInt = int.tryParse((e['deli_id'] ?? '').toString());
-            if (mobInt == incId || deliInt == incId) { emp = e; break; }
-          }
+      // Recursively build a subtree for one person, guarding against cycles.
+      _Node buildNode(String key, Set<String> visited) {
+        final emp = empByKey[key];
+        final children = <_Node>[];
+        for (final childId in childIdsOf[key] ?? const <String>[]) {
+          if (visited.contains(childId)) continue;
+          visited.add(childId);
+          children.add(buildNode(childId, visited));
         }
+        return _Node(
+          name: (emp?['name'] ?? 'Unknown ($key)').toString(),
+          mobile: (emp?['mobile'] ?? key).toString(),
+          role: (emp?['role'] ?? '').toString().toLowerCase(),
+          areas: areasFor(emp, key),
+          children: children,
+        );
+      }
 
-        final empMobile = (emp?['mobile']  ?? '').toString().trim();
-        final empDeliId = (emp?['deli_id'] ?? '').toString().trim();
+      final visited = <String>{mobile};
+      final roots = <_Node>[];
+      for (final childId in childIdsOf[mobile] ?? const <String>[]) {
+        if (visited.contains(childId)) continue;
+        visited.add(childId);
+        roots.add(buildNode(childId, visited));
+      }
 
-        // Area lookup key: try mobile first, then deli_id, then incId
-        String? areaKey;
-        if (empAreaIds.containsKey(empMobile) && empMobile.isNotEmpty) {
-          areaKey = empMobile;
-        } else if (empAreaIds.containsKey(empDeliId) && empDeliId.isNotEmpty) {
-          areaKey = empDeliId;
-        } else if (empAreaIds.containsKey(incKey)) {
-          areaKey = incKey;
-        }
-
-        final incAreaIds   = areaKey != null ? (empAreaIds[areaKey]   ?? <int>{}) : <int>{};
-        final incAreaNames = areaKey != null ? (empAreaNames[areaKey] ?? <String>[]) : <String>[];
-
-        // ── Find salesmen in this incharge's areas ─────────────────────────
-        final team = <Map<String, dynamic>>[];
-        if (incAreaIds.isNotEmpty) {
-          for (final s in salesmen) {
-            final salMobile = (s['mobile']  ?? '').toString().trim();
-            final salDeli   = (s['deli_id'] ?? '').toString().trim();
-
-            // Find this salesman's area IDs
-            Set<int>? salAreaIds;
-            if (empAreaIds.containsKey(salMobile) && salMobile.isNotEmpty) {
-              salAreaIds = empAreaIds[salMobile];
-            } else if (empAreaIds.containsKey(salDeli) && salDeli.isNotEmpty) {
-              salAreaIds = empAreaIds[salDeli];
-            }
-
-            if (salAreaIds == null || salAreaIds.isEmpty) continue;
-
-            // Shared area IDs (salesman in incharge's area)
-            final sharedIds = salAreaIds.intersection(incAreaIds);
-            if (sharedIds.isEmpty) continue;
-
-            // Get shared area names
-            final sharedNames = <String>[];
-            final rawSalIds   = (allAreaAssigns
-                .firstWhere(
-                  (a) {
-                    final k = (a['employee_id'] ?? '').toString().trim();
-                    return k == salMobile || k == salDeli;
-                  },
-                  orElse: () => {},
-                )['area_ids'] as List?) ?? [];
-            final rawSalNames = (allAreaAssigns
-                .firstWhere(
-                  (a) {
-                    final k = (a['employee_id'] ?? '').toString().trim();
-                    return k == salMobile || k == salDeli;
-                  },
-                  orElse: () => {},
-                )['area_names'] as List?) ?? [];
-
-            for (var i = 0; i < rawSalIds.length; i++) {
-              final n = int.tryParse(rawSalIds[i].toString());
-              if (n != null && sharedIds.contains(n) && i < rawSalNames.length) {
-                sharedNames.add(rawSalNames[i].toString());
-              }
-            }
-
-            team.add({
-              'name':   (s['name']   ?? '').toString(),
-              'mobile': salMobile,
-              'areas':  sharedNames,
-            });
-          }
-          team.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
-        }
-
-        incharges.add({
-          'name':   (emp?['name'] ?? 'Incharge $incId').toString(),
-          'mobile': empMobile,
-          'areas':  incAreaNames,
-          'team':   team,
+      setState(() {
+        _roots = roots;
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Failed to load: $e';
         });
       }
-
-      setState(() { _incharges = incharges; _loading = false; });
-    } catch (e) {
-      if (mounted) setState(() { _loading = false; _error = 'Failed to load: $e'; });
     }
   }
 
@@ -214,7 +161,7 @@ class _MyInchargesScreenState extends State<MyInchargesScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
-        title: const Text('My Incharges'),
+        title: const Text('My Team'),
         backgroundColor: gold,
         foregroundColor: Colors.white,
         actions: [
@@ -225,30 +172,27 @@ class _MyInchargesScreenState extends State<MyInchargesScreen> {
           ? const Center(child: CircularProgressIndicator(color: gold))
           : _error.isNotEmpty
               ? Center(child: Text(_error, style: const TextStyle(color: Colors.red)))
-              : _incharges.isEmpty
+              : _roots.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.supervisor_account_outlined,
-                              size: 64, color: Colors.grey.shade300),
+                          Icon(Icons.supervisor_account_outlined, size: 64, color: Colors.grey.shade300),
                           const SizedBox(height: 12),
-                          Text('No incharges assigned to you',
+                          Text('No team assigned to you',
                               style: TextStyle(fontSize: 16, color: Colors.grey.shade500)),
                           const SizedBox(height: 6),
-                          Text('Ask your admin to assign incharges',
+                          Text('Ask your admin to assign your team',
                               style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
                         ],
                       ),
                     )
                   : RefreshIndicator(
                       onRefresh: _load,
-                      child: ListView.separated(
-                        padding: const EdgeInsets.all(14),
-                        itemCount: _incharges.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 12),
-                        itemBuilder: (ctx, i) =>
-                            _InchargeCard(incharge: _incharges[i]),
+                      child: ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                        itemCount: _roots.length,
+                        itemBuilder: (ctx, i) => _NodeTile(node: _roots[i], depth: 0),
                       ),
                     ),
     );
@@ -257,13 +201,66 @@ class _MyInchargesScreenState extends State<MyInchargesScreen> {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _InchargeCard extends StatelessWidget {
-  final Map<String, dynamic> incharge;
-  const _InchargeCard({required this.incharge});
+class _AreaInfo {
+  final String name;
+  final List<String> pincodes;
+  const _AreaInfo({required this.name, required this.pincodes});
+}
 
-  static const gold       = Color(0xFFD7BE69);
-  static const goldLight  = Color(0xFFFFF8E1);
-  static const purple     = Color(0xFF7B68AA);
+class _Node {
+  final String name;
+  final String mobile;
+  final String role;
+  final List<_AreaInfo> areas;
+  final List<_Node> children;
+
+  const _Node({
+    required this.name,
+    required this.mobile,
+    required this.role,
+    required this.areas,
+    required this.children,
+  });
+
+  /// Total people in this subtree (excluding self).
+  int get descendantCount =>
+      children.fold(0, (sum, c) => sum + 1 + c.descendantCount);
+}
+
+({Color color, Color light, String label}) _roleStyle(String role) {
+  switch (role) {
+    case 'head_incharge':
+      return (color: const Color(0xFFAB47BC), light: const Color(0xFFF3E5F5), label: 'Head Incharge');
+    case 'zonal_incharge':
+      return (color: const Color(0xFF42A5F5), light: const Color(0xFFE3F2FD), label: 'Zonal Incharge');
+    case 'area_incharge':
+      return (color: const Color(0xFFFF7043), light: const Color(0xFFFBE9E7), label: 'Area Incharge');
+    case 'salesman':
+      return (color: const Color(0xFF43A047), light: const Color(0xFFE8F5E9), label: 'Salesman');
+    case 'telecaller':
+      return (color: const Color(0xFF00838F), light: const Color(0xFFE0F7FA), label: 'Telecaller');
+    default:
+      return (
+        color: const Color(0xFF7B68AA),
+        light: const Color(0xFFEDE7F6),
+        label: role.isEmpty ? 'Staff' : role[0].toUpperCase() + role.substring(1),
+      );
+  }
+}
+
+/// One node of the hierarchy. Expandable when it has children.
+class _NodeTile extends StatefulWidget {
+  final _Node node;
+  final int depth;
+
+  const _NodeTile({required this.node, required this.depth});
+
+  @override
+  State<_NodeTile> createState() => _NodeTileState();
+}
+
+class _NodeTileState extends State<_NodeTile> {
+  bool _expanded = true;
 
   String _initials(String name) {
     final parts = name.trim().split(' ').where((p) => p.isNotEmpty).toList();
@@ -273,233 +270,165 @@ class _InchargeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name   = (incharge['name']   ?? '').toString();
-    final mobile = (incharge['mobile'] ?? '').toString();
-    final areas  = (incharge['areas']  as List?)?.cast<String>() ?? [];
-    final team   = (incharge['team']   as List<dynamic>?)
-                       ?.map((e) => e as Map<String, dynamic>)
-                       .toList() ?? [];
+    final node = widget.node;
+    final style = _roleStyle(node.role);
+    final hasChildren = node.children.isNotEmpty;
 
-    return Card(
-      color: Colors.white,
-      margin: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: gold.withValues(alpha: 0.20), width: 1),
-      ),
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-
-            // ── Incharge header ────────────────────────────────────────────
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: goldLight,
-                  child: Text(_initials(name),
-                      style: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.bold, color: gold)),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(name,
-                          style: const TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.w700)),
-                      if (mobile.isNotEmpty)
-                        Text(mobile,
-                            style: TextStyle(
-                                fontSize: 11, color: Colors.grey.shade500)),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                      color: goldLight, borderRadius: BorderRadius.circular(20)),
-                  child: const Text('Incharge',
-                      style: TextStyle(
-                          fontSize: 10, fontWeight: FontWeight.w600, color: gold)),
-                ),
-              ],
-            ),
-
-            // ── Areas ─────────────────────────────────────────────────────
-            const SizedBox(height: 10),
-            _sectionLabel(Icons.location_on_rounded, gold,
-                areas.isEmpty ? 'No areas assigned' : '${areas.length} Area${areas.length == 1 ? '' : 's'}'),
-            if (areas.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 4, runSpacing: 4,
-                children: areas.map((a) => _chip(a, gold)).toList(),
-              ),
-            ],
-
-            // ── Team (salesmen) ───────────────────────────────────────────
-            const SizedBox(height: 10),
-            const Divider(height: 1, color: Color(0xFFEEEEEE)),
-            const SizedBox(height: 10),
-            _sectionLabel(Icons.groups_rounded, purple,
-                team.isEmpty
-                    ? 'No salesmen in areas'
-                    : '${team.length} Salesman${team.length == 1 ? '' : 's'}',
-                color: team.isEmpty ? Colors.grey : purple),
-
-            if (team.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              ...team.map((s) => _SalesmanRow(salesman: s)),
-            ],
-
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _sectionLabel(IconData icon, Color iconColor, String text,
-      {Color? color}) {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 13, color: iconColor),
-        const SizedBox(width: 5),
-        Text(text,
-            style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: color ?? iconColor)),
+        Padding(
+          padding: EdgeInsets.only(left: widget.depth * 16.0, bottom: 8),
+          child: Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            elevation: 1,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: hasChildren ? () => setState(() => _expanded = !_expanded) : null,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 4,
+                      height: 40,
+                      margin: const EdgeInsets.only(right: 10, top: 1),
+                      decoration: BoxDecoration(color: style.color, borderRadius: BorderRadius.circular(4)),
+                    ),
+                    CircleAvatar(
+                      radius: 19,
+                      backgroundColor: style.light,
+                      child: Text(_initials(node.name),
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: style.color)),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(node.name,
+                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(color: style.light, borderRadius: BorderRadius.circular(20)),
+                                child: Text(style.label,
+                                    style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: style.color)),
+                              ),
+                            ],
+                          ),
+                          if (node.mobile.isNotEmpty)
+                            Text(node.mobile, style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                          if (node.areas.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            ...node.areas.map((a) => _AreaBlock(area: a, color: style.color)),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (hasChildren) ...[
+                      const SizedBox(width: 4),
+                      Column(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(color: style.color, borderRadius: BorderRadius.circular(10)),
+                            child: Text('${node.children.length}',
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white)),
+                          ),
+                          Icon(_expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                              size: 20, color: Colors.grey.shade500),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (hasChildren && _expanded)
+          ...node.children.map((c) => _NodeTile(node: c, depth: widget.depth + 1)),
       ],
     );
   }
-
-  Widget _chip(String label, Color base) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: base.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: base.withValues(alpha: 0.30)),
-        ),
-        child: Text(label,
-            style: TextStyle(
-                fontSize: 10,
-                color: base.withValues(alpha: 0.85),
-                fontWeight: FontWeight.w500)),
-      );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+/// One assigned area shown with its pincodes nested underneath.
+class _AreaBlock extends StatelessWidget {
+  final _AreaInfo area;
+  final Color color;
 
-class _SalesmanRow extends StatelessWidget {
-  final Map<String, dynamic> salesman;
-  const _SalesmanRow({required this.salesman});
-
-  static const gold   = Color(0xFFD7BE69);
-  static const purple = Color(0xFF7B68AA);
-
-  String _initials(String name) {
-    final parts = name.trim().split(' ').where((p) => p.isNotEmpty).toList();
-    if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    return name.isNotEmpty ? name[0].toUpperCase() : '?';
-  }
+  const _AreaBlock({required this.area, required this.color});
 
   @override
   Widget build(BuildContext context) {
-    final name   = (salesman['name']   ?? '').toString();
-    final mobile = (salesman['mobile'] ?? '').toString();
-    final areas  = (salesman['areas']  as List?)?.cast<String>() ?? [];
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-        decoration: BoxDecoration(
-          color: purple.withValues(alpha: 0.04),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: purple.withValues(alpha: 0.12)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            CircleAvatar(
-              radius: 16,
-              backgroundColor: purple.withValues(alpha: 0.12),
-              child: Text(_initials(name),
-                  style: const TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.bold, color: purple)),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(name,
-                            style: const TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.w600)),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFF8E1),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Text('Salesman',
-                            style: TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.w600,
-                                color: gold)),
-                      ),
-                    ],
-                  ),
-                  if (mobile.isNotEmpty)
-                    Text(mobile,
-                        style: TextStyle(
-                            fontSize: 10, color: Colors.grey.shade500)),
-                  if (areas.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 4, runSpacing: 3,
-                      children: areas
-                          .map((a) => Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: gold.withValues(alpha: 0.08),
-                                  borderRadius: BorderRadius.circular(5),
-                                  border: Border.all(
-                                      color: gold.withValues(alpha: 0.25)),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(Icons.location_on_rounded,
-                                        size: 9, color: Color(0xFFB89A3E)),
-                                    const SizedBox(width: 2),
-                                    Text(a,
-                                        style: const TextStyle(
-                                            fontSize: 9,
-                                            color: Color(0xFFB89A3E),
-                                            fontWeight: FontWeight.w500)),
-                                  ],
-                                ),
-                              ))
-                          .toList(),
-                    ),
-                  ],
-                ],
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.22)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.location_on_rounded, size: 13, color: color),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(area.name,
+                    style: TextStyle(fontSize: 11.5, color: color, fontWeight: FontWeight.w700)),
               ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1.5),
+                decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+                child: Text('${area.pincodes.length} PIN',
+                    style: const TextStyle(fontSize: 8.5, color: Colors.white, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          if (area.pincodes.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: area.pincodes
+                  .map((p) => Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: color.withValues(alpha: 0.35)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.pin_drop_outlined, size: 10, color: color),
+                            const SizedBox(width: 3),
+                            Text(p,
+                                style: TextStyle(
+                                    fontSize: 10.5, color: color, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ))
+                  .toList(),
             ),
-          ],
-        ),
+          ] else
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text('No pincodes',
+                  style: TextStyle(fontSize: 9.5, color: Colors.grey.shade400, fontStyle: FontStyle.italic)),
+            ),
+        ],
       ),
     );
   }

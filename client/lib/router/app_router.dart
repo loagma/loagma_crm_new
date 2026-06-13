@@ -71,9 +71,10 @@ final appRouter = GoRouter(
       builder: (context, state) {
         final role = state.pathParameters['role'] ?? '';
         final normalized = role.toLowerCase().trim();
-        if (normalized == 'salesman' || normalized == 'telecaller' ||
-            normalized == 'manager'  || normalized == 'incharge'   ||
-            normalized == 'head_incharge') {
+        if (normalized == 'salesman'      || normalized == 'telecaller'     ||
+            normalized == 'manager'       || normalized == 'incharge'       ||
+            normalized == 'head_incharge' || normalized == 'zonal_incharge' ||
+            normalized == 'area_incharge') {
           return EmployeeHomeScreen(role: role);
         }
         return RoleDashboardTemplate(role: role);

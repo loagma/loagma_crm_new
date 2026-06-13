@@ -98,50 +98,32 @@ class AppDrawer extends StatelessWidget {
       case 'head_incharge':
         return [
           {
-            'title': 'My Incharges',
+            'title': 'My Team',
             'icon': Icons.supervisor_account_rounded,
             'route': '/my-incharges',
             'color': const Color(0xFFAB47BC),
-            'subtitle': 'Assigned incharges',
           },
-          {
-            'title': 'Employee List',
-            'icon': Icons.people_alt_rounded,
-            'route': '/employee-list',
-            'color': const Color(0xFF26A69A),
-          },
+        
         ];
       case 'zonal_incharge':
         return [
           {
-            'title': 'My Incharges',
+            'title': 'My Team',
             'icon': Icons.supervisor_account_rounded,
             'route': '/my-incharges',
             'color': const Color(0xFFAB47BC),
-            'subtitle': 'Assigned incharges',
           },
-          {
-            'title': 'Employee List',
-            'icon': Icons.people_alt_rounded,
-            'route': '/employee-list',
-            'color': const Color(0xFF26A69A),
-          },
+          
         ];
       case 'area_incharge':
         return [
           {
-            'title': 'My Incharges',
+            'title': 'My Team',
             'icon': Icons.supervisor_account_rounded,
             'route': '/my-incharges',
             'color': const Color(0xFFAB47BC),
-            'subtitle': 'Assigned incharges',
           },
-          {
-            'title': 'Employee List',
-            'icon': Icons.people_alt_rounded,
-            'route': '/employee-list',
-            'color': const Color(0xFF26A69A),
-          },
+       
         ];
       case 'salesman':
         return [
@@ -247,7 +229,9 @@ class AppDrawer extends StatelessWidget {
         r == 'telecaller' ||
         r == 'manager' ||
         r == 'incharge' ||
-        r == 'head_incharge';
+        r == 'head_incharge' ||
+        r == 'zonal_incharge' ||
+        r == 'area_incharge';
   }
 
   @override
