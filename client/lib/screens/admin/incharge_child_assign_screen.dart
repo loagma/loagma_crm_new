@@ -2,38 +2,46 @@ import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 
 import '../../services/api_service.dart';
+import 'incharge_levels.dart';
 
-class HeadInchargeAssignScreen extends StatefulWidget {
-  final Map<String, dynamic> headIncharge;
+/// Multi-select screen: pick the children ([level.childRole]) to assign to a
+/// single [parent] ([level.parentRole]). Saves via the generic incharge-assign
+/// API keyed by the parent's mobile id.
+class InchargeChildAssignScreen extends StatefulWidget {
+  final InchargeLevel level;
+  final Map<String, dynamic> parent;
 
-  const HeadInchargeAssignScreen({super.key, required this.headIncharge});
+  const InchargeChildAssignScreen({super.key, required this.level, required this.parent});
 
   @override
-  State<HeadInchargeAssignScreen> createState() => _HeadInchargeAssignScreenState();
+  State<InchargeChildAssignScreen> createState() => _InchargeChildAssignScreenState();
 }
 
-class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
-  static const purpleDark  = Color(0xFFD7BE69);  // gold (theme)
-  static const purpleLight = Color(0xFFFFF8E1);  // gold light (theme)
+class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
+  static const goldDark = Color(0xFFD7BE69);
+  static const goldLight = Color(0xFFFFF8E1);
 
-  final Set<int>    _selectedIds   = {};
-  bool              _loading = false;
-  bool              _saving  = false;
-  List<Map<String, dynamic>> _incharges = [];
-  // incharge employeeId → list of area names
-  Map<String, List<String>>  _areaMap   = {};
-  final _searchCtrl  = TextEditingController();
+  final Set<int> _selectedIds = {};
+  bool _loading = false;
+  bool _saving = false;
+  List<Map<String, dynamic>> _children = [];
+  Map<String, List<String>> _areaMap = {}; // childId → area names
+  final _searchCtrl = TextEditingController();
   String _searchQuery = '';
 
-  String get _headId =>
-      (widget.headIncharge['id'] ?? widget.headIncharge['deli_id'] ?? '').toString();
+  InchargeLevel get _level => widget.level;
+
+  String get _parentId =>
+      (widget.parent['id'] ?? widget.parent['deli_id'] ?? '').toString();
 
   List<Map<String, dynamic>> get _filtered {
-    if (_searchQuery.isEmpty) return _incharges;
+    if (_searchQuery.isEmpty) return _children;
     final q = _searchQuery.toLowerCase();
-    return _incharges.where((i) =>
-        (i['name']   ?? '').toString().toLowerCase().contains(q) ||
-        (i['mobile'] ?? '').toString().contains(q)).toList();
+    return _children
+        .where((i) =>
+            (i['name'] ?? '').toString().toLowerCase().contains(q) ||
+            (i['mobile'] ?? '').toString().contains(q))
+        .toList();
   }
 
   @override
@@ -51,17 +59,16 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
   Future<void> _loadAll() async {
     setState(() => _loading = true);
 
-    final staffFuture      = ApiService.getEmployees(perPage: 500);
-    final assignFuture     = ApiService.getInchargeAssign(_headId);
+    final staffFuture = ApiService.getEmployees(perPage: 500);
+    final assignFuture = ApiService.getInchargeAssign(_parentId);
     final areaAssignFuture = ApiService.getAllAreaAssigns();
 
-    final staffList      = await staffFuture;
-    final assignResult   = await assignFuture;
+    final staffList = await staffFuture;
+    final assignResult = await assignFuture;
     final allAreaAssigns = await areaAssignFuture;
 
     if (!mounted) return;
 
-    // Build area map: employeeId → area names
     final areaMap = <String, List<String>>{};
     for (final a in allAreaAssigns) {
       final empId = (a['employee_id'] ?? '').toString();
@@ -71,19 +78,18 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
       }
     }
 
-    // Filter to incharges only
-    final incharges = staffList.map((e) {
+    final children = staffList.map((e) {
       final role = (e['role'] ?? '').toString().trim().toLowerCase();
-      final id   = (e['mobile'] ?? e['deli_id'] ?? '').toString();
+      final id = (e['mobile'] ?? e['deli_id'] ?? '').toString();
       return <String, dynamic>{
-        'id':     id,
-        'name':   (e['name']   ?? '').toString(),
+        'id': id,
+        'name': (e['name'] ?? '').toString(),
         'mobile': (e['mobile'] ?? '').toString(),
-        'role':   role,
+        'role': role,
       };
-    }).where((e) => e['role'] == 'incharge').toList();
+    }).where((e) => e['role'] == _level.childRole).toList();
 
-    // Pre-select currently assigned incharges
+    // Pre-select currently assigned children
     final Set<int> preSelected = {};
     if (assignResult != null && assignResult['data'] is Map) {
       final ids = (assignResult['data'] as Map)['incharge_ids'];
@@ -96,25 +102,26 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
     }
 
     setState(() {
-      _incharges = incharges;
-      _areaMap   = areaMap;
-      _selectedIds..clear()..addAll(preSelected);
+      _children = children;
+      _areaMap = areaMap;
+      _selectedIds
+        ..clear()
+        ..addAll(preSelected);
       _loading = false;
     });
   }
 
-  int _idOf(Map<String, dynamic> inc) =>
-      int.tryParse((inc['id'] ?? '').toString()) ?? 0;
+  int _idOf(Map<String, dynamic> inc) => int.tryParse((inc['id'] ?? '').toString()) ?? 0;
 
   Future<void> _save() async {
     if (_saving) return;
     setState(() => _saving = true);
 
-    final selected = _incharges.where((i) => _selectedIds.contains(_idOf(i))).toList();
-    final ids   = selected.map(_idOf).toList();
+    final selected = _children.where((i) => _selectedIds.contains(_idOf(i))).toList();
+    final ids = selected.map(_idOf).toList();
     final names = selected.map((i) => (i['name'] ?? '').toString()).toList();
 
-    final res = await ApiService.saveInchargeAssign(_headId, ids, names);
+    final res = await ApiService.saveInchargeAssign(_parentId, ids, names);
 
     if (!mounted) return;
     setState(() => _saving = false);
@@ -122,17 +129,24 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
     if (res == null || res.containsKey('errors')) {
       Fluttertoast.showToast(
           msg: 'Failed to save', backgroundColor: Colors.red, textColor: Colors.white);
-    } else {
-      Fluttertoast.showToast(
-        msg: ids.isEmpty ? 'Assignment cleared' : '${ids.length} incharge(s) saved',
-        backgroundColor: purpleDark,
-        textColor: Colors.white,
-      );
+      return;
     }
+
+    Fluttertoast.showToast(
+      msg: ids.isEmpty
+          ? 'Assignment cleared successfully'
+          : '${ids.length} ${_level.childLabelCount(ids.length).toLowerCase()} assigned successfully',
+      backgroundColor: goldDark,
+      textColor: Colors.white,
+      toastLength: Toast.LENGTH_LONG,
+    );
+
+    // Return to the previous page (parent list) after a successful save.
+    if (mounted) Navigator.of(context).pop();
   }
 
   String get _initials {
-    final name  = (widget.headIncharge['name'] as String? ?? '').trim();
+    final name = (widget.parent['name'] as String? ?? '').trim();
     final parts = name.split(' ').where((p) => p.isNotEmpty).toList();
     if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
     return name.isNotEmpty ? name[0].toUpperCase() : '?';
@@ -140,20 +154,20 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final name   = widget.headIncharge['name']   as String? ?? 'Head Incharge';
-    final mobile = widget.headIncharge['mobile'] as String? ?? '';
+    final name = widget.parent['name'] as String? ?? _level.parentLabel;
+    final mobile = widget.parent['mobile'] as String? ?? '';
 
     return Scaffold(
       backgroundColor: const Color(0xFFF0F2F5),
       appBar: AppBar(
-        title: const Text('Assign Incharges'),
-        backgroundColor: purpleDark,
+        title: Text('Assign ${_level.childLabel}s'),
+        backgroundColor: goldDark,
         foregroundColor: Colors.white,
         elevation: 0,
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _saving ? null : _save,
-        backgroundColor: purpleDark,
+        backgroundColor: goldDark,
         foregroundColor: Colors.white,
         icon: _saving
             ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
@@ -164,12 +178,11 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
       body: Column(
         children: [
           _buildHeader(name, mobile),
-          if (_selectedIds.isNotEmpty && _incharges.isNotEmpty)
-            _buildSelectedChips(),
+          if (_selectedIds.isNotEmpty && _children.isNotEmpty) _buildSelectedChips(),
           _buildSearchBar(),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator(color: purpleDark))
+                ? const Center(child: CircularProgressIndicator(color: goldDark))
                 : _buildList(),
           ),
         ],
@@ -178,13 +191,13 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
   }
 
   Widget _buildHeader(String name, String mobile) {
-    final total    = _incharges.length;
+    final total = _children.length;
     final assigned = _selectedIds.length;
     final progress = total == 0 ? 0.0 : assigned / total;
 
     return Container(
       decoration: const BoxDecoration(
-        color: purpleDark,
+        color: goldDark,
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
       ),
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -193,14 +206,16 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
           Row(
             children: [
               Container(
-                width: 52, height: 52,
+                width: 52,
+                height: 52,
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.25),
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white.withValues(alpha: 0.6), width: 2),
                 ),
-                child: Center(child: Text(_initials,
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white))),
+                child: Center(
+                    child: Text(_initials,
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white))),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -214,8 +229,8 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(20)),
-                      child: const Text('Head Incharge',
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white)),
+                      child: Text(_level.parentLabel,
+                          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white)),
                     ),
                   ],
                 ),
@@ -251,7 +266,7 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Text('$assigned / $total incharges',
+                Text('$assigned / $total ${_level.childLabel.toLowerCase()}s',
                     style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.9), fontWeight: FontWeight.w600)),
               ],
             ),
@@ -262,13 +277,13 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
   }
 
   Widget _buildSelectedChips() {
-    final sel = _incharges.where((i) => _selectedIds.contains(_idOf(i))).toList();
+    final sel = _children.where((i) => _selectedIds.contains(_idOf(i))).toList();
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       decoration: BoxDecoration(
-        color: purpleLight,
+        color: goldLight,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFD7BE69)),
       ),
@@ -277,14 +292,14 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.supervisor_account_rounded, size: 14, color: purpleDark),
+              const Icon(Icons.supervisor_account_rounded, size: 14, color: goldDark),
               const SizedBox(width: 6),
-              const Text('Selected Incharges',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: purpleDark)),
+              Text('Selected ${_level.childLabel}s',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: goldDark)),
               const Spacer(),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(color: purpleDark, borderRadius: BorderRadius.circular(10)),
+                decoration: BoxDecoration(color: goldDark, borderRadius: BorderRadius.circular(10)),
                 child: Text('${sel.length}',
                     style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w700)),
               ),
@@ -292,7 +307,8 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
           ),
           const SizedBox(height: 8),
           Wrap(
-            spacing: 6, runSpacing: 6,
+            spacing: 6,
+            runSpacing: 6,
             children: sel.map((i) {
               final id = _idOf(i);
               return GestureDetector(
@@ -307,10 +323,10 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.person_rounded, size: 12, color: purpleDark),
+                      const Icon(Icons.person_rounded, size: 12, color: goldDark),
                       const SizedBox(width: 4),
                       Text((i['name'] ?? '').toString(),
-                          style: const TextStyle(fontSize: 11, color: purpleDark, fontWeight: FontWeight.w600)),
+                          style: const TextStyle(fontSize: 11, color: goldDark, fontWeight: FontWeight.w600)),
                       const SizedBox(width: 5),
                       const Icon(Icons.close_rounded, size: 12, color: Color(0xFFD7BE69)),
                     ],
@@ -333,40 +349,45 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
         controller: _searchCtrl,
         onChanged: (v) => setState(() => _searchQuery = v.trim()),
         decoration: InputDecoration(
-          hintText: 'Search incharge by name or mobile…',
+          hintText: 'Search ${_level.childLabel.toLowerCase()} by name or mobile…',
           hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-          prefixIcon: const Icon(Icons.search_rounded, color: purpleDark),
+          prefixIcon: const Icon(Icons.search_rounded, color: goldDark),
           suffixIcon: _searchQuery.isNotEmpty
               ? IconButton(
                   icon: Icon(Icons.clear_rounded, size: 18, color: Colors.grey.shade400),
-                  onPressed: () { _searchCtrl.clear(); setState(() => _searchQuery = ''); })
+                  onPressed: () {
+                    _searchCtrl.clear();
+                    setState(() => _searchQuery = '');
+                  })
               : null,
           filled: true,
           fillColor: Colors.white,
           contentPadding: const EdgeInsets.symmetric(vertical: 12),
-          border:        OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
           enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.shade200)),
-          focusedBorder: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(14)), borderSide: BorderSide(color: purpleDark, width: 1.5)),
+          focusedBorder: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(14)), borderSide: BorderSide(color: goldDark, width: 1.5)),
         ),
       ),
     );
   }
 
   Widget _buildList() {
-    final selList    = _filtered.where((i) =>  _selectedIds.contains(_idOf(i))).toList();
-    final unselList  = _filtered.where((i) => !_selectedIds.contains(_idOf(i))).toList();
+    final selList = _filtered.where((i) => _selectedIds.contains(_idOf(i))).toList();
+    final unselList = _filtered.where((i) => !_selectedIds.contains(_idOf(i))).toList();
 
     if (_filtered.isEmpty) {
       return Center(
         child: Text(
-          _searchQuery.isNotEmpty ? 'No incharges match "$_searchQuery"' : 'No incharges available',
+          _searchQuery.isNotEmpty
+              ? 'No ${_level.childLabel.toLowerCase()}s match "$_searchQuery"'
+              : 'No ${_level.childLabel.toLowerCase()}s available',
           style: TextStyle(fontSize: 14, color: Colors.grey.shade400),
         ),
       );
     }
 
     final items = <Object>[
-      if (selList.isNotEmpty)   ...[_Section('Selected',     selList.length,   true),  ...selList],
+      if (selList.isNotEmpty) ...[_Section('Selected', selList.length, true), ...selList],
       if (unselList.isNotEmpty) ...[_Section('Not Selected', unselList.length, false), ...unselList],
     ];
 
@@ -386,17 +407,17 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
                   Icon(
                     item.isSelected ? Icons.check_circle_outline_rounded : Icons.radio_button_unchecked_rounded,
                     size: 16,
-                    color: item.isSelected ? purpleDark : Colors.grey.shade500,
+                    color: item.isSelected ? goldDark : Colors.grey.shade500,
                   ),
                   const SizedBox(width: 8),
                   Text(item.label,
                       style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
-                          color: item.isSelected ? purpleDark : Colors.grey.shade700)),
+                          color: item.isSelected ? goldDark : Colors.grey.shade700)),
                   const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
                     decoration: BoxDecoration(
-                      color: item.isSelected ? purpleDark : Colors.grey.shade400,
+                      color: item.isSelected ? goldDark : Colors.grey.shade400,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text('${item.count}',
@@ -408,16 +429,20 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
             );
           }
 
-          final inc       = item as Map<String, dynamic>;
-          final id        = _idOf(inc);
-          final isSel     = _selectedIds.contains(id);
-          final areas     = _areaMap[inc['id']?.toString() ?? ''] ?? [];
+          final inc = item as Map<String, dynamic>;
+          final id = _idOf(inc);
+          final isSel = _selectedIds.contains(id);
+          final areas = _areaMap[inc['id']?.toString() ?? ''] ?? [];
 
           return Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: GestureDetector(
               onTap: () => setState(() {
-                if (isSel) { _selectedIds.remove(id); } else { _selectedIds.add(id); }
+                if (isSel) {
+                  _selectedIds.remove(id);
+                } else {
+                  _selectedIds.add(id);
+                }
               }),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
@@ -428,10 +453,13 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
                     color: isSel ? const Color(0xFFD7BE69) : Colors.transparent,
                     width: 1.5,
                   ),
-                  boxShadow: [BoxShadow(
-                    color: isSel ? purpleDark.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.04),
-                    blurRadius: 6, offset: const Offset(0, 2),
-                  )],
+                  boxShadow: [
+                    BoxShadow(
+                      color: isSel ? goldDark.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.04),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    )
+                  ],
                 ),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
@@ -439,14 +467,14 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
                     children: [
                       AnimatedContainer(
                         duration: const Duration(milliseconds: 180),
-                        width: 44, height: 44,
+                        width: 44,
+                        height: 44,
                         decoration: BoxDecoration(
-                          color: isSel ? purpleLight : Colors.grey.shade50,
+                          color: isSel ? goldLight : Colors.grey.shade50,
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: isSel ? const Color(0xFFD7BE69) : Colors.grey.shade200),
                         ),
-                        child: Icon(Icons.person_rounded,
-                            color: isSel ? purpleDark : Colors.grey.shade400, size: 22),
+                        child: Icon(Icons.person_rounded, color: isSel ? goldDark : Colors.grey.shade400, size: 22),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -461,17 +489,21 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
                             if (areas.isNotEmpty) ...[
                               const SizedBox(height: 4),
                               Wrap(
-                                spacing: 4, runSpacing: 3,
-                                children: areas.take(3).map((a) => Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFFF8E1),
-                                    borderRadius: BorderRadius.circular(4),
-                                    border: Border.all(color: const Color(0xFFD7BE69).withValues(alpha: 0.4)),
-                                  ),
-                                  child: Text(a,
-                                      style: const TextStyle(fontSize: 9, color: Color(0xFFB89A3E), fontWeight: FontWeight.w500)),
-                                )).toList(),
+                                spacing: 4,
+                                runSpacing: 3,
+                                children: areas
+                                    .take(3)
+                                    .map((a) => Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFFF8E1),
+                                            borderRadius: BorderRadius.circular(4),
+                                            border: Border.all(color: const Color(0xFFD7BE69).withValues(alpha: 0.4)),
+                                          ),
+                                          child: Text(a,
+                                              style: const TextStyle(fontSize: 9, color: Color(0xFFB89A3E), fontWeight: FontWeight.w500)),
+                                        ))
+                                    .toList(),
                               ),
                             ] else
                               Text('No areas assigned',
@@ -481,12 +513,16 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
                       ),
                       Checkbox(
                         value: isSel,
-                        activeColor: purpleDark,
+                        activeColor: goldDark,
                         checkColor: Colors.white,
-                        side: BorderSide(color: isSel ? purpleDark : Colors.grey.shade400, width: 1.5),
+                        side: BorderSide(color: isSel ? goldDark : Colors.grey.shade400, width: 1.5),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
                         onChanged: (v) => setState(() {
-                          if (v == true) { _selectedIds.add(id); } else { _selectedIds.remove(id); }
+                          if (v == true) {
+                            _selectedIds.add(id);
+                          } else {
+                            _selectedIds.remove(id);
+                          }
                         }),
                       ),
                     ],
@@ -503,7 +539,7 @@ class _HeadInchargeAssignScreenState extends State<HeadInchargeAssignScreen> {
 
 class _Section {
   final String label;
-  final int    count;
-  final bool   isSelected;
+  final int count;
+  final bool isSelected;
   const _Section(this.label, this.count, this.isSelected);
 }

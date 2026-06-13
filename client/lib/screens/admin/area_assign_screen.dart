@@ -55,7 +55,7 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
       }
     }
 
-    // Only salesman, telecaller and incharge get area assignments
+    // Only salesman and telecaller get area assignments
     final normalized = staffList.map((e) {
       final role = (e['role'] ?? '').toString().trim().toLowerCase();
       final id   = (e['mobile'] ?? e['deli_id'] ?? '').toString();
@@ -67,7 +67,7 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
       };
     }).where((e) {
       final r = e['role'] as String;
-      return (r == 'salesman' || r == 'telecaller' || r == 'incharge') &&
+      return (r == 'salesman' || r == 'telecaller') &&
           (e['name'].toString().isNotEmpty || e['mobile'].toString().isNotEmpty);
     }).toList();
 
@@ -96,7 +96,7 @@ class _AreaAssignScreenState extends State<AreaAssignScreen> {
           preferredSize: const Size.fromHeight(20),
           child: Padding(
             padding: const EdgeInsets.only(bottom: 6),
-            child: Text('Salesman, Telecaller & Incharge only',
+            child: Text('Salesman & Telecaller only',
                 style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.8))),
           ),
         ),

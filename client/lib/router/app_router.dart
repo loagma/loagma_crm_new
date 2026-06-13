@@ -16,7 +16,9 @@ import '../screens/admin/attendance_employee_screen.dart';
 import '../screens/admin/attendance_settings_screen.dart';
 import '../screens/admin/admin_notifications_screen.dart';
 import '../screens/admin/admin_incharge_assign_screen.dart';
-import '../screens/admin/head_incharge_assign_screen.dart';
+import '../screens/admin/incharge_levels.dart';
+import '../screens/admin/incharge_parent_list_screen.dart';
+import '../screens/admin/incharge_child_assign_screen.dart';
 import '../screens/employee/my_assigned_areas_screen.dart';
 import '../screens/employee/my_team_screen.dart';
 import '../screens/employee/my_incharges_screen.dart';
@@ -167,12 +169,22 @@ final appRouter = GoRouter(
       path: '/incharge-assign',
       builder: (context, state) => const AdminInchargeAssignScreen(),
     ),
+    // List of parents for a level (head | zonal | area)
     GoRoute(
-      path: '/incharge-assign/:id',
+      path: '/incharge-assign/list/:level',
       builder: (context, state) {
-        final extra = state.extra as Map<String, dynamic>? ??
+        final level = InchargeLevel.byKey(state.pathParameters['level']) ?? InchargeLevel.head;
+        return InchargeParentListScreen(level: level);
+      },
+    ),
+    // Multi-select children to assign to one parent
+    GoRoute(
+      path: '/incharge-assign/assign/:level/:id',
+      builder: (context, state) {
+        final level = InchargeLevel.byKey(state.pathParameters['level']) ?? InchargeLevel.head;
+        final parent = state.extra as Map<String, dynamic>? ??
             {'id': state.pathParameters['id'] ?? '', 'name': '', 'mobile': ''};
-        return HeadInchargeAssignScreen(headIncharge: extra);
+        return InchargeChildAssignScreen(level: level, parent: parent);
       },
     ),
     GoRoute(
