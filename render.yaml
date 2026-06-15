@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: loagma-crm-web
+    env: static
+    rootDir: client
+    buildCommand: bash ../build_web.sh
+    staticPublishPath: build/web
