@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\AreaAssign;
 use App\Models\Attendance;
 use App\Models\DeliStaff;
 use App\Models\InchargeAssign;
@@ -45,21 +44,36 @@ class AttendanceController extends Controller
         return Carbon::now()->lt($shiftStart);
     }
 
-    // Returns the area IDs assigned to a staff member.
-    // employee_id in area_assign_crm is the mobile number stored as int.
-    private function getAreaIds(string $mobile): array
+    // Returns mobile strings of the children directly assigned to this parent
+    // incharge in incharge_assign_crm. Works at every level of the hierarchy
+    // (head→zonal, zonal→area, area→salesman) since the table is keyed by the
+    // parent's mobile (head_incharge_id) with children mobiles in incharge_ids.
+    private function getAssignedInchargeMobiles(string $parentMobile): array
     {
-        $assign = AreaAssign::where('employee_id', (int) $mobile)->first();
-        return $assign ? array_map('intval', $assign->area_ids ?? []) : [];
-    }
-
-    // Returns mobile strings of incharges explicitly assigned to this head_incharge.
-    private function getAssignedInchargeMobiles(string $headInchargeMobile): array
-    {
-        $assign = InchargeAssign::where('head_incharge_id', (int) $headInchargeMobile)->first();
+        $assign = InchargeAssign::where('head_incharge_id', (int) $parentMobile)->first();
         if (!$assign || empty($assign->incharge_ids)) return [];
         // incharge_ids are mobile numbers stored as integers
         return array_map('strval', $assign->incharge_ids);
+    }
+
+    // Returns mobile strings of ALL descendants below this incharge, walking the
+    // hierarchy recursively (head→zonal→area→salesman). This makes a salesman's
+    // record visible to every ancestor in their chain, not just their direct
+    // parent. Cycle-safe via the $visited set.
+    private function getDescendantMobiles(string $parentMobile, array &$visited = []): array
+    {
+        if (isset($visited[$parentMobile])) return [];
+        $visited[$parentMobile] = true;
+
+        $descendants = [];
+        foreach ($this->getAssignedInchargeMobiles($parentMobile) as $childMobile) {
+            $descendants[] = $childMobile;
+            $descendants = array_merge(
+                $descendants,
+                $this->getDescendantMobiles($childMobile, $visited)
+            );
+        }
+        return array_values(array_unique($descendants));
     }
 
     // Returns the role-aware approver staff, or null if not found.
@@ -68,60 +82,18 @@ class AttendanceController extends Controller
         return DeliStaff::where('mobile', $this->authMobile())->first();
     }
 
-    // True if the approver has authority to approve/reject the given attendance record.
+    // True if the approver has authority to approve/reject the given attendance
+    // record: admin can approve anyone; any incharge can approve anyone in their
+    // chain below them (direct or indirect descendant in the hierarchy).
     private function authorizeApproval(Attendance $record): bool
     {
         $approver = $this->approverStaff();
         if (!$approver) return false;
 
-        $approverRole = strtolower($approver->role ?? '');
-        if ($approverRole === 'admin') return true;
+        if (strtolower($approver->role ?? '') === 'admin') return true;
 
-        $employee = DeliStaff::where('mobile', $record->employee_mobile)->first();
-        if (!$employee) return false;
-
-        $employeeRole = strtolower($employee->role ?? '');
-
-        $roleAllowed = match ($approverRole) {
-            'head_incharge' => $employeeRole === 'incharge',
-            'incharge'      => $employeeRole === 'salesman',
-            default         => false,
-        };
-        if (!$roleAllowed) return false;
-
-        // head_incharge authority is defined by incharge_assign_crm, not areas
-        if ($approverRole === 'head_incharge') {
-            $assignedMobiles = $this->getAssignedInchargeMobiles($approver->mobile);
-            return in_array($employee->mobile, $assignedMobiles);
-        }
-
-        // incharge → salesman: authority defined by shared area assignments
-        $approverAreas = $this->getAreaIds($approver->mobile);
-        if (empty($approverAreas)) return false;
-
-        $employeeAreas = $this->getAreaIds($employee->mobile);
-        return !empty(array_intersect($approverAreas, $employeeAreas));
-    }
-
-    // Returns mobile numbers of employees (of $targetRole) visible to $approver for approval.
-    private function overlappingMobiles(DeliStaff $approver, string $targetRole): array
-    {
-        $approverRole = strtolower($approver->role ?? '');
-
-        // head_incharge sees only their explicitly assigned incharges
-        if ($approverRole === 'head_incharge') {
-            return $this->getAssignedInchargeMobiles($approver->mobile);
-        }
-
-        // incharge sees salesmen in overlapping areas
-        $approverAreas = $this->getAreaIds($approver->mobile);
-        if (empty($approverAreas)) return [];
-
-        return DeliStaff::where('role', $targetRole)
-            ->get(['mobile'])
-            ->filter(fn($s) => !empty(array_intersect($approverAreas, $this->getAreaIds($s->mobile))))
-            ->pluck('mobile')
-            ->toArray();
+        $descendants = $this->getDescendantMobiles($approver->mobile);
+        return \in_array((string) $record->employee_mobile, $descendants, true);
     }
 
     // ─── Employee: Upload punch photo ─────────────────────────────────────────
@@ -361,15 +333,8 @@ class AttendanceController extends Controller
             return response()->json(['success' => true, 'count' => Attendance::where('status', 'pending')->count()]);
         }
 
-        $targetRole = match ($role) {
-            'head_incharge' => 'incharge',
-            'incharge'      => 'salesman',
-            default         => null,
-        };
-
-        if ($targetRole === null) return response()->json(['success' => true, 'count' => 0]);
-
-        $mobiles = $this->overlappingMobiles($approver, $targetRole);
+        // Any incharge sees pending records of everyone in their chain below them.
+        $mobiles = $this->getDescendantMobiles($approver->mobile);
         $count = empty($mobiles) ? 0 : Attendance::where('status', 'pending')->whereIn('employee_mobile', $mobiles)->count();
 
         return response()->json(['success' => true, 'count' => $count]);
@@ -387,17 +352,8 @@ class AttendanceController extends Controller
         $query = Attendance::with('employee:mobile,name,role')->where('status', 'pending');
 
         if ($role !== 'admin') {
-            $targetRole = match ($role) {
-                'head_incharge' => 'incharge',
-                'incharge'      => 'salesman',
-                default         => null,
-            };
-
-            if ($targetRole === null) {
-                return response()->json(['success' => true, 'data' => [], 'meta' => ['current_page' => 1, 'last_page' => 1, 'per_page' => 50, 'total' => 0]]);
-            }
-
-            $mobiles = $this->overlappingMobiles($approver, $targetRole);
+            // Any incharge sees pending records of everyone in their chain below them.
+            $mobiles = $this->getDescendantMobiles($approver->mobile);
             if (empty($mobiles)) {
                 return response()->json(['success' => true, 'data' => [], 'meta' => ['current_page' => 1, 'last_page' => 1, 'per_page' => 50, 'total' => 0]]);
             }

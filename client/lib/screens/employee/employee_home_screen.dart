@@ -21,7 +21,10 @@ class _EmployeeHomeScreenState extends State<EmployeeHomeScreen> {
 
   bool get _showBell {
     final r = widget.role.toLowerCase();
-    return r == 'incharge' || r == 'head_incharge';
+    return r == 'incharge' ||
+        r == 'head_incharge' ||
+        r == 'zonal_incharge' ||
+        r == 'area_incharge';
   }
 
   @override
