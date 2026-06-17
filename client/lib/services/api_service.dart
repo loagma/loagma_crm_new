@@ -964,6 +964,29 @@ class ApiService {
     return {'success': false, 'data': <dynamic>[]};
   }
 
+  /// Fetch every attendance record for [employeeMobile] in a given month
+  /// (no pagination) for the calendar view.
+  static Future<List<Map<String, dynamic>>> adminAttendanceMonth(
+    String employeeMobile,
+    int year,
+    int month,
+  ) async {
+    final mm  = month.toString().padLeft(2, '0');
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/$employeeMobile')
+        .replace(queryParameters: {'month': '$year-$mm'});
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = (decoded['data'] as List?) ?? [];
+        return data.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      }
+    } catch (e) {
+      print('adminAttendanceMonth error: $e');
+    }
+    return <Map<String, dynamic>>[];
+  }
+
   static Future<bool> adminAttendanceApprove(int id, {String? notes}) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/admin/attendance/$id/approve');
     try {

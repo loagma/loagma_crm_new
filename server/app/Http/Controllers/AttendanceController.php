@@ -382,6 +382,24 @@ class AttendanceController extends Controller
 
     public function adminEmployeeAttendance(string $employeeMobile): JsonResponse
     {
+        // Calendar mode: month=YYYY-MM returns every record in that month (no pagination).
+        $month = request()->query('month');
+        if ($month) {
+            try {
+                $start = Carbon::createFromFormat('Y-m', $month)->startOfMonth();
+            } catch (\Throwable $e) {
+                return response()->json(['success' => false, 'message' => 'Invalid month'], 422);
+            }
+            $end = (clone $start)->endOfMonth();
+
+            $records = Attendance::where('employee_mobile', $employeeMobile)
+                ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
+                ->orderBy('date')
+                ->get();
+
+            return response()->json(['success' => true, 'data' => $records]);
+        }
+
         $perPage = (int) request()->query('per_page', 20);
         $page    = (int) request()->query('page', 1);
 
