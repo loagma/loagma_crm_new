@@ -229,7 +229,9 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     if (picked == null || !mounted) return;
 
     setState(() => _uploadingImage = true);
-    final path = await ApiService.uploadOrderFunnelImage(picked.path);
+    final bytes = await picked.readAsBytes();
+    final name  = picked.name.isNotEmpty ? picked.name : 'funnel.jpg';
+    final path = await ApiService.uploadOrderFunnelImage(bytes, name);
     if (!mounted) return;
     setState(() {
       _uploadingImage = false;

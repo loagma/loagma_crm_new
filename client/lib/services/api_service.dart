@@ -1261,14 +1261,16 @@ class ApiService {
     return [];
   }
 
-  /// Upload a single order funnel image and return its stored relative path.
-  static Future<String?> uploadOrderFunnelImage(String filePath) async {
+  /// Upload a single order funnel image (raw bytes) and return its stored
+  /// relative path. Bytes are used (instead of a file path) so this works on
+  /// web too, where the picked file path is a blob URL that cannot be read.
+  static Future<String?> uploadOrderFunnelImage(List<int> bytes, String filename) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels/upload-image');
     try {
       final req = http.MultipartRequest('POST', url)
         ..headers['Accept'] = 'application/json'
         ..headers['Authorization'] = 'Bearer ${UserService.token}'
-        ..files.add(await http.MultipartFile.fromPath('image', filePath));
+        ..files.add(http.MultipartFile.fromBytes('image', bytes, filename: filename));
 
       final streamed = await req.send().timeout(const Duration(seconds: 30));
       final response = await http.Response.fromStream(streamed);
