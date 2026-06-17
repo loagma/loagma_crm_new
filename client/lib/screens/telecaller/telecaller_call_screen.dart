@@ -35,6 +35,7 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
   String? _selectedStage;
   String? _selectedFunnelStage;
   bool    _saving = false;
+  bool    _called = false; // post-call notes unlock only after the call is placed
 
   bool get _isLead => widget.accountType == 'lead';
 
@@ -58,10 +59,12 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
   @override
   void initState() {
     super.initState();
-    _selectedStage       = (widget.account['customerStage'] ?? '').toString();
-    _selectedFunnelStage = (widget.account['funnelStage']   ?? '').toString();
-    if (_selectedStage!.isEmpty)       _selectedStage = null;
-    if (_selectedFunnelStage!.isEmpty) _selectedFunnelStage = null;
+    // Normalise to the lowercase option keys; drop anything not in the list so
+    // the dropdown always has exactly one matching item for its value.
+    _selectedStage       = (widget.account['customerStage'] ?? '').toString().toLowerCase().trim();
+    _selectedFunnelStage = (widget.account['funnelStage']   ?? '').toString().toLowerCase().trim();
+    if (!_stageOptions.contains(_selectedStage))   _selectedStage = null;
+    if (!_funnelOptions.contains(_selectedFunnelStage)) _selectedFunnelStage = null;
   }
 
   @override
@@ -75,6 +78,7 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
   Future<void> _call() async {
     final phone = (widget.account['contactNumber'] ?? '').toString();
     if (phone.isEmpty) return;
+    setState(() => _called = true); // unlock the post-call notes
     final uri = Uri.parse('tel:$phone');
     if (await canLaunchUrl(uri)) launchUrl(uri);
   }
@@ -108,6 +112,12 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
   }
 
   Future<void> _submit() async {
+    if (!_called) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please place the call first'), backgroundColor: Colors.red),
+      );
+      return;
+    }
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (_callOutcome == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -311,7 +321,15 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
             const SizedBox(height: 14),
 
             // ── Post-Call Dashboard ───────────────────────────────────────
-            _sectionCard(
+            if (!_called) ...[
+              _callFirstBanner(),
+              const SizedBox(height: 10),
+            ],
+            AbsorbPointer(
+              absorbing: !_called,
+              child: Opacity(
+                opacity: _called ? 1 : 0.5,
+                child: _sectionCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -476,6 +494,8 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
                 ],
               ),
             ),
+              ),
+            ),
 
             const SizedBox(height: 16),
 
@@ -489,7 +509,7 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   elevation: 0,
                 ),
-                onPressed: _saving ? null : _submit,
+                onPressed: (_saving || !_called) ? null : _submit,
                 child: _saving
                     ? const SizedBox(
                         width: 22, height: 22,
@@ -523,6 +543,26 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
 
   Widget _fieldLabel(String text) => Text(text,
       style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black54));
+
+  Widget _callFirstBanner() => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: _gold.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: _gold.withValues(alpha: 0.5)),
+    ),
+    child: const Row(
+      children: [
+        Icon(Icons.info_outline_rounded, size: 18, color: Color(0xFF9C7B1E)),
+        SizedBox(width: 8),
+        Expanded(
+          child: Text('Place the call first to fill the post-call notes',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF9C7B1E))),
+        ),
+      ],
+    ),
+  );
 
   InputDecoration _inputDecor({String hint = '', Widget? suffix}) => InputDecoration(
     hintText: hint,
