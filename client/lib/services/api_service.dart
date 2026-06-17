@@ -1180,6 +1180,112 @@ class ApiService {
     return false;
   }
 
+  // ── Order Funnel ─────────────────────────────────────────────────────────
+
+  /// Fetch active order funnel stages from order_funnel_crm.
+  /// Returns list of {id, slug, name, sort_order}.
+  static Future<List<Map<String, dynamic>>> getOrderFunnels() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels');
+    try {
+      final res = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map && decoded['data'] is List) {
+          return List<Map<String, dynamic>>.from(
+            (decoded['data'] as List).map((e) => Map<String, dynamic>.from(e as Map)));
+        }
+      }
+    } catch (e) {
+      print('getOrderFunnels error: $e');
+    }
+    return [];
+  }
+
+  /// Fetch the latest saved funnel response for an account (to prefill the form).
+  static Future<Map<String, dynamic>?> getOrderFunnelResponse(String accountId) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels/response')
+        .replace(queryParameters: {'account_id': accountId});
+    try {
+      final res = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
+      }
+    } catch (e) {
+      print('getOrderFunnelResponse error: $e');
+    }
+    return null;
+  }
+
+  /// Upload a single order funnel image and return its stored relative path.
+  static Future<String?> uploadOrderFunnelImage(String filePath) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels/upload-image');
+    try {
+      final req = http.MultipartRequest('POST', url)
+        ..headers['Accept'] = 'application/json'
+        ..headers['Authorization'] = 'Bearer ${UserService.token}'
+        ..files.add(await http.MultipartFile.fromPath('image', filePath));
+
+      final streamed = await req.send().timeout(const Duration(seconds: 30));
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['path'] != null) {
+          return decoded['path'].toString();
+        }
+      }
+      print('uploadOrderFunnelImage unexpected status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('uploadOrderFunnelImage failed for $url: $e');
+    }
+    return null;
+  }
+
+  /// Save an order funnel response for an account.
+  static Future<Map<String, dynamic>?> saveOrderFunnelResponse({
+    required String accountId,
+    required String funnelSlug,
+    String? accountType,
+    int? beatPlanId,
+    String? generalNotes,
+    String? notesRelatedTo,
+    String? visitInAt,
+    String? visitOutAt,
+    int? durationSeconds,
+    List<String>? images,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels/response');
+    try {
+      final body = <String, dynamic>{
+        'account_id':  accountId,
+        'funnel_slug': funnelSlug,
+        if (accountType != null)    'account_type':     accountType,
+        if (beatPlanId != null)     'beat_plan_id':     beatPlanId,
+        if (generalNotes != null)   'general_notes':    generalNotes,
+        if (notesRelatedTo != null) 'notes_related_to': notesRelatedTo,
+        if (visitInAt != null)      'visit_in_at':      visitInAt,
+        if (visitOutAt != null)     'visit_out_at':     visitOutAt,
+        if (durationSeconds != null)'duration_seconds': durationSeconds,
+        if (images != null)         'images':           images,
+      };
+      final res = await http.post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
+        return decoded;
+      }
+      if (res.statusCode == 422) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
+      }
+      print('saveOrderFunnelResponse unexpected status ${res.statusCode}: ${res.body}');
+    } catch (e) {
+      print('saveOrderFunnelResponse error: $e');
+    }
+    return null;
+  }
+
   static Future<bool> recordBeatPlanVisit(int id, {String? notes}) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/$id/visit');
     try {

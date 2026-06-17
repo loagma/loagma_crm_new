@@ -22,10 +22,12 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
   static const goldLight = Color(0xFFFFF8E1);
 
   final Set<int> _selectedIds = {};
+  final Set<int> _originalIds = {}; // snapshot of pre-assigned children
   bool _loading = false;
   bool _saving = false;
   List<Map<String, dynamic>> _children = [];
   Map<String, List<String>> _areaMap = {}; // childId → area names
+  Map<int, List<String>> _childOwners = {}; // childId → other same-level parents owning it
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
 
@@ -62,10 +64,12 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
     final staffFuture = ApiService.getEmployees(perPage: 500);
     final assignFuture = ApiService.getInchargeAssign(_parentId);
     final areaAssignFuture = ApiService.getAllAreaAssigns();
+    final allInchargeFuture = ApiService.getAllInchargeAssigns();
 
     final staffList = await staffFuture;
     final assignResult = await assignFuture;
     final allAreaAssigns = await areaAssignFuture;
+    final allInchargeAssigns = await allInchargeFuture;
 
     if (!mounted) return;
 
@@ -78,6 +82,11 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
       }
     }
 
+    // Lookup: mobile → {name, role}, used to resolve owning-parent name & scope by level.
+    final staffByMobile = <String, Map<String, dynamic>>{
+      for (final e in staffList) (e['mobile'] ?? '').toString(): e,
+    };
+
     final children = staffList.map((e) {
       final role = (e['role'] ?? '').toString().trim().toLowerCase();
       final id = (e['mobile'] ?? e['deli_id'] ?? '').toString();
@@ -88,6 +97,25 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
         'role': role,
       };
     }).where((e) => e['role'] == _level.childRole).toList();
+
+    // childId → names of OTHER same-level parents that already own this child.
+    final childOwners = <int, List<String>>{};
+    for (final a in allInchargeAssigns) {
+      final ownerId = (a['head_incharge_id'] ?? '').toString();
+      if (ownerId.isEmpty || ownerId == _parentId) continue;
+      final ownerEmp = staffByMobile[ownerId];
+      if (ownerEmp == null) continue;
+      final ownerRole = (ownerEmp['role'] ?? '').toString().trim().toLowerCase();
+      if (ownerRole != _level.parentRole) continue; // same level only
+      final ownerName = (ownerEmp['name'] ?? '').toString();
+      final ids = a['incharge_ids'];
+      if (ids is! List) continue;
+      for (final r in ids) {
+        final cid = int.tryParse(r.toString());
+        if (cid == null) continue;
+        childOwners.putIfAbsent(cid, () => []).add(ownerName);
+      }
+    }
 
     // Pre-select currently assigned children
     final Set<int> preSelected = {};
@@ -104,7 +132,11 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
     setState(() {
       _children = children;
       _areaMap = areaMap;
+      _childOwners = childOwners;
       _selectedIds
+        ..clear()
+        ..addAll(preSelected);
+      _originalIds
         ..clear()
         ..addAll(preSelected);
       _loading = false;
@@ -113,11 +145,106 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
 
   int _idOf(Map<String, dynamic> inc) => int.tryParse((inc['id'] ?? '').toString()) ?? 0;
 
+  String _childNameOf(int id) {
+    for (final c in _children) {
+      if (_idOf(c) == id) return (c['name'] ?? '').toString();
+    }
+    return '#$id';
+  }
+
+  Future<String?> _showConflictDialog(Map<int, List<String>> conflicts) {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Already Assigned',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('These ${_level.childLabel}s are already assigned to other ${_level.parentLabel}s:',
+                  style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 10),
+              ...conflicts.entries.map((e) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          const Icon(Icons.person_rounded, size: 14, color: goldDark),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(_childNameOf(e.key),
+                                style: const TextStyle(
+                                    fontSize: 13, fontWeight: FontWeight.w700)),
+                          ),
+                        ]),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 18, top: 1),
+                          child: Text(e.value.join(', '),
+                              style: TextStyle(
+                                  fontSize: 11.5, color: Colors.grey.shade600)),
+                        ),
+                      ],
+                    ),
+                  )),
+              const SizedBox(height: 4),
+              const Text('Do you still want to assign them?',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'skip'),
+            child: const Text('Skip These',
+                style: TextStyle(color: Color(0xFFE65100), fontWeight: FontWeight.w600)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, 'assign'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: goldDark, foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Assign Anyway'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _save() async {
     if (_saving) return;
+
+    // ── Conflict check for newly-added children already under another parent ──
+    final newlyAdded = _selectedIds.difference(_originalIds);
+    final conflicts = <int, List<String>>{};
+    for (final cid in newlyAdded) {
+      final owners = (_childOwners[cid] ?? []).where((n) => n.isNotEmpty).toList();
+      if (owners.isNotEmpty) conflicts[cid] = owners;
+    }
+
+    // Mutable copy so "Skip These" can drop the conflicting children.
+    final toSave = Set<int>.from(_selectedIds);
+
+    if (conflicts.isNotEmpty) {
+      final choice = await _showConflictDialog(conflicts);
+      if (!mounted) return;
+      if (choice == 'cancel' || choice == null) return; // abort, keep selection
+      if (choice == 'skip') toSave.removeAll(conflicts.keys);
+      // 'assign' → keep all (duplicates allowed)
+    }
+
     setState(() => _saving = true);
 
-    final selected = _children.where((i) => _selectedIds.contains(_idOf(i))).toList();
+    final selected = _children.where((i) => toSave.contains(_idOf(i))).toList();
     final ids = selected.map(_idOf).toList();
     final names = selected.map((i) => (i['name'] ?? '').toString()).toList();
 

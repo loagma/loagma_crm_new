@@ -11,6 +11,7 @@ use App\Http\Controllers\InchargeAssignController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\BeatPlanController;
 use App\Http\Controllers\CallLogController;
+use App\Http\Controllers\OrderFunnelController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -128,3 +129,13 @@ Route::prefix('beat-plan')->group(function () {
 // ---------------------------------------------------------------------------
 Route::get('/call-logs',  [CallLogController::class, 'index']);
 Route::post('/call-logs', [CallLogController::class, 'store']);
+
+// ---------------------------------------------------------------------------
+// Order Funnel (dynamic stages from order_funnel_crm + saved responses)
+// ---------------------------------------------------------------------------
+Route::prefix('order-funnels')->group(function () {
+    Route::get('/',             [OrderFunnelController::class, 'options']);
+    Route::get('/response',     [OrderFunnelController::class, 'latestResponse']);
+    Route::post('/response',    [OrderFunnelController::class, 'store']);
+    Route::post('/upload-image',[OrderFunnelController::class, 'uploadImage']);
+});

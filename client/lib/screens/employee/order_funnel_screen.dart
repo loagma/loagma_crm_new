@@ -1,5 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../services/api_config.dart';
+import '../../services/api_service.dart';
 
 class OrderFunnelScreen extends StatefulWidget {
   final String accountId;
@@ -19,10 +23,30 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
   static const _gold  = Color(0xFFD7BE69);
   static const _green = Color(0xFF43A047);
 
+  final ImagePicker _picker = ImagePicker();
+
   bool _visitedIn  = false;
   bool _visitedOut = false;
 
+  DateTime? _visitInAt;
+  Timer?    _timer;
+  Duration  _elapsed = Duration.zero;
+
+  int _tab = 1; // 0 = History, 1 = Funnel, 2 = Transaction
+
+  // ── Funnel form state ─────────────────────────────────────────────────────
+  List<Map<String, dynamic>> _funnelOptions = [];
+  bool   _loadingFunnel = true;
+  String? _selectedSlug;
+  String? _notesRelatedTo;
+  bool   _savedLocally = false;   // funnel locally confirmed (not yet in DB)
+  bool   _persisting   = false;   // writing to DB on Visit Out
+  bool   _uploadingImage = false;
+  final List<String> _images = [];
+  final TextEditingController _notesCtrl = TextEditingController();
+
   Map<String, dynamic> get _acc => widget.account ?? {};
+  bool get _editable => _visitedIn && !_visitedOut;
 
   String? get _scheduleLabel {
     switch (_acc['frequency'] as String?) {
@@ -45,6 +69,150 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     return [];
   }
 
+  @override
+  void initState() {
+    super.initState();
+    _loadFunnel();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadFunnel() async {
+    final options = await ApiService.getOrderFunnels();
+    if (!mounted) return;
+    setState(() {
+      _funnelOptions = options;
+      _loadingFunnel = false;
+    });
+  }
+
+  // ── Visit lifecycle ───────────────────────────────────────────────────────
+  void _startVisit() {
+    setState(() {
+      _visitedIn = true;
+      _visitInAt = DateTime.now();
+      _elapsed   = Duration.zero;
+    });
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _visitInAt == null) return;
+      setState(() => _elapsed = DateTime.now().difference(_visitInAt!));
+    });
+  }
+
+  Future<void> _endVisit() async {
+    // Require a funnel selection before closing the visit.
+    if (_selectedSlug == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a funnel stage before Visit Out')),
+      );
+      return;
+    }
+
+    final outAt = DateTime.now();
+    setState(() => _persisting = true);
+
+    final result = await ApiService.saveOrderFunnelResponse(
+      accountId:       widget.accountId,
+      funnelSlug:      _selectedSlug!,
+      accountType:     _acc['account_type'] as String?,
+      beatPlanId:      _acc['beat_plan_id'] is int ? _acc['beat_plan_id'] as int : null,
+      generalNotes:    _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+      notesRelatedTo:  _notesRelatedTo,
+      visitInAt:       _visitInAt?.toUtc().toIso8601String(),
+      visitOutAt:      outAt.toUtc().toIso8601String(),
+      durationSeconds: _visitInAt == null ? null : outAt.difference(_visitInAt!).inSeconds,
+      images:          _images.isEmpty ? null : List<String>.from(_images),
+    );
+
+    if (!mounted) return;
+    final ok = result != null && result['errors'] == null;
+    setState(() {
+      _persisting = false;
+      if (ok) {
+        _visitedOut = true;
+        _timer?.cancel();
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok ? 'Visit completed — funnel saved' : 'Failed to save. Try again.'),
+      backgroundColor: ok ? _green : Colors.red,
+    ));
+  }
+
+  // ── Local-only funnel save (synced to DB on Visit Out) ────────────────────
+  void _saveFunnelLocal() {
+    if (_selectedSlug == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a funnel stage')),
+      );
+      return;
+    }
+    setState(() => _savedLocally = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Saved — will sync to records on Visit Out')),
+    );
+  }
+
+  // ── Images ────────────────────────────────────────────────────────────────
+  Future<ImageSource?> _askImageSource() {
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt_rounded),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded),
+              title: const Text('Gallery'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _addImage() async {
+    final source = await _askImageSource();
+    if (source == null || !mounted) return;
+
+    XFile? picked;
+    try {
+      picked = await _picker.pickImage(source: source, imageQuality: 80);
+    } catch (e) {
+      debugPrint('pickImage error: $e');
+    }
+    if (picked == null || !mounted) return;
+
+    setState(() => _uploadingImage = true);
+    final path = await ApiService.uploadOrderFunnelImage(picked.path);
+    if (!mounted) return;
+    setState(() {
+      _uploadingImage = false;
+      if (path != null && path.isNotEmpty) _images.add(path);
+    });
+    if (path == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Image upload failed')),
+      );
+    }
+  }
+
   Future<void> _launch(String url) async {
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) await launchUrl(uri);
@@ -54,6 +222,13 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     final d = phone.replaceAll(RegExp(r'\D'), '');
     final n = d.length == 10 ? '91$d' : d;
     _launch('https://wa.me/$n');
+  }
+
+  String _fmt(Duration d) {
+    final h = d.inHours.toString().padLeft(2, '0');
+    final m = (d.inMinutes % 60).toString().padLeft(2, '0');
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$h:$m:$s';
   }
 
   @override
@@ -127,19 +302,38 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                       _VisitBtn(
                         label: 'Visit In',
                         active: !_visitedIn,
-                        onTap: _visitedIn ? null : () => setState(() => _visitedIn = true),
+                        onTap: _visitedIn ? null : _startVisit,
                       ),
                       const SizedBox(width: 6),
                       // Visit Out
                       _VisitBtn(
-                        label: 'Visit Out',
-                        active: _visitedIn && !_visitedOut,
-                        onTap: (_visitedIn && !_visitedOut)
-                            ? () => setState(() => _visitedOut = true)
-                            : null,
+                        label: _persisting ? 'Saving…' : 'Visit Out',
+                        active: _editable && !_persisting,
+                        onTap: (_editable && !_persisting) ? _endVisit : null,
                       ),
                     ],
                   ),
+
+                  // Visit timer
+                  if (_visitedIn) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Icon(_visitedOut ? Icons.check_circle_rounded : Icons.timer_rounded,
+                            size: 18, color: _visitedOut ? _green : _gold),
+                        const SizedBox(width: 6),
+                        Text(
+                          _visitedOut
+                              ? 'Visit duration ${_fmt(_elapsed)}'
+                              : 'In progress · ${_fmt(_elapsed)}',
+                          style: TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w700,
+                              color: _visitedOut ? _green : Colors.black87),
+                        ),
+                      ],
+                    ),
+                  ],
+
                   const SizedBox(height: 10),
                   // Shop name
                   Text('Shop Name : $shop',
@@ -199,21 +393,285 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
             // ── Tabs row ──────────────────────────────────────────────────
             Row(
               children: [
-                Expanded(child: _TabBtn(label: 'Order History', onTap: () {})),
+                Expanded(child: _TabBtn(
+                    label: 'Order History', active: _tab == 0,
+                    onTap: () => setState(() => _tab = 0))),
                 const SizedBox(width: 10),
-                Expanded(child: _TabBtn(label: 'Order Funnel', onTap: () {})),
+                Expanded(child: _TabBtn(
+                    label: 'Order Funnel', active: _tab == 1,
+                    onTap: () => setState(() => _tab = 1))),
                 const SizedBox(width: 10),
-                Expanded(child: _TabBtn(label: 'Transaction', onTap: () {})),
+                Expanded(child: _TabBtn(
+                    label: 'Transaction', active: _tab == 2,
+                    onTap: () => setState(() => _tab = 2))),
               ],
             ),
+
+            const SizedBox(height: 14),
+
+            // ── Tab content ────────────────────────────────────────────────
+            if (_tab == 1)
+              _buildFunnelTab()
+            else
+              _PlaceholderCard(
+                  text: _tab == 0 ? 'No order history yet.' : 'No transactions yet.'),
           ],
         ),
       ),
     );
   }
+
+  // ── Order Funnel tab ────────────────────────────────────────────────────
+  Widget _buildFunnelTab() {
+    final editable = _editable;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFEEEEEE)),
+        boxShadow: const [BoxShadow(
+            color: Colors.black12, blurRadius: 4, offset: Offset(0, 1))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Order Funnel',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
+
+          if (!_visitedIn)
+            _banner('Please click "Visit In" to start editing')
+          else if (_visitedOut)
+            _banner('Visit completed. This funnel has been saved.', done: true),
+
+          if (_loadingFunnel)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_funnelOptions.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Text('No funnel stages configured.',
+                  style: TextStyle(fontSize: 13, color: Colors.black54)),
+            )
+          else
+            _buildOptionsGrid(editable),
+
+          const SizedBox(height: 16),
+          const Text('Details',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
+
+          const Text('General Notes',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _notesCtrl,
+            enabled: editable,
+            maxLines: 3,
+            decoration: InputDecoration(
+              hintText: 'Enter general notes here...',
+              hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+              contentPadding: const EdgeInsets.all(12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade300),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade300),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 14),
+          const Text('Notes Related To',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          DropdownButtonFormField<String>(
+            value: _notesRelatedTo,
+            isExpanded: true,
+            decoration: InputDecoration(
+              hintText: 'Select',
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade300),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade300),
+              ),
+            ),
+            items: _funnelOptions
+                .map((o) => DropdownMenuItem(
+                      value: o['name'] as String?,
+                      child: Text(o['name'] as String? ?? '',
+                          style: const TextStyle(fontSize: 13)),
+                    ))
+                .toList(),
+            onChanged: editable ? (v) => setState(() => _notesRelatedTo = v) : null,
+          ),
+
+          const SizedBox(height: 14),
+          const Text('Photos',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          _buildImagesRow(editable),
+
+          const SizedBox(height: 18),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: editable ? _saveFunnelLocal : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _savedLocally ? _green : _gold,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Text(_savedLocally ? 'Saved ✓  (syncs on Visit Out)' : 'Save Funnel',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _banner(String text, {bool done = false}) {
+    final c = done ? _green : _gold;
+    final fg = done ? const Color(0xFF1B5E20) : const Color(0xFF9C7B1E);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Icon(done ? Icons.check_circle_outline_rounded : Icons.info_outline_rounded,
+              size: 18, color: fg),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text,
+                style: TextStyle(
+                    fontSize: 12.5, fontWeight: FontWeight.w600, color: fg)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOptionsGrid(bool editable) {
+    return Wrap(
+      runSpacing: 4,
+      children: _funnelOptions.map((o) {
+        final slug = o['slug'] as String?;
+        final name = o['name'] as String? ?? '';
+        return SizedBox(
+          width: (MediaQuery.of(context).size.width - 28 - 28) / 2,
+          child: RadioListTile<String>(
+            value: slug ?? '',
+            groupValue: _selectedSlug,
+            onChanged: editable
+                ? (v) => setState(() => _selectedSlug = v)
+                : null,
+            title: Text(name, style: const TextStyle(fontSize: 13)),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            activeColor: _gold,
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildImagesRow(bool editable) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        ..._images.asMap().entries.map((e) {
+          final idx = e.key;
+          final url = '${ApiConfig.baseUrl}${e.value}';
+          return Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(url,
+                    width: 72, height: 72, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                        width: 72, height: 72, color: Colors.grey.shade200,
+                        child: const Icon(Icons.broken_image_rounded,
+                            color: Colors.black26))),
+              ),
+              if (editable)
+                Positioned(
+                  right: -6, top: -6,
+                  child: IconButton(
+                    icon: const Icon(Icons.cancel, size: 20, color: Colors.redAccent),
+                    onPressed: () => setState(() => _images.removeAt(idx)),
+                  ),
+                ),
+            ],
+          );
+        }),
+        // Add button
+        GestureDetector(
+          onTap: (editable && !_uploadingImage) ? _addImage : null,
+          child: Container(
+            width: 72, height: 72,
+            decoration: BoxDecoration(
+              color: editable ? _gold.withValues(alpha: 0.10) : Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: editable ? _gold : Colors.grey.shade300,
+                  style: BorderStyle.solid),
+            ),
+            child: _uploadingImage
+                ? const Center(
+                    child: SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2)))
+                : Icon(Icons.add_a_photo_rounded,
+                    color: editable ? _gold : Colors.grey.shade400),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+class _PlaceholderCard extends StatelessWidget {
+  final String text;
+  const _PlaceholderCard({required this.text});
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFEEEEEE)),
+        ),
+        child: Center(
+          child: Text(text,
+              style: const TextStyle(fontSize: 13, color: Colors.black54)),
+        ),
+      );
+}
 
 class _Chip extends StatelessWidget {
   final String label;
@@ -272,8 +730,12 @@ class _ActionBtn extends StatelessWidget {
 
 class _TabBtn extends StatelessWidget {
   final String       label;
+  final bool         active;
   final VoidCallback onTap;
-  const _TabBtn({required this.label, required this.onTap});
+  const _TabBtn({required this.label, required this.active, required this.onTap});
+
+  static const _gold = Color(0xFFD7BE69);
+
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
@@ -281,18 +743,19 @@ class _TabBtn extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 12),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: active ? _gold : Colors.white,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFFEEEEEE)),
+            border: Border.all(
+                color: active ? _gold : const Color(0xFFEEEEEE)),
             boxShadow: const [BoxShadow(
                 color: Colors.black12, blurRadius: 3, offset: Offset(0, 1))],
           ),
           child: Text(label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 12.5, fontWeight: FontWeight.w600,
-                  color: Colors.black87)),
+                  color: active ? Colors.white : Colors.black87)),
         ),
       );
 }

@@ -28,17 +28,21 @@ class InchargeAssignController extends Controller
     public function save(string $headInchargeId): JsonResponse
     {
         $validated = validator(request()->all(), [
-            'incharge_ids'     => 'required|array',
+            'incharge_ids'     => 'nullable|array',
             'incharge_ids.*'   => 'integer',
-            'incharge_names'   => 'required|array',
+            'incharge_names'   => 'nullable|array',
             'incharge_names.*' => 'string|max:255',
         ])->validate();
+
+        // Allow an empty selection (Skip These / clearing an assignment).
+        $inchargeIds   = $validated['incharge_ids'] ?? [];
+        $inchargeNames = $validated['incharge_names'] ?? [];
 
         $assign = InchargeAssign::updateOrCreate(
             ['head_incharge_id' => (int) $headInchargeId],
             [
-                'incharge_ids'   => array_values(array_map('intval',  $validated['incharge_ids'])),
-                'incharge_names' => array_values(array_map('strval', $validated['incharge_names'])),
+                'incharge_ids'   => array_values(array_map('intval',  $inchargeIds)),
+                'incharge_names' => array_values(array_map('strval', $inchargeNames)),
             ]
         );
 

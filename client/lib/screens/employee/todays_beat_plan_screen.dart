@@ -300,6 +300,7 @@ class _CustomerCard extends StatelessWidget {
                         '/order-funnel/${acc['id'] ?? ''}',
                         extra: {
                           ...acc,
+                          'account_type':  accountType,
                           'beat_plan_id':  item['beat_plan_id'],
                           'frequency':     item['frequency'],
                           'days':          item['days'],
