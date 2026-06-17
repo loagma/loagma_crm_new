@@ -136,6 +136,7 @@ Route::post('/call-logs', [CallLogController::class, 'store']);
 Route::prefix('order-funnels')->group(function () {
     Route::get('/',             [OrderFunnelController::class, 'options']);
     Route::get('/response',     [OrderFunnelController::class, 'latestResponse']);
+    Route::get('/responses',    [OrderFunnelController::class, 'responses']);
     Route::post('/response',    [OrderFunnelController::class, 'store']);
     Route::post('/upload-image',[OrderFunnelController::class, 'uploadImage']);
 });

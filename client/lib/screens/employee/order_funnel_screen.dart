@@ -23,6 +23,11 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
   static const _gold  = Color(0xFFD7BE69);
   static const _green = Color(0xFF43A047);
 
+  // Fixed options for the "Notes Related To" dropdown.
+  static const _relatedToOptions = [
+    'Order', 'Payment', 'Complaint', 'Delivery', 'Product', 'Other',
+  ];
+
   final ImagePicker _picker = ImagePicker();
 
   bool _visitedIn  = false;
@@ -44,6 +49,11 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
   bool   _uploadingImage = false;
   final List<String> _images = [];
   final TextEditingController _notesCtrl = TextEditingController();
+
+  // ── Transaction tab state ─────────────────────────────────────────────────
+  List<Map<String, dynamic>> _transactions = [];
+  bool _loadingTx   = false;
+  bool _txLoadedOnce = false;
 
   Map<String, dynamic> get _acc => widget.account ?? {};
   bool get _editable => _visitedIn && !_visitedOut;
@@ -91,6 +101,19 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     });
   }
 
+  Future<void> _loadTransactions() async {
+    setState(() {
+      _loadingTx = true;
+      _txLoadedOnce = true;
+    });
+    final rows = await ApiService.getOrderFunnelResponses(widget.accountId);
+    if (!mounted) return;
+    setState(() {
+      _transactions = rows;
+      _loadingTx = false;
+    });
+  }
+
   // ── Visit lifecycle ───────────────────────────────────────────────────────
   void _startVisit() {
     setState(() {
@@ -102,6 +125,9 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
       if (!mounted || _visitInAt == null) return;
       setState(() => _elapsed = DateTime.now().difference(_visitInAt!));
     });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Visit started')),
+    );
   }
 
   Future<void> _endVisit() async {
@@ -143,6 +169,9 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
       content: Text(ok ? 'Visit completed — funnel saved' : 'Failed to save. Try again.'),
       backgroundColor: ok ? _green : Colors.red,
     ));
+
+    // Refresh the Transaction list so the just-saved visit appears.
+    if (ok) _loadTransactions();
   }
 
   // ── Local-only funnel save (synced to DB on Visit Out) ────────────────────
@@ -403,7 +432,10 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                 const SizedBox(width: 10),
                 Expanded(child: _TabBtn(
                     label: 'Transaction', active: _tab == 2,
-                    onTap: () => setState(() => _tab = 2))),
+                    onTap: () {
+                      setState(() => _tab = 2);
+                      if (!_txLoadedOnce) _loadTransactions();
+                    })),
               ],
             ),
 
@@ -412,9 +444,10 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
             // ── Tab content ────────────────────────────────────────────────
             if (_tab == 1)
               _buildFunnelTab()
+            else if (_tab == 2)
+              _buildTransactionTab()
             else
-              _PlaceholderCard(
-                  text: _tab == 0 ? 'No order history yet.' : 'No transactions yet.'),
+              const _PlaceholderCard(text: 'No order history yet.'),
           ],
         ),
       ),
@@ -507,11 +540,10 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                 borderSide: BorderSide(color: Colors.grey.shade300),
               ),
             ),
-            items: _funnelOptions
+            items: _relatedToOptions
                 .map((o) => DropdownMenuItem(
-                      value: o['name'] as String?,
-                      child: Text(o['name'] as String? ?? '',
-                          style: const TextStyle(fontSize: 13)),
+                      value: o,
+                      child: Text(o, style: const TextStyle(fontSize: 13)),
                     ))
                 .toList(),
             onChanged: editable ? (v) => setState(() => _notesRelatedTo = v) : null,
@@ -542,6 +574,109 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
         ],
       ),
     );
+  }
+
+  // ── Transaction tab ─────────────────────────────────────────────────────
+  Widget _buildTransactionTab() {
+    if (_loadingTx) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 40),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_transactions.isEmpty) {
+      return const _PlaceholderCard(text: 'No transactions yet.');
+    }
+    return Column(
+      children: _transactions.map(_buildTransactionCard).toList(),
+    );
+  }
+
+  Widget _buildTransactionCard(Map<String, dynamic> tx) {
+    final stage   = tx['funnel_name'] as String? ?? '—';
+    final related = tx['notes_related_to'] as String?;
+    final notes   = tx['general_notes'] as String?;
+    final dur     = tx['duration_seconds'];
+    final whenRaw = (tx['visit_out_at'] ?? tx['created_at']) as String?;
+    final when    = _fmtDate(whenRaw);
+    final images  = (tx['images'] as List?)?.whereType<String>().toList() ?? [];
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFEEEEEE)),
+        boxShadow: const [BoxShadow(
+            color: Colors.black12, blurRadius: 4, offset: Offset(0, 1))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(stage,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+              ),
+              if (when != null)
+                Text(when,
+                    style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+            ],
+          ),
+          if (dur is int) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(Icons.timer_rounded, size: 15, color: _gold),
+                const SizedBox(width: 5),
+                Text('Duration ${_fmt(Duration(seconds: dur))}',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ],
+          if (related != null && related.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text('Related to: $related',
+                style: TextStyle(fontSize: 12.5, color: Colors.grey.shade800)),
+          ],
+          if (notes != null && notes.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(notes,
+                style: TextStyle(fontSize: 12.5, color: Colors.grey.shade700)),
+          ],
+          if (images.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: images.map((p) => ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network('${ApiConfig.baseUrl}$p',
+                    width: 64, height: 64, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                        width: 64, height: 64, color: Colors.grey.shade200,
+                        child: const Icon(Icons.broken_image_rounded,
+                            color: Colors.black26))),
+              )).toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String? _fmtDate(String? iso) {
+    if (iso == null) return null;
+    final dt = DateTime.tryParse(iso)?.toLocal();
+    if (dt == null) return null;
+    final d = dt.day.toString().padLeft(2, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$d/$m/${dt.year} $hh:$mm';
   }
 
   Widget _banner(String text, {bool done = false}) {

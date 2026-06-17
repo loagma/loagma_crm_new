@@ -40,6 +40,20 @@ class OrderFunnelController extends Controller
         return response()->json(['success' => true, 'data' => $response]);
     }
 
+    /** All saved funnel responses for an account (used by the Transaction tab). */
+    public function responses(): JsonResponse
+    {
+        $mobile    = $this->authMobile();
+        $accountId = request()->query('account_id');
+
+        $responses = OrderFunnelResponse::where('employee_mobile', $mobile)
+            ->when($accountId, fn ($q) => $q->where('account_id', $accountId))
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json(['success' => true, 'data' => $responses]);
+    }
+
     /**
      * Save a funnel response for an account. Persisted only at "Visit Out" —
      * stores the final funnel selection plus visit timing and images.

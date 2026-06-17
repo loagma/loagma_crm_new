@@ -53,7 +53,7 @@ EXPOSE 80
 
 # Create startup script to run migrations then start Apache
 RUN mkdir -p /var/www/html/storage/logs
-RUN echo '#!/bin/bash\nphp artisan migrate --force\napache2-foreground' > /start.sh
+RUN echo '#!/bin/bash\nphp artisan storage:link --force\nphp artisan migrate --force\napache2-foreground' > /start.sh
 RUN chmod +x /start.sh
 
 # Run migrations on startup, then start Apache

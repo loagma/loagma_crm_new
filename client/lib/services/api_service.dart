@@ -1240,6 +1240,27 @@ class ApiService {
     return null;
   }
 
+  /// All saved order funnel responses for an account (Transaction tab).
+  static Future<List<Map<String, dynamic>>> getOrderFunnelResponses(String accountId) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels/responses')
+        .replace(queryParameters: {'account_id': accountId});
+    try {
+      final res = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        if (decoded['data'] is List) {
+          return (decoded['data'] as List)
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+      }
+    } catch (e) {
+      print('getOrderFunnelResponses error: $e');
+    }
+    return [];
+  }
+
   /// Upload a single order funnel image and return its stored relative path.
   static Future<String?> uploadOrderFunnelImage(String filePath) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels/upload-image');
