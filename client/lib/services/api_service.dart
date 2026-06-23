@@ -443,6 +443,120 @@ class ApiService {
     return [];
   }
 
+  /// Update a call log (reschedule follow-up date / mark callback done).
+  static Future<bool> updateCallLog(int id, {String? followUpDate, bool? callbackDone}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/call-logs/$id');
+    final body = <String, dynamic>{
+      if (followUpDate != null) 'follow_up_date': followUpDate,
+      if (callbackDone != null) 'callback_done': callbackDone,
+    };
+    try {
+      final response = await http
+          .put(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('updateCallLog failed: $e');
+    }
+    return false;
+  }
+
+  // ── Telecaller dashboard + modules (live data) ─────────────────────────────
+
+  static Future<Map<String, dynamic>?> _tcGetMap(String path) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/$path');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
+      }
+    } catch (e) {
+      print('telecaller GET $path failed: $e');
+    }
+    return null;
+  }
+
+  static Future<List<Map<String, dynamic>>> _tcGetList(String path) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/$path');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return ((decoded['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+      }
+    } catch (e) {
+      print('telecaller GET $path failed: $e');
+    }
+    return [];
+  }
+
+  /// Aggregated dashboard payload (kpis, outcome_counts, week, funnel, daily_target).
+  static Future<Map<String, dynamic>?> getTelecallerDashboard() => _tcGetMap('dashboard');
+
+  /// Today's + overdue callbacks for the current telecaller.
+  static Future<List<Map<String, dynamic>>> getTelecallerCallbacks() => _tcGetList('callbacks');
+
+  /// Recent enriched call history for the current telecaller.
+  static Future<List<Map<String, dynamic>>> getTelecallerCallHistory() => _tcGetList('call-history');
+
+  /// Worklist (leads + customers in my areas) with derived/custom labels.
+  static Future<List<Map<String, dynamic>>> getTelecallerWorklist() => _tcGetList('worklist');
+
+  /// Set a custom label (e.g. wrong_number, do_not_call) on an account.
+  static Future<bool> setTelecallerLabel(String accountId, String accountType, String label) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/label');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({
+            'account_id': accountId,
+            'account_type': accountType,
+            'label': label,
+          }))
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('setTelecallerLabel failed: $e');
+    }
+    return false;
+  }
+
+  // ── Call scripts (per-telecaller CRUD) ─────────────────────────────────────
+
+  static Future<List<Map<String, dynamic>>> getCallScripts() => _tcGetList('scripts');
+
+  static Future<bool> saveCallScript({int? id, required String title, String? stageLabel, required List<String> lines, int? sortOrder}) async {
+    final base = '${ApiConfig.baseUrl}/api/telecaller/scripts';
+    final url = Uri.parse(id == null ? base : '$base/$id');
+    final body = jsonEncode({
+      'title': title,
+      if (stageLabel != null) 'stage_label': stageLabel,
+      'lines': lines,
+      if (sortOrder != null) 'sort_order': sortOrder,
+    });
+    try {
+      final response = await (id == null
+              ? http.post(url, headers: _authHeaders, body: body)
+              : http.put(url, headers: _authHeaders, body: body))
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('saveCallScript failed: $e');
+    }
+    return false;
+  }
+
+  static Future<bool> deleteCallScript(int id) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/scripts/$id');
+    try {
+      final response = await http.delete(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('deleteCallScript failed: $e');
+    }
+    return false;
+  }
+
   /// Lookup Indian pincode details using public postal API.
   /// Returns normalized shape:
   /// {

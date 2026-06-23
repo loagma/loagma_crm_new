@@ -16,10 +16,12 @@ class CallLog extends Model
         'notes',
         'follow_up_date',
         'called_at',
+        'callback_done',
     ];
 
     protected $casts = [
         'follow_up_date' => 'date',
         'called_at'      => 'datetime',
+        'callback_done'  => 'boolean',
     ];
 }

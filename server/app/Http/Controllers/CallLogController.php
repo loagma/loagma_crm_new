@@ -55,4 +55,33 @@ class CallLogController extends Controller
 
         return response()->json(['success' => true, 'data' => $log], 201);
     }
+
+    /**
+     * Update a call log owned by the current employee. Used to Reschedule a
+     * callback (follow_up_date) or mark it Done (callback_done).
+     */
+    public function update(string $id): JsonResponse
+    {
+        $mobile = $this->authMobile();
+
+        $log = CallLog::where('employee_mobile', $mobile)->where('id', $id)->first();
+        if (!$log) {
+            return response()->json(['success' => false, 'message' => 'Not found'], 404);
+        }
+
+        $validated = validator(request()->only(['follow_up_date', 'callback_done']), [
+            'follow_up_date' => 'nullable|date',
+            'callback_done'  => 'nullable|boolean',
+        ])->validate();
+
+        if (array_key_exists('follow_up_date', $validated)) {
+            $log->follow_up_date = $validated['follow_up_date'];
+        }
+        if (array_key_exists('callback_done', $validated)) {
+            $log->callback_done = (bool) $validated['callback_done'];
+        }
+        $log->save();
+
+        return response()->json(['success' => true, 'data' => $log]);
+    }
 }

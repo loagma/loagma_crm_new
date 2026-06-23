@@ -36,6 +36,11 @@ import '../screens/marketing/area_pincode_screen.dart';
 import '../screens/telecaller/verify_lead_accounts_screen.dart';
 import '../screens/telecaller/verify_pincode_detail_screen.dart';
 import '../screens/telecaller/telecaller_call_screen.dart';
+import '../screens/telecaller/telecaller_dashboard_screen.dart';
+import '../screens/telecaller/telecaller_callbacks_screen.dart';
+import '../screens/telecaller/telecaller_call_history_screen.dart';
+import '../screens/telecaller/telecaller_worklist_screen.dart';
+import '../screens/telecaller/telecaller_call_scripts_screen.dart';
 import '../services/user_service.dart';
 import 'auth_guard.dart';
 import 'role_guard.dart';
@@ -237,6 +242,27 @@ final appRouter = GoRouter(
           accountType: extra['accountType'] as String?               ?? 'lead',
         );
       },
+    ),
+    // Telecaller enhancement modules (UI with static data)
+    GoRoute(
+      path: '/telecaller/dashboard',
+      builder: (context, state) => const TelecallerDashboardScreen(),
+    ),
+    GoRoute(
+      path: '/telecaller/callbacks',
+      builder: (context, state) => const TelecallerCallbacksScreen(),
+    ),
+    GoRoute(
+      path: '/telecaller/call-history',
+      builder: (context, state) => const TelecallerCallHistoryScreen(),
+    ),
+    GoRoute(
+      path: '/telecaller/worklist',
+      builder: (context, state) => const TelecallerWorklistScreen(),
+    ),
+    GoRoute(
+      path: '/telecaller/call-scripts',
+      builder: (context, state) => const TelecallerCallScriptsScreen(),
     ),
     GoRoute(
       path: '/todays-beat-plan',

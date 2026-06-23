@@ -13,6 +13,8 @@ use App\Http\Controllers\BeatPlanController;
 use App\Http\Controllers\CallLogController;
 use App\Http\Controllers\OrderFunnelController;
 use App\Http\Controllers\PincodeController;
+use App\Http\Controllers\TelecallerController;
+use App\Http\Controllers\CallScriptController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -133,6 +135,23 @@ Route::prefix('beat-plan')->group(function () {
 // ---------------------------------------------------------------------------
 Route::get('/call-logs',  [CallLogController::class, 'index']);
 Route::post('/call-logs', [CallLogController::class, 'store']);
+Route::put('/call-logs/{id}', [CallLogController::class, 'update']); // reschedule / mark done
+
+// ---------------------------------------------------------------------------
+// Telecaller dashboard + agent modules (live data, scoped to JWT mobile)
+// ---------------------------------------------------------------------------
+Route::prefix('telecaller')->group(function () {
+    Route::get('/dashboard',    [TelecallerController::class, 'dashboard']);
+    Route::get('/callbacks',    [TelecallerController::class, 'callbacks']);
+    Route::get('/call-history', [TelecallerController::class, 'callHistory']);
+    Route::get('/worklist',     [TelecallerController::class, 'worklist']);
+    Route::post('/label',       [TelecallerController::class, 'setLabel']);
+
+    Route::get('/scripts',         [CallScriptController::class, 'index']);
+    Route::post('/scripts',        [CallScriptController::class, 'store']);
+    Route::put('/scripts/{id}',    [CallScriptController::class, 'update']);
+    Route::delete('/scripts/{id}', [CallScriptController::class, 'destroy']);
+});
 
 // ---------------------------------------------------------------------------
 // Order Funnel (dynamic stages from order_funnel_crm + saved responses)

@@ -180,6 +180,13 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF5C6BC0),
           },
           {
+            'title': 'Live Dashboard',
+            'icon': Icons.dashboard_rounded,
+            'route': '/telecaller/dashboard',
+            'color': const Color(0xFFD7BE69),
+            'subtitle': 'Live numbers & charts',
+          },
+          {
             'title': 'Create Lead Accounts',
             'icon': Icons.people_alt_rounded,
             'route': '/lead-account',
@@ -203,6 +210,30 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.verified_user_rounded,
             'route': '/verify-lead-accounts',
             'color': const Color(0xFF66BB6A),
+          },
+          {
+            'title': "Today's Callbacks",
+            'icon': Icons.event_repeat_rounded,
+            'route': '/telecaller/callbacks',
+            'color': const Color(0xFFFB8C00),
+          },
+          {
+            'title': 'Call History',
+            'icon': Icons.history_rounded,
+            'route': '/telecaller/call-history',
+            'color': const Color(0xFF1E88E5),
+          },
+          {
+            'title': 'Worklist',
+            'icon': Icons.checklist_rounded,
+            'route': '/telecaller/worklist',
+            'color': const Color(0xFF8E24AA),
+          },
+          {
+            'title': 'Call Scripts',
+            'icon': Icons.menu_book_rounded,
+            'route': '/telecaller/call-scripts',
+            'color': const Color(0xFF00897B),
           },
           {
             'title': 'Profile',
