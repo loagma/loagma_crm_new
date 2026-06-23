@@ -35625,7 +35625,7 @@ case 6:case 4:case 1:return A.t(q,r)}})
 return A.u($async$Qn,r)},
 bb1(a){var s=B.a_x.h(0,a)
 return s==null?new A.oF(B.aD,a):s},
-bD(){return"http://localhost:8000"},
+bD(){return"https://loagma-crm-new-1.onrender.com"},
 bqN(a,b,c,d){var s,r,q,p,o,n=A.w(d,c.i("a2<0>"))
 for(s=c.i("J<0>"),r=0;r<1;++r){q=a[r]
 p=b.$1(q)
