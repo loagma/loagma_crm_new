@@ -74,7 +74,7 @@ final appRouter = GoRouter(
         if (normalized == 'salesman'      || normalized == 'telecaller'     ||
             normalized == 'manager'       || normalized == 'incharge'       ||
             normalized == 'head_incharge' || normalized == 'zonal_incharge' ||
-            normalized == 'area_incharge') {
+            normalized == 'area_incharge' || normalized == 'teleadmin') {
           return EmployeeHomeScreen(role: role);
         }
         return RoleDashboardTemplate(role: role);

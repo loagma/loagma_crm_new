@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 import 'api_config.dart';
 import 'user_service.dart';
 
@@ -454,61 +453,21 @@ class ApiService {
   ///   'areas': ['...', ...],
   /// }
   static Future<Map<String, dynamic>?> lookupIndianPincode(String pincode) async {
-    final url = Uri.parse('https://api.postalpincode.in/pincode/$pincode');
+    // Proxy through our backend: api.postalpincode.in has an expired TLS cert
+    // and is unreachable from the Flutter web client (no dart:io, browser
+    // refuses the bad cert). The server fetches it and returns a normalized
+    // { country, state, district, city, areas } shape.
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/utils/pincode/$pincode');
     try {
-      // api.postalpincode.in has an expired TLS cert — bypass only for this host
-      final inner = HttpClient()
-        ..badCertificateCallback = (cert, host, port) => host == 'api.postalpincode.in';
-      final client = IOClient(inner);
-      final response = await client.get(url).timeout(const Duration(seconds: 12));
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
 
       final decoded = jsonDecode(response.body);
-      if (decoded is! List || decoded.isEmpty) return null;
-      final first = decoded.first;
-      if (first is! Map) return null;
+      if (decoded is! Map || decoded['success'] != true) return null;
+      final data = decoded['data'];
+      if (data is! Map) return null;
 
-      // API returns Status: "Error" when pincode not found
-      if ((first['Status'] ?? '').toString().toLowerCase() == 'error') return null;
-
-      final postOfficesRaw = first['PostOffice'];
-      if (postOfficesRaw is! List || postOfficesRaw.isEmpty) return null;
-
-      final postOffices = postOfficesRaw
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-
-      if (postOffices.isEmpty) return null;
-      final top = postOffices.first;
-
-      // Helper: treat "NA", "N/A", "" as absent
-      String? clean(dynamic raw) {
-        final s = raw?.toString().trim() ?? '';
-        if (s.isEmpty || s.toUpperCase() == 'NA' || s.toUpperCase() == 'N/A') return null;
-        return s;
-      }
-
-      final areas = postOffices
-          .map((e) => (e['Name'] ?? '').toString().trim())
-          .where((e) => e.isNotEmpty)
-          .toSet()
-          .toList()
-        ..sort();
-
-      // City: prefer Block → Division → District → first area name
-      final city = clean(top['Block'])
-          ?? clean(top['Division'])
-          ?? clean(top['District'])
-          ?? (areas.isNotEmpty ? areas.first : '');
-
-      return {
-        'country'  : clean(top['Country'])  ?? 'India',
-        'state'    : clean(top['State'])    ?? '',
-        'district' : clean(top['District']) ?? '',
-        'city'     : city,
-        'areas'    : areas,
-      };
+      return Map<String, dynamic>.from(data);
     } catch (e) {
       print('lookupIndianPincode failed for $url: $e');
       return null;

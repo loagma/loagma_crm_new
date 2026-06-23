@@ -7,8 +7,9 @@ import 'incharge_levels.dart';
 ///
 /// Lets the admin pick which rung of the hierarchy to manage:
 ///   • Head Incharge  → assign Zonal Incharges
-///   • Zonal Incharge → assign Area Incharges
+///   • Zonal Incharge → assign Area Incharges + Teleadmins
 ///   • Area Incharge  → assign Salesmen
+///   • Teleadmin      → assign Telecallers
 class AdminInchargeAssignScreen extends StatelessWidget {
   const AdminInchargeAssignScreen({super.key});
 
@@ -86,13 +87,14 @@ class _LevelCard extends StatelessWidget {
                     Text(level.description,
                         style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
                     const SizedBox(height: 6),
-                    Row(
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         _pill(level.parentLabel, level.color),
-                        const SizedBox(width: 4),
                         Icon(Icons.arrow_forward_rounded, size: 13, color: Colors.grey.shade400),
-                        const SizedBox(width: 4),
-                        _pill(level.childLabel, Colors.grey.shade600),
+                        for (final cr in level.childRoleList) _pill(cr.label, Colors.grey.shade600),
                       ],
                     ),
                   ],

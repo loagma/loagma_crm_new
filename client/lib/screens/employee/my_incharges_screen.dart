@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../../services/api_service.dart';
 import '../../services/user_service.dart';
+import '../admin/incharge_levels.dart';
 
 /// Shows the logged-in incharge's full downward hierarchy:
 ///   Head Incharge  → Zonal Incharges → Area Incharges → Salesmen
-///   Zonal Incharge → Area Incharges  → Salesmen
+///   Zonal Incharge → Area Incharges  → Salesmen  (+ Teleadmins → Telecallers)
 ///   Area Incharge  → Salesmen
+///   Teleadmin      → Telecallers
 ///
 /// Built by recursively walking the generic incharge-assign map
 /// (parent mobile → child mobiles) starting from the current user.
@@ -119,18 +121,23 @@ class _MyInchargesScreenState extends State<MyInchargesScreen> {
       // Recursively build a subtree for one person, guarding against cycles.
       _Node buildNode(String key, Set<String> visited) {
         final emp = empByKey[key];
+        final role = normalizeRole(emp?['role']);
         final children = <_Node>[];
         for (final childId in childIdsOf[key] ?? const <String>[]) {
           if (visited.contains(childId)) continue;
           visited.add(childId);
           children.add(buildNode(childId, visited));
         }
+
         return _Node(
           name: (emp?['name'] ?? 'Unknown ($key)').toString(),
           mobile: (emp?['mobile'] ?? key).toString(),
-          role: (emp?['role'] ?? '').toString().toLowerCase(),
+          role: role,
           areas: areasFor(emp, key),
           children: children,
+          specialty: role == 'zonal_incharge'
+              ? zonalSpecialtyFromRoles(children.map((c) => c.role))
+              : ZonalSpecialty.none,
         );
       }
 
@@ -213,6 +220,7 @@ class _Node {
   final String role;
   final List<_AreaInfo> areas;
   final List<_Node> children;
+  final ZonalSpecialty specialty; // derived sales/tele/both badge (zonal only)
 
   const _Node({
     required this.name,
@@ -220,6 +228,7 @@ class _Node {
     required this.role,
     required this.areas,
     required this.children,
+    this.specialty = ZonalSpecialty.none,
   });
 
   /// Total people in this subtree (excluding self).
@@ -239,6 +248,8 @@ class _Node {
       return (color: const Color(0xFF43A047), light: const Color(0xFFE8F5E9), label: 'Salesman');
     case 'telecaller':
       return (color: const Color(0xFF00838F), light: const Color(0xFFE0F7FA), label: 'Telecaller');
+    case 'teleadmin':
+      return (color: const Color(0xFF5E35B1), light: const Color(0xFFEDE7F6), label: 'Teleadmin');
     default:
       return (
         color: const Color(0xFF7B68AA),
@@ -320,6 +331,19 @@ class _NodeTileState extends State<_NodeTile> {
                                 child: Text(style.label,
                                     style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: style.color)),
                               ),
+                              if (node.specialty.label != null) ...[
+                                const SizedBox(width: 4),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: node.specialty.color.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(color: node.specialty.color.withValues(alpha: 0.5)),
+                                  ),
+                                  child: Text(node.specialty.label!,
+                                      style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: node.specialty.color)),
+                                ),
+                              ],
                             ],
                           ),
                           if (node.mobile.isNotEmpty)

@@ -125,6 +125,16 @@ class AppDrawer extends StatelessWidget {
           },
        
         ];
+         case 'teleadmin':
+        return [
+          {
+            'title': 'My Team',
+            'icon': Icons.supervisor_account_rounded,
+            'route': '/my-incharges',
+            'color': const Color(0xFFAB47BC),
+          },
+       
+        ];
       case 'salesman':
         return [
           {

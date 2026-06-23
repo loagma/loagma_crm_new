@@ -12,8 +12,12 @@ use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\BeatPlanController;
 use App\Http\Controllers\CallLogController;
 use App\Http\Controllers\OrderFunnelController;
+use App\Http\Controllers\PincodeController;
 
 Route::get('/health', [HealthController::class, 'index']);
+
+// Pincode lookup proxy (api.postalpincode.in is unreachable from web client)
+Route::get('/utils/pincode/{pincode}', [PincodeController::class, 'lookup']);
 
 // Roles CRUD (role_crm table)
 Route::get('/masters/roles',         [MastersController::class, 'roles']);

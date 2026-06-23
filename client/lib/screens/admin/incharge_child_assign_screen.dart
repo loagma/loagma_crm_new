@@ -87,8 +87,10 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
       for (final e in staffList) (e['mobile'] ?? '').toString(): e,
     };
 
+    // Roles assignable on this level (one, or two for the zonal level).
+    final childRoles = _level.childRoleList.map((c) => normalizeRole(c.role)).toSet();
     final children = staffList.map((e) {
-      final role = (e['role'] ?? '').toString().trim().toLowerCase();
+      final role = normalizeRole(e['role']);
       final id = (e['mobile'] ?? e['deli_id'] ?? '').toString();
       return <String, dynamic>{
         'id': id,
@@ -96,7 +98,7 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
         'mobile': (e['mobile'] ?? '').toString(),
         'role': role,
       };
-    }).where((e) => e['role'] == _level.childRole).toList();
+    }).where((e) => childRoles.contains(e['role'])).toList();
 
     // childId → names of OTHER same-level parents that already own this child.
     final childOwners = <int, List<String>>{};
@@ -164,7 +166,8 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('These ${_level.childLabel}s are already assigned to other ${_level.parentLabel}s:',
+              Text(
+                  'These ${_level.hasMultipleChildRoles ? 'members' : '${_level.childLabel}s'} are already assigned to other ${_level.parentLabel}s:',
                   style: const TextStyle(fontSize: 13)),
               const SizedBox(height: 10),
               ...conflicts.entries.map((e) => Padding(
@@ -262,7 +265,9 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
     Fluttertoast.showToast(
       msg: ids.isEmpty
           ? 'Assignment cleared successfully'
-          : '${ids.length} ${_level.childLabelCount(ids.length).toLowerCase()} assigned successfully',
+          : _level.hasMultipleChildRoles
+              ? '${ids.length} member${ids.length == 1 ? '' : 's'} assigned successfully'
+              : '${ids.length} ${_level.childLabelCount(ids.length).toLowerCase()} assigned successfully',
       backgroundColor: goldDark,
       textColor: Colors.white,
       toastLength: Toast.LENGTH_LONG,
@@ -287,7 +292,7 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F2F5),
       appBar: AppBar(
-        title: Text('Assign ${_level.childLabel}s'),
+        title: Text(_level.hasMultipleChildRoles ? 'Assign Team' : 'Assign ${_level.childLabel}s'),
         backgroundColor: goldDark,
         foregroundColor: Colors.white,
         elevation: 0,
@@ -393,7 +398,7 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Text('$assigned / $total ${_level.childLabel.toLowerCase()}s',
+                Text('$assigned / $total ${_level.hasMultipleChildRoles ? 'members' : '${_level.childLabel.toLowerCase()}s'}',
                     style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.9), fontWeight: FontWeight.w600)),
               ],
             ),
@@ -421,7 +426,7 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
             children: [
               const Icon(Icons.supervisor_account_rounded, size: 14, color: goldDark),
               const SizedBox(width: 6),
-              Text('Selected ${_level.childLabel}s',
+              Text(_level.hasMultipleChildRoles ? 'Selected members' : 'Selected ${_level.childLabel}s',
                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: goldDark)),
               const Spacer(),
               Container(
@@ -476,7 +481,9 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
         controller: _searchCtrl,
         onChanged: (v) => setState(() => _searchQuery = v.trim()),
         decoration: InputDecoration(
-          hintText: 'Search ${_level.childLabel.toLowerCase()} by name or mobile…',
+          hintText: _level.hasMultipleChildRoles
+              ? 'Search by name or mobile…'
+              : 'Search ${_level.childLabel.toLowerCase()} by name or mobile…',
           hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
           prefixIcon: const Icon(Icons.search_rounded, color: goldDark),
           suffixIcon: _searchQuery.isNotEmpty
@@ -498,25 +505,46 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
     );
   }
 
-  Widget _buildList() {
-    final selList = _filtered.where((i) => _selectedIds.contains(_idOf(i))).toList();
-    final unselList = _filtered.where((i) => !_selectedIds.contains(_idOf(i))).toList();
+  /// Build the flat item list. Single-role levels keep the original
+  /// Selected / Not Selected split; multi-role levels (zonal) group by child
+  /// role ("Area Incharges", "Teleadmins"), selected-first within each group.
+  List<Object> _buildItems() {
+    if (!_level.hasMultipleChildRoles) {
+      final selList = _filtered.where((i) => _selectedIds.contains(_idOf(i))).toList();
+      final unselList = _filtered.where((i) => !_selectedIds.contains(_idOf(i))).toList();
+      return [
+        if (selList.isNotEmpty) ...[_Section('Selected', selList.length, true), ...selList],
+        if (unselList.isNotEmpty) ...[_Section('Not Selected', unselList.length, false), ...unselList],
+      ];
+    }
 
+    final items = <Object>[];
+    for (final cr in _level.childRoleList) {
+      final roleNorm = normalizeRole(cr.role);
+      final group = _filtered.where((i) => normalizeRole(i['role']) == roleNorm).toList();
+      if (group.isEmpty) continue;
+      final sel = group.where((i) => _selectedIds.contains(_idOf(i))).toList();
+      final unsel = group.where((i) => !_selectedIds.contains(_idOf(i))).toList();
+      items
+        ..add(_RoleHeader('${cr.label}s', sel.length, group.length))
+        ..addAll(sel)
+        ..addAll(unsel);
+    }
+    return items;
+  }
+
+  Widget _buildList() {
     if (_filtered.isEmpty) {
+      final what = _level.hasMultipleChildRoles ? 'members' : '${_level.childLabel.toLowerCase()}s';
       return Center(
         child: Text(
-          _searchQuery.isNotEmpty
-              ? 'No ${_level.childLabel.toLowerCase()}s match "$_searchQuery"'
-              : 'No ${_level.childLabel.toLowerCase()}s available',
+          _searchQuery.isNotEmpty ? 'No $what match "$_searchQuery"' : 'No $what available',
           style: TextStyle(fontSize: 14, color: Colors.grey.shade400),
         ),
       );
     }
 
-    final items = <Object>[
-      if (selList.isNotEmpty) ...[_Section('Selected', selList.length, true), ...selList],
-      if (unselList.isNotEmpty) ...[_Section('Not Selected', unselList.length, false), ...unselList],
-    ];
+    final items = _buildItems();
 
     return RefreshIndicator(
       onRefresh: _loadAll,
@@ -525,6 +553,28 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
         itemCount: items.length,
         itemBuilder: (context, i) {
           final item = items[i];
+
+          if (item is _RoleHeader) {
+            return Padding(
+              padding: EdgeInsets.only(top: i == 0 ? 6 : 18, bottom: 8, left: 2, right: 2),
+              child: Row(
+                children: [
+                  Icon(Icons.badge_outlined, size: 16, color: goldDark),
+                  const SizedBox(width: 8),
+                  Text(item.label,
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: goldDark)),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
+                    decoration: BoxDecoration(color: goldDark, borderRadius: BorderRadius.circular(10)),
+                    child: Text('${item.selected}/${item.total}',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white)),
+                  ),
+                  const Expanded(child: Divider(indent: 10)),
+                ],
+              ),
+            );
+          }
 
           if (item is _Section) {
             return Padding(
@@ -632,7 +682,7 @@ class _InchargeChildAssignScreenState extends State<InchargeChildAssignScreen> {
                                         ))
                                     .toList(),
                               ),
-                            ] else
+                            ] else if (normalizeRole(inc['role']) != 'teleadmin')
                               Text('No areas assigned',
                                   style: TextStyle(fontSize: 10, color: Colors.grey.shade400)),
                           ],
@@ -669,4 +719,13 @@ class _Section {
   final int count;
   final bool isSelected;
   const _Section(this.label, this.count, this.isSelected);
+}
+
+/// Header for a child-role group on multi-role levels (e.g. "Area Incharges",
+/// "Teleadmins"), showing how many of that role are selected.
+class _RoleHeader {
+  final String label;
+  final int selected;
+  final int total;
+  const _RoleHeader(this.label, this.selected, this.total);
 }
