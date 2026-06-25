@@ -129,7 +129,7 @@ class _AllBeatPlanScreenState extends State<AllBeatPlanScreen> {
                                 _Chip(label: 'Total: $_total',       color: _gold),
                                 _Chip(label: 'Planned: $_planned',   color: const Color(0xFF43A047)),
                                 _Chip(label: 'Visited: $_visited',   color: const Color(0xFF1976D2)),
-                                _Chip(label: 'Remaining: $_remaining', color: const Color(0xFFEF5350)),
+                                _Chip(label: 'Unassigned: $_remaining', color: const Color(0xFFEF5350)),
                               ])),
                               const SizedBox(width: 8),
                               OutlinedButton.icon(

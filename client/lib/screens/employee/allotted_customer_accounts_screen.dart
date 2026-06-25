@@ -26,6 +26,8 @@ class _AllottedCustomerAccountsScreenState
 
   final _searchCtrl = TextEditingController();
   String _query     = '';
+  // 'all' | 'lead' | 'customer'
+  String _typeFilter = 'all';
 
   bool   _loading       = true;
   bool   _actionLoading = false;
@@ -200,7 +202,10 @@ class _AllottedCustomerAccountsScreenState
       _groups.fold(0, (s, g) => s + (g['accounts'] as List).length);
 
   List<Map<String, dynamic>> _filtered(List accounts) {
-    final list = accounts.cast<Map<String, dynamic>>();
+    var list = accounts.cast<Map<String, dynamic>>();
+    if (_typeFilter != 'all') {
+      list = list.where((a) => (a['_type'] as String?) == _typeFilter).toList();
+    }
     if (_query.isEmpty) return list;
     final q = _query.toLowerCase();
     return list.where((a) =>
@@ -520,6 +525,29 @@ class _AllottedCustomerAccountsScreenState
     ]),
   );
 
+  Widget _typeChip(String label, String value) {
+    final selected = _typeFilter == value;
+    return GestureDetector(
+      onTap: () => setState(() => _typeFilter = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? _gold : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: selected ? _gold : Colors.grey.shade300),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: selected ? Colors.white : Colors.black87,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildList() {
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
@@ -548,6 +576,18 @@ class _AllottedCustomerAccountsScreenState
             enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade200)),
             focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: _gold)),
           ),
+        ),
+        const SizedBox(height: 10),
+
+        // Lead / Customer filter
+        Row(
+          children: [
+            _typeChip('All',       'all'),
+            const SizedBox(width: 8),
+            _typeChip('Leads',     'lead'),
+            const SizedBox(width: 8),
+            _typeChip('Customers', 'customer'),
+          ],
         ),
         const SizedBox(height: 10),
 
@@ -591,9 +631,13 @@ class _AllottedCustomerAccountsScreenState
             ),
           )
         else
-          ..._groups.map((g) {
-            final pin      = g['pincode'] as String;
-            final accounts = g['accounts'] as List<Map<String, dynamic>>;
+          ..._groups.where((g) {
+            // When a filter/search is active, drop pincodes with no matches
+            if (_typeFilter == 'all' && _query.isEmpty) return true;
+            return _filtered(g['accounts'] as List).isNotEmpty;
+          }).map((g) {
+            final pin      = (g['pincode'] ?? '').toString();
+            final accounts = (g['accounts'] as List).cast<Map<String, dynamic>>();
             final filtered = _filtered(accounts);
             final isOpen   = _expanded.contains(pin);
             final selCount = accounts.where((a) => _selected.contains(_key(a))).length;
@@ -844,7 +888,7 @@ class _PincodeSectionState extends State<_PincodeSection> {
                     )),
                     const SizedBox(width: 5),
                     Expanded(child: _FilterBtn(
-                      label: 'Remaining', countL: widget.remainingL, countC: widget.remainingC,
+                      label: 'Unassigned', countL: widget.remainingL, countC: widget.remainingC,
                       active: _filter == 'remaining',
                       onTap: () => setState(() { _filter = 'remaining'; if (!expanded) widget.onToggle(); }),
                     )),
@@ -1691,27 +1735,11 @@ class _AssignDayDialogState extends State<_AssignDayDialog> {
 
               // ── N Days body ────────────────────────────────────────────────
               if (_frequency == 'n_days') ...[
-                const Text('Repeat every N days:',
-                    style: TextStyle(fontSize: 12, color: Colors.black54)),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _nCtrl,
-                  keyboardType: TextInputType.number,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: 'e.g. 7  →  every 7 days',
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: _gold, width: 2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                const Text('Start date:',
-                    style: TextStyle(fontSize: 12, color: Colors.black54)),
+                const Text('Start Date',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black87)),
                 const SizedBox(height: 6),
                 InkWell(
                   onTap: _pickStartDate,
@@ -1739,6 +1767,29 @@ class _AssignDayDialogState extends State<_AssignDayDialog> {
                         ),
                       ),
                     ]),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text('Repeat Every given number(N Days)',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black87)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _nCtrl,
+                  keyboardType: TextInputType.number,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'e.g. 7  →  every 7 days',
+                    hintStyle: TextStyle(color: Colors.grey.shade400),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: _gold, width: 2),
+                    ),
                   ),
                 ),
               ],
