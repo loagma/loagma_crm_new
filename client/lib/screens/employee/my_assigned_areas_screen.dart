@@ -241,8 +241,20 @@ class _AreaCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(name,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Marketing Area',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade500)),
+                      const SizedBox(height: 2),
+                      Text(name,
+                          style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
                 ),
                 if (isIncharge) ...[
                   Container(
@@ -356,6 +368,8 @@ class _PincodeSheetState extends State<_PincodeSheet> {
 
   bool           _loading = true;
   List<String>   _pincodes = [];
+  // pincode → city name (null = still loading / unavailable)
+  final Map<String, String?> _cities = {};
 
   @override
   void initState() {
@@ -372,6 +386,17 @@ class _PincodeSheetState extends State<_PincodeSheet> {
       _pincodes = raw is List ? raw.map((e) => e.toString()).toList() : [];
       _loading  = false;
     });
+    _loadCities();
+  }
+
+  Future<void> _loadCities() async {
+    for (final pin in _pincodes) {
+      if (_cities.containsKey(pin)) continue;
+      final info = await ApiService.lookupIndianPincode(pin);
+      if (!mounted) return;
+      final city = (info?['city'] ?? '').toString().trim();
+      setState(() => _cities[pin] = city.isEmpty ? null : city);
+    }
   }
 
   @override
@@ -466,10 +491,29 @@ class _PincodeSheetState extends State<_PincodeSheet> {
                                   child: const Icon(Icons.pin_drop_rounded, color: gold, size: 16),
                                 ),
                                 const SizedBox(width: 12),
-                                Text(
-                                  _pincodes[i],
-                                  style: const TextStyle(
-                                      fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: 1),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _pincodes[i],
+                                        style: const TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: 1),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        _cities.containsKey(_pincodes[i])
+                                            ? (_cities[_pincodes[i]] ?? 'City not found')
+                                            : 'Loading city…',
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w700,
+                                            color: Colors.grey.shade900),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ],
                             ),
