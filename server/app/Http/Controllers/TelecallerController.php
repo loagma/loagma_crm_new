@@ -228,17 +228,27 @@ class TelecallerController extends Controller
         [$areaIds, $pincodes] = $this->myAreaScope($mobile);
 
         $leads = $this->myLeadsQuery($areaIds, $pincodes)
-            ->get(['id', 'businessName', 'personName', 'contactNumber', 'area', 'pincode', 'customerStage']);
+            ->get(['id', 'businessName', 'personName', 'contactNumber', 'area', 'city', 'pincode', 'customerStage']);
 
         $customers = empty($pincodes)
             ? collect()
             : DB::table('user')->whereIn('pincode', $pincodes)->get(['userid', 'name', 'shop_name', 'contactno', 'city', 'pincode']);
 
+        $todayStr    = Carbon::today()->toDateString();
         $labels      = TelecallerLabel::where('employee_mobile', $mobile)->get()->keyBy('account_id');
         $calledToday = CallLog::where('employee_mobile', $mobile)
-            ->whereDate('called_at', Carbon::today()->toDateString())->pluck('account_id')->flip();
+            ->whereDate('called_at', $todayStr)->pluck('account_id')->flip();
         $openFollow  = CallLog::where('employee_mobile', $mobile)
             ->whereNotNull('follow_up_date')->where('callback_done', false)->pluck('account_id')->flip();
+
+        // Last contact (max called_at) and next open follow-up (min follow_up_date) per account.
+        $lastContact = CallLog::where('employee_mobile', $mobile)
+            ->select('account_id', DB::raw('MAX(called_at) as last_at'))
+            ->groupBy('account_id')->pluck('last_at', 'account_id');
+        $nextFollow  = CallLog::where('employee_mobile', $mobile)
+            ->whereNotNull('follow_up_date')->where('callback_done', false)
+            ->select('account_id', DB::raw('MIN(follow_up_date) as next_at'))
+            ->groupBy('account_id')->pluck('next_at', 'account_id');
 
         $deriveLabel = function (string $id) use ($labels, $calledToday, $openFollow): string {
             if (isset($labels[$id])) {
@@ -253,29 +263,44 @@ class TelecallerController extends Controller
             return 'not_called';
         };
 
+        $lastOf = fn (string $id) => isset($lastContact[$id]) ? Carbon::parse($lastContact[$id])->toDateString() : null;
+        $nextOf = fn (string $id) => isset($nextFollow[$id]) ? Carbon::parse($nextFollow[$id])->toDateString() : null;
+
         $rows = [];
         foreach ($leads as $l) {
             $id = (string) $l->id;
             $rows[] = [
-                'account_id'   => $id,
-                'account_type' => 'lead',
-                'name'         => $l->businessName ?: $l->personName,
-                'phone'        => $l->contactNumber,
-                'area'         => $l->area,
-                'pincode'      => $l->pincode,
-                'label'        => $deriveLabel($id),
+                'account_id'     => $id,
+                'account_type'   => 'lead',
+                'name'           => $l->businessName ?: $l->personName,
+                'business_name'  => $l->businessName,
+                'person_name'    => $l->personName,
+                'phone'          => $l->contactNumber,
+                'area'           => $l->area,
+                'city'           => $l->city,
+                'pincode'        => $l->pincode,
+                'stage'          => $l->customerStage ?: 'lead',
+                'label'          => $deriveLabel($id),
+                'last_contact'   => $lastOf($id),
+                'next_follow_up' => $nextOf($id),
             ];
         }
         foreach ($customers as $c) {
             $id = (string) $c->userid;
             $rows[] = [
-                'account_id'   => $id,
-                'account_type' => 'customer',
-                'name'         => $c->shop_name ?: $c->name,
-                'phone'        => $c->contactno,
-                'area'         => $c->city,
-                'pincode'      => $c->pincode,
-                'label'        => $deriveLabel($id),
+                'account_id'     => $id,
+                'account_type'   => 'customer',
+                'name'           => $c->shop_name ?: $c->name,
+                'business_name'  => $c->shop_name,
+                'person_name'    => $c->name,
+                'phone'          => $c->contactno,
+                'area'           => $c->city,
+                'city'           => $c->city,
+                'pincode'        => $c->pincode,
+                'stage'          => 'customer',
+                'label'          => $deriveLabel($id),
+                'last_contact'   => $lastOf($id),
+                'next_follow_up' => $nextOf($id),
             ];
         }
 

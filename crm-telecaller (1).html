@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Telecaller CRM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --gold:#d2ab5b; --gold-deep:#c39f48; --gold-soft:#f4ead2;
+  --bg:#eceef1; --card:#fff; --ink:#20242b; --muted:#8b919b; --faint:#aeb4bd;
+  --line:#ececed; --line-2:#f3f3f5; --rose:#fbe9e8;
+  --green:#2f9e57; --green-bg:#def4e5;
+  --blue:#3b6fd4;  --blue-bg:#e6edfb;
+  --red:#d9534f;   --red-bg:#fbe7e6;
+  --amber:#d98a2b; --amber-bg:#fbeed8;
+  --purple:#7c5cd6;--purple-bg:#ece6fa;
+  --slate:#5a6472; --slate-bg:#eef0f3;
+  --shadow:0 1px 2px rgba(20,24,31,.04), 0 6px 18px rgba(20,24,31,.05);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:'Inter',system-ui,sans-serif;background:#d9dde2;color:var(--ink);
+  display:flex;justify-content:center;-webkit-font-smoothing:antialiased}
+.phone{width:100%;max-width:412px;height:100vh;background:var(--bg);position:relative;overflow:hidden;display:flex;flex-direction:column}
+@media(min-width:460px){.phone{height:calc(100vh - 28px);margin:14px 0;border-radius:30px;box-shadow:0 24px 70px rgba(0,0,0,.35)}}
+
+.statusbar{background:#16181c;color:#fff;height:32px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 18px;font-size:12.5px;font-weight:600;flex-shrink:0;z-index:5}
+.statusbar .icons{display:flex;gap:6px;align-items:center;font-size:11px;opacity:.92}
+.bat{width:19px;height:11px;border:1.5px solid #fff;border-radius:3px;position:relative;display:inline-block}
+.bat::after{content:"";position:absolute;right:-3px;top:3px;width:2px;height:5px;background:#fff;border-radius:0 1px 1px 0}
+.bat::before{content:"";position:absolute;left:1px;top:1px;bottom:1px;width:55%;background:#fff;border-radius:1px}
+
+.appbar{background:var(--gold);color:#fff;flex-shrink:0;padding:15px 18px;display:flex;align-items:center;gap:13px;z-index:4}
+.appbar .ic{cursor:pointer;display:flex;opacity:.95}
+.appbar .ttl{flex:1;min-width:0}
+.appbar h1{font-family:'Outfit';font-size:20px;font-weight:600;letter-spacing:.2px;line-height:1.1}
+.appbar .sub{font-size:11.5px;opacity:.85;margin-top:2px;font-weight:500}
+
+/* screens */
+.stage-wrap{flex:1;position:relative;overflow:hidden}
+.screen{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg);
+  transform:translateX(100%);transition:transform .28s cubic-bezier(.3,.85,.35,1);visibility:hidden}
+.screen.active{transform:translateX(0);visibility:visible}
+.screen.under{transform:translateX(-22%);visibility:visible}
+.scroll{flex:1;overflow-y:auto;padding:14px 14px 92px}
+.scroll.noNav{padding-bottom:110px}
+.scroll::-webkit-scrollbar{width:0}
+
+.card{background:var(--card);border-radius:18px;box-shadow:var(--shadow);padding:15px;margin-bottom:13px}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:600;letter-spacing:.3px;white-space:nowrap}
+.pill .d{width:7px;height:7px;border-radius:50%}
+.b-blue{background:var(--blue-bg);color:var(--blue)} .b-amber{background:var(--amber-bg);color:var(--amber)}
+.b-green{background:var(--green-bg);color:var(--green)} .b-purple{background:var(--purple-bg);color:var(--purple)}
+.b-red{background:var(--red-bg);color:var(--red)} .b-slate{background:var(--slate-bg);color:var(--slate)}
+.b-gold{background:var(--gold-soft);color:#9a7a2f}
+.sec-head{display:flex;align-items:center;justify-content:space-between;margin:4px 2px 11px}
+.sec-head h2{font-family:'Outfit';font-size:15px;font-weight:600}
+.sec-head .meta,.sec-head a{font-size:11.5px;color:var(--faint);font-weight:500;text-decoration:none;cursor:pointer}
+.sec-head a{color:var(--gold-deep);font-weight:600}
+.divider{height:1px;background:var(--line);margin:13px 0}
+
+/* ===== HOME ===== */
+.hero-stats{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:13px}
+.hs{background:var(--card);border-radius:16px;box-shadow:var(--shadow);padding:14px}
+.hs .n{font-family:'Outfit';font-size:24px;font-weight:600;line-height:1}
+.hs .t{font-size:11.5px;color:var(--muted);font-weight:500;margin-top:6px}
+.hs .ic{float:right;width:34px;height:34px;border-radius:11px;display:flex;align-items:center;justify-content:center;margin-top:-2px}
+.perf{display:flex;gap:11px}
+.perf .pbox{flex:1;text-align:center;background:var(--line-2);border-radius:13px;padding:11px 6px}
+.perf .pbox b{display:block;font-family:'Outfit';font-size:18px;font-weight:600}
+.perf .pbox span{font-size:10px;color:var(--muted);font-weight:500}
+.fu-row{display:flex;align-items:center;gap:11px;padding:11px 0;border-bottom:1px solid var(--line-2);cursor:pointer}
+.fu-row:last-child{border-bottom:none}
+.fu-av{width:40px;height:40px;border-radius:13px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  font-family:'Outfit';font-weight:600;font-size:15px;color:#fff}
+.fu-info{flex:1;min-width:0}
+.fu-info .nm{font-size:13.5px;font-weight:600}
+.fu-info .sb{font-size:11.5px;color:var(--muted);margin-top:1px}
+.fu-time{font-size:11px;font-weight:600;text-align:right}
+
+/* ===== CUSTOMER LIST ===== */
+.search{display:flex;align-items:center;gap:9px;background:var(--card);border-radius:14px;padding:11px 14px;
+  box-shadow:var(--shadow);margin-bottom:11px}
+.search input{border:none;outline:none;font-family:inherit;font-size:14px;flex:1;background:none;color:var(--ink)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:11px;margin:0 -14px;padding-left:14px;padding-right:14px}
+.chips::-webkit-scrollbar{height:0}
+.chip{flex-shrink:0;background:var(--card);border:1.5px solid var(--line);border-radius:20px;padding:8px 14px;
+  font-size:12.5px;font-weight:600;color:var(--slate);cursor:pointer;white-space:nowrap;font-family:'Outfit'}
+.chip.active{background:var(--gold);border-color:var(--gold);color:#fff}
+.cust{background:var(--card);border-radius:16px;box-shadow:var(--shadow);padding:14px;margin-bottom:11px;cursor:pointer;
+  border-left:4px solid transparent}
+.cust:active{transform:scale(.99)}
+.cust-h{display:flex;align-items:flex-start;gap:11px}
+.cust-h .av{width:44px;height:44px;border-radius:13px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  font-family:'Outfit';font-weight:600;font-size:16px;color:#fff}
+.cust-nm{font-family:'Outfit';font-size:15.5px;font-weight:600;line-height:1.15}
+.cust-co{font-size:12px;color:var(--muted);margin-top:2px}
+.cust-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.cust-foot{display:flex;justify-content:space-between;margin-top:11px;padding-top:11px;border-top:1px solid var(--line-2)}
+.cf{font-size:10.5px;color:var(--faint);font-weight:500}
+.cf b{display:block;font-family:'Outfit';font-size:13px;font-weight:600;color:var(--ink);margin-top:2px}
+.score-ring{width:38px;height:38px;flex-shrink:0;position:relative}
+.score-ring span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Outfit';font-size:12px;font-weight:600}
+
+/* ===== PIPELINE ===== */
+.stage-tabs{display:flex;gap:7px;overflow-x:auto;padding-bottom:12px;margin:0 -14px;padding-left:14px;padding-right:14px}
+.stage-tabs::-webkit-scrollbar{height:0}
+.stab{flex-shrink:0;border-radius:13px;padding:10px 13px;cursor:pointer;text-align:center;min-width:84px;
+  border:1.5px solid var(--line);background:var(--card);box-shadow:var(--shadow)}
+.stab .sn{font-family:'Outfit';font-size:11px;font-weight:600;color:var(--slate)}
+.stab .sc{font-family:'Outfit';font-size:20px;font-weight:600;margin-top:3px}
+.stab.active{color:#fff}
+
+/* ===== PROFILE ===== */
+.psum{display:flex;align-items:flex-start;gap:13px}
+.psum .av{width:54px;height:54px;border-radius:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  font-family:'Outfit';font-weight:600;font-size:21px;color:#fff}
+.psum .nm{font-family:'Outfit';font-size:19px;font-weight:600;line-height:1.1}
+.psum .co{font-size:12.5px;color:var(--muted);margin-top:3px}
+.psum .right{margin-left:auto;text-align:right;display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.qa-row{display:flex;justify-content:space-between;gap:4px;margin-top:15px}
+.qa{display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;cursor:pointer;background:none;border:none;font-family:inherit}
+.qa .qi{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:transform .12s}
+.qa:active .qi{transform:scale(.9)}
+.qa .ql{font-size:10px;color:var(--muted);font-weight:500}
+
+/* journey stepper */
+.journey{display:flex;align-items:center;margin:4px 0}
+.jstep{flex:1;display:flex;flex-direction:column;align-items:center;position:relative}
+.jstep .dot{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:700;color:#fff;background:var(--line);z-index:2;font-family:'Outfit'}
+.jstep .lab{font-size:8.5px;color:var(--faint);font-weight:600;margin-top:5px;text-align:center;line-height:1.1}
+.jstep .bar{position:absolute;top:13px;left:-50%;width:100%;height:3px;background:var(--line);z-index:1}
+.jstep:first-child .bar{display:none}
+.jstep.done .dot{background:var(--green)} .jstep.done .bar{background:var(--green)}
+.jstep.cur .dot{box-shadow:0 0 0 4px rgba(210,171,91,.25)}
+.jstep.cur .lab{color:var(--ink)}
+
+.ptabs{display:flex;gap:7px;margin-bottom:13px}
+.ptab{flex:1;background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:10px 4px;
+  font-family:'Outfit';font-size:12px;font-weight:600;color:var(--slate);cursor:pointer;box-shadow:var(--shadow)}
+.ptab.active{background:var(--gold);border-color:var(--gold);color:#fff}
+.ppane{display:none}.ppane.active{display:block}
+
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px 12px}
+.info-grid .full{grid-column:1/-1}
+.il{font-size:10px;color:var(--faint);font-weight:600;letter-spacing:.5px;text-transform:uppercase}
+.iv{font-size:13.5px;color:var(--ink);font-weight:500;margin-top:3px;word-break:break-word}
+.iv a{color:var(--blue);text-decoration:none}
+
+.kpi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.kpi{background:var(--line-2);border-radius:13px;padding:11px 6px;text-align:center}
+.kpi .kn{font-family:'Outfit';font-size:17px;font-weight:600;line-height:1}
+.kpi .kt{font-size:9.5px;color:var(--muted);font-weight:500;margin-top:5px}
+
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
+.stat{background:var(--line-2);border-radius:12px;padding:10px 4px;text-align:center}
+.stat .n{font-family:'Outfit';font-size:17px;font-weight:600;line-height:1}
+.stat .t{font-size:9px;color:var(--muted);font-weight:500;margin-top:5px}
+.stat.ok .n{color:var(--green)} .stat.miss .n{color:var(--red)} .stat.busy .n{color:var(--amber)}
+
+.daygroup{margin-bottom:4px}
+.dayhdr{display:flex;align-items:center;gap:7px;margin:4px 2px 9px}
+.dayhdr .date{font-family:'Outfit';font-size:12.5px;font-weight:600}
+.dayhdr .cnt{font-size:10.5px;color:var(--faint);font-weight:500}
+.attempt{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line-2)}
+.attempt:last-child{border-bottom:none}
+.adot{width:28px;height:28px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px}
+.ab{flex:1;min-width:0}.at{font-size:12.5px;font-weight:600}.atm{font-size:10.5px;color:var(--faint);margin-top:1px}
+.adur{font-size:11px;font-weight:600;color:var(--green)}
+
+.note{padding:12px 0;border-bottom:1px solid var(--line-2)}.note:last-child{border-bottom:none}
+.note .nh{display:flex;justify-content:space-between;margin-bottom:5px}
+.note .who{font-size:11.5px;font-weight:600}.note .when{font-size:10.5px;color:var(--faint)}
+.note .bd{font-size:12.5px;color:#404650;line-height:1.5}
+.note .tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+.mt{font-size:9.5px;font-weight:600;padding:3px 7px;border-radius:7px;background:var(--line-2);color:var(--slate)}
+.addrow{display:flex;gap:8px;margin-top:13px}
+.addrow input{flex:1;border:1.5px solid var(--line);border-radius:11px;padding:10px 12px;font-family:inherit;font-size:13px;outline:none}
+.addrow input:focus{border-color:var(--gold)}
+.btn-sm{background:var(--gold);color:#fff;border:none;border-radius:11px;padding:0 15px;font-family:'Outfit';font-weight:600;font-size:13px;cursor:pointer}
+
+.order{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line-2)}
+.order:last-child{border-bottom:none}
+.oico{width:38px;height:38px;border-radius:11px;background:var(--gold-soft);color:#a07d2f;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.ob{flex:1;min-width:0}.oinv{font-size:13px;font-weight:600}.odesc{font-size:11px;color:var(--muted);margin-top:1px}
+.oamt{text-align:right}.oamt b{font-family:'Outfit';font-size:14px;font-weight:600;display:block}
+
+.tl{position:relative;padding-left:6px}
+.tl-item{position:relative;padding:0 0 16px 28px}
+.tl-item::before{content:"";position:absolute;left:12px;top:21px;bottom:-3px;width:2px;background:var(--line)}
+.tl-item:last-child::before{display:none}
+.tl-ic{position:absolute;left:0;top:0;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px}
+.tl-t{font-size:12.5px;font-weight:600}.tl-d{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.4}
+.tl-tm{font-size:10.5px;color:var(--faint);margin-top:3px}
+
+.fup-card{border:1.5px solid var(--gold-soft);background:#fdfaf2;border-radius:14px;padding:13px;margin-bottom:11px}
+.fup-card.miss{border-color:var(--red-bg);background:#fdf5f4}
+.fup-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.fup-when{font-family:'Outfit';font-size:13.5px;font-weight:600}
+.fup-purpose{font-size:12.5px;color:#404650;line-height:1.45}
+.fup-row{display:flex;gap:14px;margin-top:9px;font-size:11px;color:var(--muted)}
+.fup-row b{color:var(--ink);font-weight:600}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:11px}
+.field label{font-size:10px;color:var(--faint);font-weight:600;letter-spacing:.3px;text-transform:uppercase;display:block;margin-bottom:5px}
+.field input,.field select{width:100%;border:1.5px solid var(--line);border-radius:11px;padding:10px 11px;font-family:inherit;font-size:13px;outline:none;background:#fff;color:var(--ink)}
+.field input:focus,.field select:focus{border-color:var(--gold)}
+.btn-full{width:100%;background:var(--gold);color:#fff;border:none;border-radius:13px;padding:13px;font-family:'Outfit';font-weight:600;font-size:14px;cursor:pointer}
+.btn-full:active{background:var(--gold-deep)}
+.btn-out{background:#fff;border:1.5px solid var(--gold);color:var(--gold-deep)}
+
+/* analytics */
+.seg{display:flex;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid var(--line-2);cursor:pointer}
+.seg:last-child{border-bottom:none}
+.seg .si{width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.seg .sb{flex:1}.seg .st{font-size:13.5px;font-weight:600}.seg .sd{font-size:11.5px;color:var(--muted);margin-top:1px}
+.seg .sn{font-family:'Outfit';font-size:20px;font-weight:600}
+
+/* footer + nav */
+.pfoot{position:absolute;left:0;right:0;bottom:0;padding:12px 14px 16px;background:linear-gradient(to top,var(--bg) 72%,rgba(236,238,241,0));display:flex;gap:9px;z-index:6}
+.fbtn{flex:1;border:none;border-radius:15px;padding:14px;font-family:'Outfit';font-weight:600;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px}
+.fbtn.primary{background:var(--gold);color:#fff;box-shadow:0 6px 16px rgba(210,171,91,.4)}
+.fbtn.primary:active{background:var(--gold-deep)}
+.fbtn.ghost{flex:0 0 54px;background:var(--green-bg);color:var(--green)}
+
+.navbar{flex-shrink:0;background:#fff;border-top:1px solid var(--line);display:flex;padding:8px 6px 14px;z-index:7}
+.nav{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;font-family:inherit;color:var(--faint);padding:5px 0}
+.nav.active{color:var(--gold-deep)}
+.nav .nl{font-size:10px;font-weight:600}
+
+/* sheets */
+.sheet-ov{position:absolute;inset:0;background:rgba(20,24,31,.42);opacity:0;pointer-events:none;transition:.22s;z-index:40}
+.sheet-ov.show{opacity:1;pointer-events:auto}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:#fff;border-radius:24px 24px 0 0;padding:8px 18px 22px;
+  transform:translateY(100%);transition:transform .26s cubic-bezier(.3,.9,.3,1);z-index:41;max-height:90%;overflow-y:auto}
+.sheet.show{transform:translateY(0)}
+.sheet::-webkit-scrollbar{width:0}
+.grab{width:42px;height:4px;background:#dfe2e6;border-radius:3px;margin:8px auto 16px}
+.sheet h3{font-family:'Outfit';font-size:17px;font-weight:600;margin-bottom:3px}
+.sheet .ssub{font-size:12px;color:var(--muted);margin-bottom:15px}
+.oc-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:14px}
+.oc{border:1.5px solid var(--line);border-radius:12px;padding:11px;font-family:inherit;font-size:12.5px;font-weight:600;
+  cursor:pointer;background:#fff;text-align:left;display:flex;align-items:center;gap:8px;color:var(--ink)}
+.oc .od{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.oc.sel{border-color:var(--gold);background:var(--gold-soft)}
+.sheet textarea{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:11px;font-family:inherit;font-size:13px;resize:none;outline:none;margin-bottom:13px}
+.sheet textarea:focus{border-color:var(--gold)}
+
+.toast{position:absolute;left:50%;bottom:90px;transform:translateX(-50%) translateY(20px);background:#20242b;color:#fff;
+  padding:11px 20px;border-radius:30px;font-size:12.5px;font-weight:500;opacity:0;pointer-events:none;transition:.25s;z-index:60;
+  white-space:nowrap;max-width:90%;text-align:center}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.empty{text-align:center;color:var(--faint);font-size:13px;padding:30px 10px}
+svg{display:block}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>5:48</span><span class="icons">5G ▪▪▪▫ <span class="bat"></span></span></div>
+
+  <!-- top app bar (changes per screen) -->
+  <div class="appbar" id="appbar">
+    <span class="ic" id="abBack" style="display:none" onclick="back()">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></span>
+    <div class="ttl"><h1 id="abTitle">Dashboard</h1><div class="sub" id="abSub">Thursday · 25 Jun 2026</div></div>
+    <span class="ic" id="abAction" onclick="reloadView()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></span>
+  </div>
+
+  <div class="stage-wrap">
+    <!-- HOME -->
+    <div class="screen active" id="s-home"><div class="scroll" id="homeScroll"></div></div>
+    <!-- CUSTOMERS -->
+    <div class="screen" id="s-cust"><div class="scroll" id="custScroll"></div></div>
+    <!-- PIPELINE -->
+    <div class="screen" id="s-pipe"><div class="scroll" id="pipeScroll"></div></div>
+    <!-- ANALYTICS -->
+    <div class="screen" id="s-ana"><div class="scroll" id="anaScroll"></div></div>
+    <!-- PROFILE -->
+    <div class="screen" id="s-prof">
+      <div class="scroll noNav" id="profScroll"></div>
+      <div class="pfoot">
+        <button class="fbtn ghost" onclick="toast('Opening WhatsApp…')">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2Zm5.78 14.06c-.24.68-1.42 1.31-1.95 1.36-.5.05-1.13.22-3.66-.77-3.08-1.21-5.06-4.32-5.21-4.52-.15-.2-1.24-1.65-1.24-3.15s.79-2.24 1.07-2.55c.28-.31.61-.38.81-.38.2 0 .41 0 .58.01.19.01.44-.07.69.53.24.6.83 2.07.9 2.22.07.15.12.33.02.53-.1.2-.15.33-.3.5-.15.18-.31.39-.45.53-.15.15-.3.31-.13.61.17.3.77 1.27 1.65 2.06 1.14 1.01 2.1 1.33 2.39 1.48.3.15.47.13.64-.08.17-.2.74-.86.94-1.16.2-.3.39-.25.66-.15.27.1 1.71.81 2 .96.3.15.5.22.57.34.07.13.07.7-.17 1.38Z"/></svg></button>
+        <button class="fbtn primary" onclick="openSheet('outcome')">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z"/></svg>
+          Log Call Outcome</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- sheets -->
+  <div class="sheet-ov" id="ov" onclick="closeSheet()"></div>
+  <div class="sheet" id="sheet"><div class="grab"></div><div id="sheetBody"></div></div>
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+/* ============ CONFIG ============ */
+const STAGES=[
+  {k:'awareness', n:'Awareness', c:'blue',   bg:'var(--blue-bg)',   col:'var(--blue)'},
+  {k:'potential', n:'Potential', c:'amber',  bg:'var(--amber-bg)',  col:'var(--amber)'},
+  {k:'conversion',n:'Conversion',c:'green',  bg:'var(--green-bg)',  col:'var(--green)'},
+  {k:'repeat',    n:'Repeat',    c:'purple', bg:'var(--purple-bg)', col:'var(--purple)'},
+  {k:'reactivation',n:'Reactivation',c:'red',bg:'var(--red-bg)',    col:'var(--red)'}
+];
+const stIdx=k=>STAGES.findIndex(s=>s.k===k);
+const stOf=k=>STAGES[stIdx(k)];
+const AVCOL=['#d2ab5b','#3b6fd4','#2f9e57','#7c5cd6','#d98a2b','#c0584c'];
+const money=n=>'₹'+(n||0).toLocaleString('en-IN');
+
+/* ============ DATA ============ */
+let customers=[
+  {id:1,code:'00026040107',name:'R. Subbu',co:'Hyderabad Central Store 1',phone:'9848100101',
+   email:'subbu.central@gmail.com',city:'Abids, Hyderabad',gst:'—',addr:'Station Road, Abids, 500001',
+   stage:'awareness',score:34,temp:'cold',priority:'Low',source:'Web Enquiry',assigned:'Naresh Kumar',
+   status:'Active',type:'Retailer',interested:'General FMCG',lastContact:'2026-06-18',next:'2026-06-25',expClose:'2026-07-20',
+   calls:{total:2,answered:0,missed:1,busy:0,off:1,wrong:0,incoming:0,outgoing:2,lastDur:'—',lastAt:'18 Jun · 11:10 AM',avgDur:'0m 00s'},
+   revenue:0,orders:[],
+   log:[{date:'18 June 2026',today:false,items:[{o:'No Answer',t:'11:10 AM',a:1},{o:'Switched Off',t:'4:20 PM',a:2}]}],
+   notes:[{who:'Naresh Kumar',when:'18 Jun · 11:12 AM',bd:'New web enquiry. Not reachable yet. Try again after 6 PM.',tags:['New lead']}],
+   timeline:[{ic:'🆕',c:'blue',t:'Lead created',d:'Source: Web Enquiry',tm:'18 Jun · 10:40 AM'}],
+   followups:{next:{when:'25 Jun 2026 · 6:30 PM',prio:'Low',rem:'30 min before',purpose:'First connect — introduce company',miss:false}}},
+
+  {id:2,code:'00026040101',name:'N. Pratap',co:'Seven Stars Kirana',phone:'9848818013',
+   email:'pratap.sevenstars@gmail.com',city:'Erragadda, Hyderabad',gst:'36ABCDE1234F1Z5',addr:'Gokul Theatre Lane, Erragadda, 500018',
+   stage:'potential',score:72,temp:'warm',priority:'High',source:'Field Beat',assigned:'Naresh Kumar',
+   status:'Active',type:'Retailer',interested:'Monthly Restocking',lastContact:'2026-06-24',next:'2026-06-25',expClose:'2026-07-05',
+   calls:{total:14,answered:6,missed:5,busy:2,off:0,wrong:0,incoming:3,outgoing:11,lastDur:'4m 20s',lastAt:'24 Jun · 4:32 PM',avgDur:'3m 05s'},
+   revenue:0,orders:[],
+   log:[{date:'24 June 2026',today:true,items:[{o:'Answered',t:'4:32 PM',a:3,dur:'4m 20s'},{o:'Busy',t:'12:40 PM',a:2},{o:'No Answer',t:'10:05 AM',a:1}]},
+        {date:'22 June 2026',today:false,items:[{o:'Answered',t:'5:10 PM',a:2,dur:'2m 10s'},{o:'Call Back Later',t:'11:20 AM',a:1}]}],
+   notes:[{who:'Naresh Kumar',when:'24 Jun · 4:36 PM',bd:'Interested in monthly restocking offer. Wants 15-day credit. Budget ~₹40k/month. Send proposal.',tags:['Budget ₹40k/mo','Credit 15d','Proposal next']},
+          {who:'Naresh Kumar',when:'22 Jun · 5:14 PM',bd:'Wants catalogue on WhatsApp. Prefers calls after 4 PM.',tags:['Catalogue sent','After 4 PM']}],
+   timeline:[{ic:'📝',c:'slate',t:'Note added',d:'Budget ₹40k/mo, wants 15-day credit',tm:'24 Jun · 4:36 PM'},
+             {ic:'📞',c:'green',t:'Call answered · 4m 20s',d:'Discussed restocking offer',tm:'24 Jun · 4:32 PM'},
+             {ic:'📄',c:'blue',t:'Catalogue sent',d:'Product PDF via WhatsApp',tm:'22 Jun · 5:20 PM'},
+             {ic:'📞',c:'green',t:'Call answered · 2m 10s',d:'Lead qualified',tm:'22 Jun · 5:10 PM'}],
+   followups:{next:{when:'25 Jun 2026 · 4:30 PM',prio:'High',rem:'30 min before',purpose:'Share proposal & confirm 15-day credit terms',miss:false}}},
+
+  {id:3,code:'00026040100',name:'S. Karthik',co:'Heritage General Mart',phone:'9848818012',
+   email:'karthik.heritage@gmail.com',city:'Sanath Nagar, Hyderabad',gst:'36HGMRT5678K1Z2',addr:'Allwyn Colony Road, Sanath Nagar, 500018',
+   stage:'potential',score:81,temp:'hot',priority:'High',source:'Referral',assigned:'Naresh Kumar',
+   status:'Active',type:'Distributor',interested:'Bulk Staples',lastContact:'2026-06-24',next:'2026-06-25',expClose:'2026-06-30',
+   calls:{total:9,answered:5,missed:2,busy:1,off:0,wrong:0,incoming:2,outgoing:7,lastDur:'6m 50s',lastAt:'24 Jun · 1:15 PM',avgDur:'4m 40s'},
+   revenue:0,orders:[],
+   log:[{date:'24 June 2026',today:true,items:[{o:'Answered',t:'1:15 PM',a:1,dur:'6m 50s'}]}],
+   notes:[{who:'Naresh Kumar',when:'24 Jun · 1:22 PM',bd:'Ready to order this week. Wants demo of distributor pricing slab. Decision maker confirmed.',tags:['Hot','Demo wanted','Decision maker']}],
+   timeline:[{ic:'📞',c:'green',t:'Call answered · 6m 50s',d:'Ready to order, wants pricing demo',tm:'24 Jun · 1:15 PM'},
+             {ic:'🆕',c:'blue',t:'Lead created',d:'Referral by Metro Kirana Mart',tm:'19 Jun · 10:00 AM'}],
+   followups:{next:{when:'25 Jun 2026 · 11:00 AM',prio:'High',rem:'1 hour before',purpose:'Run distributor pricing demo, push for first order',miss:false}}},
+
+  {id:4,code:'00026040088',name:'Naresh Kumar',co:'Sri Shiva Kirana',phone:'8897193459',
+   email:'srishiva.kirana@gmail.com',city:'Netaji Nagar, Erragadda',gst:'36SSKRN9012N1Z8',addr:'Netaji Nagar, Erragadda, Hyderabad, 500018',
+   stage:'conversion',score:88,temp:'hot',priority:'Medium',source:'Field Beat',assigned:'Naresh Kumar',
+   status:'Active',type:'Retailer',interested:'Monthly Restocking',lastContact:'2026-06-23',next:'2026-06-27',expClose:'—',
+   calls:{total:11,answered:7,missed:2,busy:1,off:0,wrong:0,incoming:4,outgoing:7,lastDur:'5m 05s',lastAt:'23 Jun · 3:00 PM',avgDur:'4m 12s'},
+   revenue:18400,
+   orders:[{inv:'INV-20614',date:'23 Jun 2026',items:'Staples + oils · 14 SKUs',amt:18400,status:'Confirmed',pay:'Paid',del:'Processing'}],
+   notes:[{who:'Naresh Kumar',when:'23 Jun · 3:08 PM',bd:'First order placed & paid. Happy with pricing. Set monthly reorder reminder.',tags:['First order','Paid','Reorder monthly']}],
+   timeline:[{ic:'🛒',c:'green',t:'First order · '+money(18400),d:'INV-20614 confirmed & paid',tm:'23 Jun · 3:05 PM'},
+             {ic:'📞',c:'green',t:'Call answered · 5m 05s',d:'Closed the order',tm:'23 Jun · 3:00 PM'}],
+   followups:{next:{when:'27 Jun 2026 · 5:00 PM',prio:'Medium',rem:'1 day before',purpose:'Confirm delivery, set up monthly reorder',miss:false}}},
+
+  {id:5,code:'00026040006',name:'A. Rahman',co:'Metro Kirana Mart',phone:'9848101006',
+   email:'metro.kirana@gmail.com',city:'Abids, Hyderabad',gst:'36MKMRT3456R1Z1',addr:'Main Bazaar, Abids, 500001',
+   stage:'repeat',score:94,temp:'hot',priority:'High',source:'Referral',assigned:'Naresh Kumar',
+   status:'Active',type:'Distributor',interested:'Bulk Staples',lastContact:'2026-06-20',next:'2026-06-28',expClose:'—',
+   calls:{total:23,answered:18,missed:3,busy:1,off:0,wrong:0,incoming:9,outgoing:14,lastDur:'3m 40s',lastAt:'20 Jun · 6:10 PM',avgDur:'3m 50s'},
+   revenue:142500,
+   orders:[{inv:'INV-20410',date:'02 Jun 2026',items:'Bulk rice + atta',amt:64000,status:'Delivered',pay:'Paid',del:'Delivered'},
+           {inv:'INV-20512',date:'14 Jun 2026',items:'Oils + pulses',amt:48500,status:'Delivered',pay:'Paid',del:'Delivered'},
+           {inv:'INV-20598',date:'20 Jun 2026',items:'Staples top-up',amt:30000,status:'Shipped',pay:'Paid',del:'Shipped'}],
+   notes:[{who:'Naresh Kumar',when:'20 Jun · 6:14 PM',bd:'Loyal monthly buyer, 3 orders this month. Offer loyalty slab on next order.',tags:['Loyal','3 orders/mo','Loyalty slab']}],
+   timeline:[{ic:'🛒',c:'green',t:'Order · '+money(30000),d:'INV-20598 shipped',tm:'20 Jun · 5:50 PM'},
+             {ic:'🛒',c:'green',t:'Order · '+money(48500),d:'INV-20512 delivered',tm:'14 Jun · 2:00 PM'},
+             {ic:'🛒',c:'green',t:'Order · '+money(64000),d:'INV-20410 delivered',tm:'02 Jun · 11:30 AM'}],
+   followups:{next:{when:'28 Jun 2026 · 4:00 PM',prio:'High',rem:'1 day before',purpose:'Pitch loyalty pricing slab for July reorder',miss:false}}},
+
+  {id:6,code:'00026040015',name:'P. Lakshmi',co:'Elite Kirana Store',phone:'9848101015',
+   email:'elite.kirana@gmail.com',city:'Abids, Hyderabad',gst:'36EKSTR7890L1Z6',addr:'Gunfoundry, Abids, 500001',
+   stage:'reactivation',score:48,temp:'cold',priority:'Medium',source:'Field Beat',assigned:'Naresh Kumar',
+   status:'Inactive',type:'Retailer',interested:'Monthly Restocking',lastContact:'2026-04-10',next:'2026-06-25',expClose:'—',
+   calls:{total:16,answered:9,missed:5,busy:1,off:1,wrong:0,incoming:3,outgoing:13,lastDur:'1m 20s',lastAt:'10 Apr · 2:00 PM',avgDur:'2m 40s'},
+   revenue:52000,
+   orders:[{inv:'INV-19120',date:'08 Feb 2026',items:'Staples',amt:28000,status:'Delivered',pay:'Paid',del:'Delivered'},
+           {inv:'INV-19340',date:'12 Mar 2026',items:'Oils + sugar',amt:24000,status:'Delivered',pay:'Paid',del:'Delivered'}],
+   notes:[{who:'Naresh Kumar',when:'10 Apr · 2:05 PM',bd:'Stopped ordering after March. Said a competitor offered lower rate. Re-engage with win-back offer.',tags:['Churn risk','Price objection','Win-back']}],
+   timeline:[{ic:'⚠️',c:'red',t:'Marked dormant',d:'No order in 75+ days',tm:'10 Apr · 2:10 PM'},
+             {ic:'🛒',c:'green',t:'Last order · '+money(24000),d:'INV-19340 delivered',tm:'12 Mar · 1:00 PM'}],
+   followups:{next:{when:'25 Jun 2026 · 5:30 PM',prio:'Medium',rem:'30 min before',purpose:'Win-back call — present loyalty discount',miss:true}}},
+];
+
+const TODAY='2026-06-25';
+const telecaller={name:'Naresh Kumar',init:'NK'};
+
+/* ============ STATE ============ */
+let current='home', lastMain='home', curId=null, profTab='overview', selOutcome=null;
+
+/* ============ HELPERS ============ */
+const esc=s=>(''+s).replace(/[<>&]/g,m=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[m]));
+const initOf=n=>n.split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase();
+const avCol=id=>AVCOL[id%AVCOL.length];
+const isToday=d=>d===TODAY, overdue=d=>d<TODAY;
+function stagePill(k){const s=stOf(k);return `<span class="pill b-${s.c}"><span class="d" style="background:${s.col}"></span>${s.n}</span>`;}
+function tempBadge(t){const m={hot:['b-red','Hot'],warm:['b-amber','Warm'],cold:['b-slate','Cold']}[t];return `<span class="pill ${m[0]}">${m[1]}</span>`;}
+function convProb(score){return Math.min(96,Math.round(score*0.95))+'%';}
+const cust=id=>customers.find(c=>c.id===id);
+
+/* ============ NAV ============ */
+function go(nav){
+  current=nav; lastMain=nav;
+  ['home','cust','pipe','ana'].forEach(n=>document.getElementById('s-'+n).classList.remove('active','under'));
+  document.getElementById('s-prof').classList.remove('active');
+  document.getElementById('s-'+nav).classList.add('active');
+  const _nb=document.getElementById('navbar'); if(_nb)_nb.style.display='flex';
+  document.querySelectorAll('.nav').forEach(b=>b.classList.toggle('active',b.dataset.nav===nav));
+  document.getElementById('abBack').style.display='none';
+  document.getElementById('abAction').style.display='flex';
+  const titles={home:['Dashboard','Thursday · 25 Jun 2026'],cust:['Customers',customers.length+' total'],
+    pipe:['Pipeline','Sales lifecycle'],ana:['Analytics','Leads & performance']};
+  document.getElementById('abTitle').textContent=titles[nav][0];
+  document.getElementById('abSub').textContent=titles[nav][1];
+  if(nav==='home')renderHome(); if(nav==='cust')renderCust(); if(nav==='pipe')renderPipe(); if(nav==='ana')renderAna();
+  document.querySelector('#s-'+nav+' .scroll').scrollTop=0;
+}
+function openProfile(id){
+  curId=id; profTab='overview'; current='prof';
+  document.getElementById('s-'+lastMain).classList.add('under');
+  document.getElementById('s-prof').classList.add('active');
+  const _nb2=document.getElementById('navbar'); if(_nb2)_nb2.style.display='none';
+  document.getElementById('abBack').style.display='flex';
+  document.getElementById('abAction').style.display='none';
+  const c=cust(id);
+  document.getElementById('abTitle').textContent=c.name;
+  document.getElementById('abSub').textContent=c.co;
+  renderProfile();
+  document.getElementById('profScroll').scrollTop=0;
+}
+function back(){
+  document.getElementById('s-prof').classList.remove('active');
+  document.getElementById('s-'+lastMain).classList.remove('under');
+  go(lastMain);
+}
+function reloadView(){toast('Refreshed');if(current==='home')renderHome();}
+
+/* ============ HOME ============ */
+function renderHome(){
+  const due=customers.filter(c=>isToday(c.next)||overdue(c.next));
+  const callsToday=customers.reduce((a,c)=>a+c.log.filter(d=>d.today).reduce((x,d)=>x+d.items.length,0),0);
+  const ordersToday=customers.reduce((a,c)=>a+c.orders.filter(o=>o.date.includes('25 Jun')||o.date.includes('24 Jun')).length,0);
+  const revMonth=customers.reduce((a,c)=>a+c.revenue,0);
+  const converted=customers.filter(c=>['conversion','repeat'].includes(c.stage)).length;
+  const convRate=Math.round(converted/customers.length*100);
+  const hot=customers.filter(c=>c.temp==='hot');
+
+  document.getElementById('homeScroll').innerHTML=`
+    <div class="hero-stats">
+      <div class="hs"><span class="ic b-green"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2A19.8 19.8 0 0 1 3.08 4.18 2 2 0 0 1 5 2h3a2 2 0 0 1 2 1.72 12.8 12.8 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.8 12.8 0 0 0 2.81.7A2 2 0 0 1 22 16.92Z"/></svg></span>
+        <div class="n">${callsToday}</div><div class="t">Calls made today</div></div>
+      <div class="hs"><span class="ic b-amber"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+        <div class="n">${due.length}</div><div class="t">Follow-ups due</div></div>
+      <div class="hs"><span class="ic b-blue"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg></span>
+        <div class="n">${ordersToday}</div><div class="t">Orders this period</div></div>
+      <div class="hs"><span class="ic b-purple"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg></span>
+        <div class="n">${convRate}%</div><div class="t">Conversion rate</div></div>
+    </div>
+
+    <div class="card">
+      <div class="sec-head"><h2>Revenue this month</h2><span class="meta">June 2026</span></div>
+      <div style="font-family:'Outfit';font-size:30px;font-weight:600;color:var(--gold-deep)">${money(revMonth)}</div>
+      <div class="perf" style="margin-top:14px">
+        <div class="pbox"><b>${customers.length}</b><span>Assigned</span></div>
+        <div class="pbox"><b>${converted}</b><span>Converted</span></div>
+        <div class="pbox"><b>3m 42s</b><span>Avg talk</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="sec-head"><h2>Follow-ups due today</h2><a onclick="go('cust');setFilter('followup')">View all</a></div>
+      ${due.length?due.map(c=>{const od=overdue(c.next);return `
+        <div class="fu-row" onclick="openProfile(${c.id})">
+          <div class="fu-av" style="background:${avCol(c.id)}">${initOf(c.name)}</div>
+          <div class="fu-info"><div class="nm">${esc(c.name)} ${stagePill(c.stage)}</div>
+            <div class="sb">${esc(c.co)} · ${esc(c.followups.next.purpose).slice(0,38)}…</div></div>
+          <div class="fu-time" style="color:${od?'var(--red)':'var(--gold-deep)'}">${od?'Overdue':'Today'}<br><span style="color:var(--faint);font-weight:500">${c.followups.next.when.split('· ')[1]}</span></div>
+        </div>`}).join(''):'<div class="empty">No follow-ups due. Nice work.</div>'}
+    </div>
+
+    <div class="card">
+      <div class="sec-head"><h2>Hot leads</h2><a onclick="go('ana')">Segments</a></div>
+      ${hot.map(c=>`
+        <div class="fu-row" onclick="openProfile(${c.id})">
+          <div class="fu-av" style="background:${avCol(c.id)}">${initOf(c.name)}</div>
+          <div class="fu-info"><div class="nm">${esc(c.name)}</div><div class="sb">${esc(c.co)} · score ${c.score}</div></div>
+          ${tempBadge(c.temp)}
+        </div>`).join('')}
+    </div>`;
+}
+
+/* ============ CUSTOMERS ============ */
+let custFilter='all', custSearch='';
+const FILTERS=[['all','All'],['followup','Follow-up due'],['hot','Hot'],['highvalue','High-value'],['repeat','Repeat'],['dormant','Dormant'],
+  ['awareness','Awareness'],['potential','Potential'],['conversion','Conversion']];
+function setFilter(f){custFilter=f;renderCust();}
+function filterCust(){
+  let list=customers.slice();
+  if(custSearch){const q=custSearch.toLowerCase();list=list.filter(c=>(c.name+c.co+c.city).toLowerCase().includes(q));}
+  const f=custFilter;
+  if(f==='followup')list=list.filter(c=>isToday(c.next)||overdue(c.next));
+  else if(f==='hot')list=list.filter(c=>c.temp==='hot');
+  else if(f==='highvalue')list=list.filter(c=>c.revenue>=50000);
+  else if(f==='repeat')list=list.filter(c=>c.stage==='repeat');
+  else if(f==='dormant')list=list.filter(c=>c.stage==='reactivation'||c.status==='Inactive');
+  else if(['awareness','potential','conversion'].includes(f))list=list.filter(c=>c.stage===f);
+  return list;
+}
+function renderCust(){
+  const list=filterCust();
+  document.getElementById('custScroll').innerHTML=`
+    <div class="search">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="custSearchIn" placeholder="Search name, company, city…" value="${esc(custSearch)}" oninput="custSearch=this.value;renderCustList()">
+    </div>
+    <div class="chips">${FILTERS.map(([k,n])=>`<button class="chip ${custFilter===k?'active':''}" onclick="setFilter('${k}')">${n}</button>`).join('')}</div>
+    <div id="custList"></div>`;
+  renderCustList();
+  const inp=document.getElementById('custSearchIn'); if(inp&&custSearch){inp.focus();inp.setSelectionRange(custSearch.length,custSearch.length);}
+}
+function renderCustList(){
+  const list=filterCust();
+  document.getElementById('custList').innerHTML= list.length? list.map(c=>{
+    const s=stOf(c.stage);
+    return `<div class="cust" style="border-left-color:${s.col}" onclick="openProfile(${c.id})">
+      <div class="cust-h">
+        <div class="av" style="background:${avCol(c.id)}">${initOf(c.name)}</div>
+        <div style="flex:1;min-width:0"><div class="cust-nm">${esc(c.name)}</div><div class="cust-co">${esc(c.co)} · ${esc(c.city)}</div>
+          <div class="cust-meta">${stagePill(c.stage)}${tempBadge(c.temp)}<span class="pill ${c.priority==='High'?'b-red':c.priority==='Medium'?'b-amber':'b-slate'}">${c.priority}</span></div></div>
+        <div class="score-ring">${ring(c.score,s.col)}<span>${c.score}</span></div>
+      </div>
+      <div class="cust-foot">
+        <div class="cf">Last contact<b>${fmtDate(c.lastContact)}</b></div>
+        <div class="cf">Next follow-up<b style="color:${overdue(c.next)?'var(--red)':'inherit'}">${fmtDate(c.next)}</b></div>
+        <div class="cf" style="text-align:right">Revenue<b>${money(c.revenue)}</b></div>
+      </div></div>`;
+  }).join('') : '<div class="empty">No customers match this filter.</div>';
+}
+function ring(score,col){const r=15,c=2*Math.PI*r,off=c-(score/100)*c;
+  return `<svg width="38" height="38" viewBox="0 0 38 38"><circle cx="19" cy="19" r="${r}" fill="none" stroke="var(--line)" stroke-width="3.5"/>
+    <circle cx="19" cy="19" r="${r}" fill="none" stroke="${col}" stroke-width="3.5" stroke-linecap="round"
+    stroke-dasharray="${c}" stroke-dashoffset="${off}" transform="rotate(-90 19 19)"/></svg>`;}
+function fmtDate(d){if(!d||d==='—')return '—';const m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const p=d.split('-');return p[2]+' '+m[+p[1]-1];}
+
+/* ============ PIPELINE ============ */
+let pipeStage='potential';
+function renderPipe(){
+  const counts={};STAGES.forEach(s=>counts[s.k]=customers.filter(c=>c.stage===s.k).length);
+  const list=customers.filter(c=>c.stage===pipeStage);
+  const s=stOf(pipeStage);
+  document.getElementById('pipeScroll').innerHTML=`
+    <div class="stage-tabs">${STAGES.map(st=>`
+      <div class="stab ${pipeStage===st.k?'active':''}" style="${pipeStage===st.k?`background:${st.col};border-color:${st.col}`:''}" onclick="pipeStage='${st.k}';renderPipe()">
+        <div class="sn" style="${pipeStage===st.k?'color:#fff':''}">${st.n}</div><div class="sc">${counts[st.k]}</div></div>`).join('')}</div>
+    <div class="card" style="background:${s.bg};box-shadow:none">
+      <div style="display:flex;align-items:center;gap:9px"><span class="pill b-${s.c}" style="background:#fff"><span class="d" style="background:${s.col}"></span>${s.n} stage</span>
+      <span style="font-size:11.5px;color:${s.col};font-weight:600">${list.length} customer${list.length!==1?'s':''}</span></div>
+      <div style="font-size:11.5px;color:var(--slate);margin-top:8px;line-height:1.45">${stageDesc(pipeStage)}</div>
+    </div>
+    ${list.length?list.map(c=>`
+      <div class="cust" style="border-left-color:${s.col}" onclick="openProfile(${c.id})">
+        <div class="cust-h"><div class="av" style="background:${avCol(c.id)}">${initOf(c.name)}</div>
+          <div style="flex:1;min-width:0"><div class="cust-nm">${esc(c.name)}</div><div class="cust-co">${esc(c.co)}</div>
+            <div class="cust-meta">${tempBadge(c.temp)}<span class="pill b-slate">${c.calls.total} calls</span>${c.revenue?`<span class="pill b-green">${money(c.revenue)}</span>`:''}</div></div>
+          <div class="score-ring">${ring(c.score,s.col)}<span>${c.score}</span></div></div></div>`).join('')
+      :'<div class="empty">No customers in this stage.</div>'}`;
+}
+function stageDesc(k){return{awareness:'New leads getting to know the company. First contact, no buying decision yet.',
+  potential:'Interested leads. Requirements collected, quotation shared, follow-up in progress.',
+  conversion:'First order placed and payment initiated. Now a paying customer.',
+  repeat:'Multiple orders placed. Regular, high-value buyers — track loyalty.',
+  reactivation:'Stopped purchasing. Re-engage with win-back offers to regain business.'}[k];}
+
+/* ============ ANALYTICS ============ */
+function renderAna(){
+  const seg=(test)=>customers.filter(test).length;
+  const hot=seg(c=>c.temp==='hot'),warm=seg(c=>c.temp==='warm'),cold=seg(c=>c.temp==='cold');
+  const hv=seg(c=>c.revenue>=50000),freq=seg(c=>c.orders.length>=2),
+    convLikely=seg(c=>c.score>=70&&['potential','awareness'].includes(c.stage)),
+    risk=seg(c=>c.stage==='reactivation'||c.status==='Inactive'),dormant=seg(c=>c.stage==='reactivation');
+  const totRev=customers.reduce((a,c)=>a+c.revenue,0);
+  const totOrders=customers.reduce((a,c)=>a+c.orders.length,0);
+  document.getElementById('anaScroll').innerHTML=`
+    <div class="card">
+      <div class="sec-head"><h2>My performance</h2><span class="meta">June 2026</span></div>
+      <div class="perf"><div class="pbox"><b>${customers.length}</b><span>Assigned</span></div>
+        <div class="pbox"><b>${seg(c=>['conversion','repeat'].includes(c.stage))}</b><span>Converted</span></div>
+        <div class="pbox"><b>${totOrders}</b><span>Orders</span></div></div>
+      <div class="divider"></div>
+      <div class="perf"><div class="pbox"><b>${money(totRev)}</b><span>Revenue</span></div>
+        <div class="pbox"><b>${Math.round(seg(c=>['conversion','repeat'].includes(c.stage))/customers.length*100)}%</b><span>Conv. rate</span></div>
+        <div class="pbox"><b>3m 42s</b><span>Avg talk</span></div></div>
+    </div>
+    <div class="card">
+      <div class="sec-head"><h2>Lead temperature</h2></div>
+      <div class="seg" onclick="go('cust');setFilter('hot')"><div class="si b-red">🔥</div><div class="sb"><div class="st">Hot leads</div><div class="sd">High intent, ready to close</div></div><div class="sn" style="color:var(--red)">${hot}</div></div>
+      <div class="seg"><div class="si b-amber">🌤️</div><div class="sb"><div class="st">Warm leads</div><div class="sd">Engaged, nurturing in progress</div></div><div class="sn" style="color:var(--amber)">${warm}</div></div>
+      <div class="seg"><div class="si b-slate">❄️</div><div class="sb"><div class="st">Cold leads</div><div class="sd">Low engagement, needs activation</div></div><div class="sn" style="color:var(--slate)">${cold}</div></div>
+    </div>
+    <div class="card">
+      <div class="sec-head"><h2>Smart segments</h2></div>
+      <div class="seg" onclick="go('cust');setFilter('highvalue')"><div class="si b-green">💎</div><div class="sb"><div class="st">High-value customers</div><div class="sd">₹50k+ lifetime revenue</div></div><div class="sn" style="color:var(--green)">${hv}</div></div>
+      <div class="seg" onclick="go('cust');setFilter('repeat')"><div class="si b-purple">🔁</div><div class="sb"><div class="st">Frequent buyers</div><div class="sd">2+ orders placed</div></div><div class="sn" style="color:var(--purple)">${freq}</div></div>
+      <div class="seg"><div class="si b-blue">🎯</div><div class="sb"><div class="st">Likely to convert</div><div class="sd">Score 70+, still in pipeline</div></div><div class="sn" style="color:var(--blue)">${convLikely}</div></div>
+      <div class="seg" onclick="go('cust');setFilter('dormant')"><div class="si b-red">⚠️</div><div class="sb"><div class="st">At risk / churning</div><div class="sd">Inactive or reactivation stage</div></div><div class="sn" style="color:var(--red)">${risk}</div></div>
+    </div>`;
+}
+
+/* ============ PROFILE ============ */
+function renderProfile(){
+  const c=cust(curId), s=stOf(c.stage), idx=stIdx(c.stage);
+  const qa=(ic,lbl,cls,fn)=>`<button class="qa" onclick="${fn}"><span class="qi ${cls}">${ic}</span><span class="ql">${lbl}</span></button>`;
+  const I={call:'<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2A19.8 19.8 0 0 1 3.08 4.18 2 2 0 0 1 5 2h3a2 2 0 0 1 2 1.72 12.8 12.8 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.8 12.8 0 0 0 2.81.7A2 2 0 0 1 22 16.92Z"/></svg>',
+    wa:'<svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22c5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2Z"/></svg>',
+    mail:'<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>',
+    order:'<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg>',
+    fup:'<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+    note:'<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>'};
+
+  document.getElementById('profScroll').innerHTML=`
+    <div class="card">
+      <div class="psum">
+        <div class="av" style="background:${avCol(c.id)}">${initOf(c.name)}</div>
+        <div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--faint);font-weight:600;letter-spacing:.4px">#${c.code}</div>
+          <div class="nm">${esc(c.name)}</div><div class="co">${esc(c.co)}</div></div>
+        <div class="right">${stagePill(c.stage)}${tempBadge(c.temp)}</div>
+      </div>
+      <div class="qa-row">
+        ${qa(I.call,'Call','b-green'.replace('b-','')+'','toast(\'Calling '+esc(c.name)+'…\')').replace('class="qi ','class="qi call ')}
+        ${qa(I.wa,'WhatsApp','','toast(\'Opening WhatsApp…\')').replace('class="qi ','class="qi wa ')}
+        ${qa(I.mail,'Email','','toast(\'Composing email…\')').replace('class="qi ','class="qi mail ')}
+        ${qa(I.order,'Order','','openSheet(\'order\')').replace('class="qi ','class="qi order ')}
+        ${qa(I.fup,'Follow-up','','profGo(\'followup\')').replace('class="qi ','class="qi fup ')}
+        ${qa(I.note,'Note','','profGo(\'activity\')').replace('class="qi ','class="qi note ')}
+      </div>
+    </div>
+
+    <div class="ptabs">
+      <button class="ptab ${profTab==='overview'?'active':''}" onclick="profGo('overview')">Overview</button>
+      <button class="ptab ${profTab==='activity'?'active':''}" onclick="profGo('activity')">Activity</button>
+      <button class="ptab ${profTab==='orders'?'active':''}" onclick="profGo('orders')">Orders</button>
+      <button class="ptab ${profTab==='followup'?'active':''}" onclick="profGo('followup')">Follow-up</button>
+    </div>
+    <div id="profPane"></div>`;
+
+  // styled quick icons (fix class injection)
+  document.querySelectorAll('#profScroll .qa .qi').forEach((el,i)=>{
+    const map=['call','wa','mail','order','fup','note'];
+    const styles={call:['var(--green-bg)','var(--green)'],wa:['var(--green-bg)','var(--green)'],mail:['var(--blue-bg)','var(--blue)'],
+      order:['var(--gold-soft)','#a07d2f'],fup:['var(--gold-soft)','#a07d2f'],note:['var(--slate-bg)','var(--slate)']};
+    const k=map[i];if(styles[k]){el.style.background=styles[k][0];el.style.color=styles[k][1];}
+  });
+  renderProfPane();
+}
+function profGo(t){profTab=t;document.querySelectorAll('#profScroll .ptab').forEach(b=>b.classList.remove('active'));
+  const map={overview:0,activity:1,orders:2,followup:3};
+  document.querySelectorAll('#profScroll .ptab')[map[t]].classList.add('active');renderProfPane();}
+
+function renderProfPane(){
+  const c=cust(curId), pane=document.getElementById('profPane');
+  if(profTab==='overview'){
+    pane.innerHTML=`
+      <div class="card"><div class="sec-head"><h2>Basic information</h2></div>
+        <div class="info-grid">
+          <div class="full"><div class="il">Phone</div><div class="iv"><a href="tel:${c.phone}">+91 ${c.phone}</a></div></div>
+          <div class="full"><div class="il">Email</div><div class="iv"><a href="mailto:${c.email}">${esc(c.email)}</a></div></div>
+          <div><div class="il">Company</div><div class="iv">${esc(c.co)}</div></div>
+          <div><div class="il">Type</div><div class="iv">${esc(c.type)}</div></div>
+          <div class="full"><div class="il">Address</div><div class="iv">${esc(c.addr)}</div></div>
+          <div><div class="il">City</div><div class="iv">${esc(c.city)}</div></div>
+          <div><div class="il">GST</div><div class="iv">${esc(c.gst)}</div></div>
+        </div></div>
+      <div class="card"><div class="sec-head"><h2>Sales information</h2></div>
+        <div class="info-grid">
+          <div><div class="il">Lead source</div><div class="iv">${esc(c.source)}</div></div>
+          <div><div class="il">Assigned to</div><div class="iv">${esc(c.assigned)}</div></div>
+          <div><div class="il">Lead score</div><div class="iv">${c.score} / 100</div></div>
+          <div><div class="il">Priority</div><div class="iv">${c.priority}</div></div>
+          <div><div class="il">Interested in</div><div class="iv">${esc(c.interested)}</div></div>
+          <div><div class="il">Expected close</div><div class="iv">${c.expClose==='—'?'—':fmtDate(c.expClose)+' 2026'}</div></div>
+        </div></div>
+      <div class="card"><div class="sec-head"><h2>Performance indicators</h2></div>
+        <div class="kpi-grid">
+          <div class="kpi"><div class="kn" style="color:var(--green)">${convProb(c.score)}</div><div class="kt">Conv. probability</div></div>
+          <div class="kpi"><div class="kn">${money(c.revenue)}</div><div class="kt">Lifetime value</div></div>
+          <div class="kpi"><div class="kn">${c.orders.length}</div><div class="kt">Total orders</div></div>
+          <div class="kpi"><div class="kn">${c.orders.length?money(Math.round(c.revenue/c.orders.length)):'—'}</div><div class="kt">Avg order value</div></div>
+          <div class="kpi"><div class="kn">${c.calls.avgDur}</div><div class="kt">Avg call time</div></div>
+          <div class="kpi"><div class="kn">${c.orders.length>=2?'High':c.orders.length===1?'New':'—'}</div><div class="kt">Repeat rate</div></div>
+        </div></div>`;
+  }
+  else if(profTab==='activity'){
+    const ca=c.calls;
+    pane.innerHTML=`
+      <div class="card"><div class="sec-head"><h2>Call statistics</h2><span class="meta">${ca.total} attempts</span></div>
+        <div class="stat-grid">
+          <div class="stat"><div class="n">${ca.total}</div><div class="t">Attempts</div></div>
+          <div class="stat ok"><div class="n">${ca.answered}</div><div class="t">Answered</div></div>
+          <div class="stat miss"><div class="n">${ca.missed}</div><div class="t">Missed</div></div>
+          <div class="stat busy"><div class="n">${ca.busy}</div><div class="t">Busy</div></div>
+          <div class="stat"><div class="n">${ca.off}</div><div class="t">Switched Off</div></div>
+          <div class="stat"><div class="n">${ca.wrong}</div><div class="t">Wrong No.</div></div>
+          <div class="stat"><div class="n">${ca.incoming}</div><div class="t">Incoming</div></div>
+          <div class="stat"><div class="n">${ca.outgoing}</div><div class="t">Outgoing</div></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:12px;background:var(--gold-soft);border-radius:13px;padding:11px 14px">
+          <div style="font-size:11px">Last call<b style="display:block;font-family:'Outfit';font-size:13px;color:#7d6224;margin-top:2px">${ca.lastAt}</b></div>
+          <div style="font-size:11px;text-align:right">Duration<b style="display:block;font-family:'Outfit';font-size:13px;color:#7d6224;margin-top:2px">${ca.lastDur}</b></div>
+        </div>
+      </div>
+      <div class="card"><div class="sec-head"><h2>Call log</h2></div>
+        <div id="logBox">${renderLog(c)}</div></div>
+      <div class="card"><div class="sec-head"><h2>Conversation notes</h2><span class="meta">${c.notes.length} notes</span></div>
+        <div id="noteBox">${c.notes.map(noteHtml).join('')}</div>
+        <div class="addrow"><input id="noteIn" placeholder="Add a quick note…" onkeydown="if(event.key==='Enter')addNote()">
+          <button class="btn-sm" onclick="addNote()">Add</button></div></div>
+      <div class="card"><div class="sec-head"><h2>Activity timeline</h2></div>
+        <div class="tl" id="tlBox">${c.timeline.map(tlHtml).join('')}</div></div>`;
+  }
+  else if(profTab==='orders'){
+    const ords=c.orders;
+    pane.innerHTML=`
+      <div class="card"><div class="sec-head"><h2>Order summary</h2></div>
+        <div class="perf"><div class="pbox"><b>${ords.length}</b><span>Total orders</span></div>
+          <div class="pbox"><b>${money(c.revenue)}</b><span>Total value</span></div>
+          <div class="pbox"><b>${ords.length?money(Math.round(c.revenue/ords.length)):'—'}</b><span>Avg value</span></div></div>
+      </div>
+      <div class="card"><div class="sec-head"><h2>Order history</h2><a onclick="openSheet('order')">+ New order</a></div>
+        <div id="ordBox">${ords.length?ords.slice().reverse().map(orderHtml).join(''):'<div class="empty">No orders yet. Create the first one.</div>'}</div></div>
+      <button class="btn-full" onclick="openSheet('order')">Create Order</button>`;
+  }
+  else if(profTab==='followup'){
+    const f=c.followups.next;
+    pane.innerHTML=`
+      <div class="card"><div class="sec-head"><h2>${f.miss?'Missed follow-up':'Upcoming follow-up'}</h2></div>
+        <div class="fup-card ${f.miss?'miss':''}" id="fupCard">
+          <div class="fup-top"><span class="fup-when">${f.when}</span><span class="pill ${f.prio==='High'?'b-red':f.prio==='Medium'?'b-amber':'b-slate'}">${f.prio}</span></div>
+          <div class="fup-purpose">${esc(f.purpose)}</div>
+          <div class="fup-row"><span>🔔 <b>${f.rem}</b></span><span>📞 <b>Outgoing call</b></span></div>
+        </div></div>
+      <div class="card"><div class="sec-head"><h2>Schedule next</h2></div>
+        <div class="form-row"><div class="field"><label>Date</label><input type="date" id="fD" value="${TODAY}"></div>
+          <div class="field"><label>Time</label><input type="time" id="fT" value="16:30"></div></div>
+        <div class="form-row"><div class="field"><label>Priority</label><select id="fP"><option>High</option><option selected>Medium</option><option>Low</option></select></div>
+          <div class="field"><label>Reminder</label><select id="fR"><option>15 min before</option><option selected>30 min before</option><option>1 hour before</option><option>1 day before</option></select></div></div>
+        <div class="field" style="margin-bottom:13px"><label>Purpose</label><input id="fPur" placeholder="What's the next step?"></div>
+        <button class="btn-full" onclick="scheduleFup()">Schedule follow-up</button></div>`;
+  }
+}
+function renderLog(c){return c.log.map(d=>`
+  <div class="daygroup"><div class="dayhdr"><span class="date">${d.date}</span><span class="cnt">${d.today?'· Today ':'· '}${d.items.length} attempt${d.items.length!==1?'s':''}</span></div>
+    ${d.items.map(it=>{const m=outMap(it.o);return `<div class="attempt"><div class="adot" style="background:${m[0]};color:${m[1]}">${m[2]}</div>
+      <div class="ab"><div class="at">${it.o}</div><div class="atm">Attempt ${it.a} · ${it.t}</div></div>${it.dur?`<div class="adur">${it.dur}</div>`:''}</div>`}).join('')}
+  </div>`).join('<div class="divider"></div>');}
+function outMap(o){const m={'Answered':['var(--green-bg)','var(--green)','✓'],'No Answer':['var(--red-bg)','var(--red)','✕'],
+  'Missed':['var(--red-bg)','var(--red)','✕'],'Busy':['var(--amber-bg)','var(--amber)','‖'],'Switched Off':['var(--slate-bg)','var(--slate)','⏻'],
+  'Wrong Number':['var(--red-bg)','var(--red)','?'],'Call Back Later':['var(--blue-bg)','var(--blue)','↻'],'Converted':['var(--green-bg)','var(--green)','★']};
+  return m[o]||['var(--gold-soft)','#a07d2f','•'];}
+function noteHtml(n){return `<div class="note"><div class="nh"><span class="who">${esc(n.who)}</span><span class="when">${n.when}</span></div>
+  <div class="bd">${esc(n.bd)}</div>${n.tags&&n.tags.length?`<div class="tags">${n.tags.map(t=>`<span class="mt">${esc(t)}</span>`).join('')}</div>`:''}</div>`;}
+function tlHtml(t){const cm={blue:['var(--blue-bg)','var(--blue)'],green:['var(--green-bg)','var(--green)'],amber:['var(--amber-bg)','var(--amber)'],
+  slate:['var(--slate-bg)','var(--slate)'],red:['var(--red-bg)','var(--red)'],gold:['var(--gold-soft)','#a07d2f'],purple:['var(--purple-bg)','var(--purple)']}[t.c]||['var(--gold-soft)','#a07d2f'];
+  return `<div class="tl-item"><span class="tl-ic" style="background:${cm[0]};color:${cm[1]}">${t.ic}</span>
+    <div class="tl-t">${esc(t.t)}</div>${t.d?`<div class="tl-d">${esc(t.d)}</div>`:''}<div class="tl-tm">${t.tm}</div></div>`;}
+function orderHtml(o){const sc={'Delivered':'b-green','Shipped':'b-blue','Processing':'b-amber','Confirmed':'b-purple','Draft':'b-slate',
+  'Pending Approval':'b-amber','Packed':'b-blue','Cancelled':'b-red','Returned':'b-red'}[o.status]||'b-slate';
+  return `<div class="order"><div class="oico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18M16 10a4 4 0 0 1-8 0"/></svg></div>
+    <div class="ob"><div class="oinv">${o.inv}</div><div class="odesc">${esc(o.items)} · ${o.date}</div>
+      <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap"><span class="pill ${sc}">${o.status}</span><span class="pill b-slate">${o.pay}</span></div></div>
+    <div class="oamt"><b>${money(o.amt)}</b></div></div>`;}
+
+/* ============ ACTIONS ============ */
+function addNote(text,silent){
+  const c=cust(curId), inp=document.getElementById('noteIn'), val=text||(inp?inp.value.trim():'');
+  if(!val){toast('Type a note first');return;}
+  const now=new Date(), when=now.toLocaleDateString('en-IN',{day:'numeric',month:'short'})+' · '+now.toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit',hour12:true});
+  c.notes.unshift({who:telecaller.name,when,bd:val,tags:[]});
+  c.timeline.unshift({ic:'📝',c:'slate',t:'Note added',d:val.slice(0,42),tm:'Today · '+now.toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit',hour12:true})});
+  if(profTab==='activity')renderProfPane();
+  if(!silent)toast('Note added');
+}
+function scheduleFup(){
+  const c=cust(curId), d=document.getElementById('fD').value, t=document.getElementById('fT').value;
+  if(!d||!t){toast('Set date & time');return;}
+  const p=document.getElementById('fP').value, r=document.getElementById('fR').value, pur=document.getElementById('fPur').value.trim()||'Follow-up call';
+  const dt=new Date(d+'T'+t), nice=dt.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})+' · '+dt.toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit',hour12:true});
+  c.followups.next={when:nice,prio:p,rem:r,purpose:pur,miss:false}; c.next=d;
+  c.timeline.unshift({ic:'📅',c:'gold',t:'Follow-up scheduled',d:nice+' — '+pur.slice(0,30),tm:'Just now'});
+  renderProfPane(); toast('Follow-up scheduled');
+}
+function advanceStage(){
+  const c=cust(curId), i=stIdx(c.stage);
+  if(i>=STAGES.length-1){toast('Already at the final stage');return;}
+  c.stage=STAGES[i+1].k;
+  c.timeline.unshift({ic:'⬆️',c:stOf(c.stage).c,t:'Moved to '+stOf(c.stage).n,d:'Stage advanced',tm:'Just now'});
+  renderProfile(); toast('Stage → '+stOf(c.stage).n);
+}
+
+/* ============ SHEETS ============ */
+const OUTCOMES=[['No Answer','#d9534f'],['Busy','#d98a2b'],['Switched Off','#5a6472'],['Wrong Number','#d9534f'],
+  ['Call Back Later','#3b6fd4'],['Interested','#2f9e57'],['Not Interested','#d9534f'],['Follow-up Required','#d98a2b'],
+  ['Demo Scheduled','#3b6fd4'],['Meeting Scheduled','#3b6fd4'],['Proposal Sent','#a07d2f'],['Converted','#2f9e57']];
+function openSheet(type){
+  const c=cust(curId), b=document.getElementById('sheetBody');
+  if(type==='outcome'){selOutcome=null;
+    b.innerHTML=`<h3>Log call outcome</h3><div class="ssub">${esc(c.name)} · ${esc(c.co)} · just now</div>
+      <div class="oc-grid">${OUTCOMES.map(([n,col])=>`<button class="oc" data-o="${n}" onclick="pickOutcome(this,'${n}')"><span class="od" style="background:${col}"></span>${n}</button>`).join('')}</div>
+      <textarea id="ocNote" rows="2" placeholder="Add a note for this call (optional)…"></textarea>
+      <button class="btn-full" onclick="saveOutcome()">Save outcome</button>`;
+  } else if(type==='order'){
+    b.innerHTML=`<h3>Create order</h3><div class="ssub">${esc(c.name)} · ${esc(c.co)}</div>
+      <div class="field" style="margin-bottom:11px"><label>Products / items</label><input id="oItems" placeholder="e.g. Staples + oils · 12 SKUs"></div>
+      <div class="form-row"><div class="field"><label>Order value (₹)</label><input id="oAmt" type="number" inputmode="numeric" placeholder="0"></div>
+        <div class="field"><label>Payment</label><select id="oPay"><option>Paid</option><option>Partial</option><option>Pending</option></select></div></div>
+      <div class="field" style="margin-bottom:13px"><label>Status</label><select id="oStatus"><option>Draft</option><option>Pending Approval</option><option selected>Confirmed</option><option>Processing</option><option>Packed</option><option>Shipped</option><option>Delivered</option></select></div>
+      <button class="btn-full" onclick="createOrder()">Create order</button>
+      <button class="btn-full btn-out" style="margin-top:9px" onclick="closeSheet()">Cancel</button>`;
+  }
+  document.getElementById('ov').classList.add('show');document.getElementById('sheet').classList.add('show');
+}
+function closeSheet(){document.getElementById('ov').classList.remove('show');document.getElementById('sheet').classList.remove('show');}
+function pickOutcome(el,n){document.querySelectorAll('.oc').forEach(x=>x.classList.remove('sel'));el.classList.add('sel');selOutcome=n;}
+function saveOutcome(){
+  if(!selOutcome){toast('Pick an outcome first');return;}
+  const c=cust(curId), note=document.getElementById('ocNote').value.trim();
+  const now=new Date(), time=now.toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit',hour12:true});
+  // add to today's log
+  let day=c.log.find(d=>d.today);
+  if(!day){day={date:'25 June 2026',today:true,items:[]};c.log.unshift(day);}
+  const att=day.items.length+1, entry={o:selOutcome,t:time,a:att};
+  if(selOutcome==='Answered'||selOutcome==='Converted')entry.dur='3m 00s';
+  day.items.unshift(entry);
+  // stats
+  c.calls.total++; c.calls.outgoing++;
+  if(selOutcome==='Busy')c.calls.busy++; else if(selOutcome==='No Answer')c.calls.missed++;
+  else if(selOutcome==='Switched Off')c.calls.off++; else if(selOutcome==='Wrong Number')c.calls.wrong++;
+  else c.calls.answered++;
+  c.calls.lastAt='25 Jun · '+time;
+  // timeline
+  const m=outMap(selOutcome);
+  c.timeline.unshift({ic:'📞',c:m[1].includes('green')?'green':'gold',t:'Outcome: '+selOutcome,d:note||'',tm:'Today · '+time});
+  if(note)addNote(note,true);
+  // stage logic
+  const adv={'Interested':'potential','Proposal Sent':'potential','Demo Scheduled':'potential','Meeting Scheduled':'potential','Converted':'conversion'}[selOutcome];
+  if(adv && stIdx(c.stage)<stIdx(adv)){c.stage=adv;toast('Outcome saved · stage → '+stOf(adv).n);}
+  else toast('Outcome saved · '+selOutcome);
+  closeSheet(); renderProfile();
+}
+function createOrder(){
+  const c=cust(curId), items=document.getElementById('oItems').value.trim()||'Order items',
+    amt=parseInt(document.getElementById('oAmt').value)||0, pay=document.getElementById('oPay').value, status=document.getElementById('oStatus').value;
+  if(amt<=0){toast('Enter an order value');return;}
+  const inv='INV-'+(20600+Math.floor(Math.random()*399)), date='25 Jun 2026';
+  c.orders.push({inv,date,items,amt,status,pay,del:status});
+  c.revenue+=amt;
+  c.timeline.unshift({ic:'🛒',c:'green',t:'Order · '+money(amt),d:inv+' '+status.toLowerCase(),tm:'Today'});
+  // stage logic
+  if(stIdx(c.stage)<stIdx('conversion'))c.stage='conversion';
+  else if(c.orders.length>=2 && c.stage==='conversion')c.stage='repeat';
+  closeSheet(); renderProfile();
+  toast('Order created · '+money(amt));
+}
+
+/* ============ TOAST ============ */
+let tT; function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tT);tT=setTimeout(()=>t.classList.remove('show'),2000);}
+
+/* init */
+go('cust');
+</script>
+</body>
+</html>

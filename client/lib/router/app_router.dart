@@ -40,6 +40,7 @@ import '../screens/telecaller/telecaller_dashboard_screen.dart';
 import '../screens/telecaller/telecaller_callbacks_screen.dart';
 import '../screens/telecaller/telecaller_call_history_screen.dart';
 import '../screens/telecaller/telecaller_worklist_screen.dart';
+import '../screens/telecaller/telecaller_profile_screen.dart';
 import '../screens/telecaller/telecaller_call_scripts_screen.dart';
 import '../services/user_service.dart';
 import 'auth_guard.dart';
@@ -259,6 +260,16 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/telecaller/worklist',
       builder: (context, state) => const TelecallerWorklistScreen(),
+    ),
+    GoRoute(
+      path: '/telecaller/profile',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? {};
+        return TelecallerProfileScreen(
+          account:     extra['account']     as Map<String, dynamic>? ?? {},
+          accountType: extra['accountType'] as String?               ?? 'lead',
+        );
+      },
     ),
     GoRoute(
       path: '/telecaller/call-scripts',

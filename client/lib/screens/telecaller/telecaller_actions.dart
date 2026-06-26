@@ -19,3 +19,16 @@ Future<void> launchWhatsApp(String phone) async {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 }
+
+Future<void> launchEmail(String email, {String subject = ''}) async {
+  final e = email.trim();
+  if (e.isEmpty) return;
+  final uri = Uri(
+    scheme: 'mailto',
+    path: e,
+    query: subject.isEmpty ? null : 'subject=${Uri.encodeComponent(subject)}',
+  );
+  if (await canLaunchUrl(uri)) {
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+}

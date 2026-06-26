@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:fluttertoast/fluttertoast.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
-import 'telecaller_actions.dart';
 import 'telecaller_mock_data.dart';
 
-/// Worklist with labels (live data). Filter leads/customers by label and apply
-/// one-tap Quick Actions (Wrong number / Do-Not-Call) which persist via
-/// `POST /api/telecaller/label`. "Not called / Called today / Follow-up due"
-/// are derived server-side from the call log.
+/// Worklist — Customers-style list (mockup): search, filter chips, and rich
+/// cards (avatar, name, company · city, stage/temperature/priority pills, a
+/// stage-progress ring, and a Last-contact / Next-follow-up / Revenue footer).
+/// Tapping a card opens the rich profile. Stage, last-contact and next-follow-up
+/// are real (from `/api/telecaller/worklist`); temperature, priority and the
+/// ring are derived from stage; revenue is a placeholder pending an orders table.
 class TelecallerWorklistScreen extends StatefulWidget {
   const TelecallerWorklistScreen({super.key});
 
@@ -18,11 +19,21 @@ class TelecallerWorklistScreen extends StatefulWidget {
 
 class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
   bool _loading = true;
-  bool _busy = false;
   List<Map<String, dynamic>> _items = [];
-  // account_id's whose beat plan fires today
+  // account_id's scheduled in the beat plan for today — the worklist scopes to these.
   Set<String> _todayIds = {};
   String _filter = 'all';
+  String _search = '';
+  final _searchCtrl = TextEditingController();
+
+  // (key, label)
+  static const _filters = <(String, String)>[
+    ('all', 'All'),
+    ('follow_up', 'Follow-up due'),
+    ('hot', 'Hot'),
+    ('high_value', 'High-value'),
+    ('repeat', 'Repeat'),
+  ];
 
   @override
   void initState() {
@@ -30,20 +41,25 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
-    // Run both concurrently
     final worklistF = ApiService.getTelecallerWorklist();
-    final todayF    = ApiService.getTodayBeatPlan();
-    final items     = await worklistF;
-    final todayRes  = await todayF;
+    final todayF = ApiService.getTodayBeatPlan();
+    final items = await worklistF;
+    final todayRes = await todayF;
     if (!mounted) return;
 
-    // Build today's beat-plan account ids and merge any that aren't already
-    // in the base worklist (e.g. assigned outside the current area scope).
+    // Today = accounts whose beat plan fires today. Merge any that aren't already
+    // in the area-scoped worklist so the scheduled accounts always show.
     final todayIds = <String>{};
-    final merged   = [...items];
-    final byId     = {for (final w in items) '${w['account_id']}': w};
+    final merged = [...items];
+    final byId = {for (final w in items) '${w['account_id']}': w};
     final todayRaw = todayRes['data'];
     if (todayRaw is List) {
       for (final t in todayRaw) {
@@ -54,182 +70,273 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
         if (id.isEmpty || id == 'null') continue;
         todayIds.add(id);
         if (!byId.containsKey(id)) {
-          final biz = (acc['businessName'] ?? '').toString();
+          final biz = '${acc['businessName'] ?? ''}'.trim();
+          final person = '${acc['personName'] ?? ''}'.trim();
           merged.add({
-            'account_id':   id,
-            'account_type': (t['account_type'] ?? 'lead').toString(),
-            'name':         biz.isNotEmpty ? biz : (acc['personName'] ?? 'Unknown').toString(),
-            'phone':        (acc['contactNumber'] ?? '').toString(),
-            'area':         (acc['area'] ?? '').toString(),
-            'pincode':      (acc['pincode'] ?? '').toString(),
-            'label':        kLabelNotCalled,
+            'account_id':     id,
+            'account_type':   '${t['account_type'] ?? 'lead'}',
+            'name':           biz.isNotEmpty ? biz : (person.isNotEmpty ? person : 'Unknown'),
+            'business_name':  biz,
+            'person_name':    person,
+            'phone':          '${acc['contactNumber'] ?? ''}',
+            'area':           '${acc['area'] ?? ''}',
+            'city':           '${acc['city'] ?? acc['area'] ?? ''}',
+            'pincode':        '${acc['pincode'] ?? ''}',
+            'stage':          '${acc['customerStage'] ?? 'lead'}',
+            'label':          kLabelNotCalled,
+            'last_contact':   null,
+            'next_follow_up': null,
           });
         }
       }
     }
 
     setState(() {
-      _items    = merged;
+      _items = merged;
       _todayIds = todayIds;
-      _loading  = false;
+      _loading = false;
     });
   }
 
+  // Today = the account is scheduled in the beat plan for today.
   bool _isToday(Map<String, dynamic> w) => _todayIds.contains('${w['account_id']}');
 
+  // ── Filtering ───────────────────────────────────────────────────────────────
+  bool _matchesFilter(Map<String, dynamic> w) {
+    final stage = '${w['stage'] ?? ''}';
+    switch (_filter) {
+      case 'follow_up':
+        return '${w['next_follow_up'] ?? ''}'.isNotEmpty || w['label'] == kLabelFollowUp;
+      case 'hot':
+        return tempForStage(stage).text == 'Hot';
+      case 'high_value':
+        return stageProgress(stage) >= 70;
+      case 'repeat':
+        return stage.toLowerCase() == 'customer';
+      default:
+        return true;
+    }
+  }
+
+  bool _matchesSearch(Map<String, dynamic> w) {
+    if (_search.isEmpty) return true;
+    final q = _search.toLowerCase();
+    final hay = [
+      w['name'], w['business_name'], w['person_name'], w['city'], w['area'], w['phone'],
+    ].map((e) => '${e ?? ''}'.toLowerCase()).join(' ');
+    return hay.contains(q);
+  }
+
+  List<Map<String, dynamic>> get _visible =>
+      _items.where(_isToday).where(_matchesFilter).where(_matchesSearch).toList();
+
   int _countFor(String key) {
-    if (key == 'all')   return _items.length;
-    if (key == 'today') return _items.where(_isToday).length;
-    return _items.where((w) => w['label'] == key).length;
+    final old = _filter;
+    _filter = key;
+    final n = _items.where(_isToday).where(_matchesFilter).where(_matchesSearch).length;
+    _filter = old;
+    return n;
   }
 
   @override
   Widget build(BuildContext context) {
-    final visible = _filter == 'all'
-        ? _items
-        : _filter == 'today'
-            ? _items.where(_isToday).toList()
-            : _items.where((w) => w['label'] == _filter).toList();
-
-    final chips = <(String, String)>[
-      ('all', 'All'),
-      ('today', 'Today'),
-      (kLabelNotCalled, kWorklistLabels[kLabelNotCalled]!.text),
-      (kLabelCalledToday, kWorklistLabels[kLabelCalledToday]!.text),
-      (kLabelFollowUp, kWorklistLabels[kLabelFollowUp]!.text),
-      (kLabelWrongNumber, kWorklistLabels[kLabelWrongNumber]!.text),
-      (kLabelDoNotCall, kWorklistLabels[kLabelDoNotCall]!.text),
-    ];
-
+    final visible = _visible;
     return Scaffold(
       backgroundColor: kBg,
       appBar: AppBar(
-        title: const Text('Worklist'),
         backgroundColor: kGold,
         foregroundColor: Colors.white,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Today Worklist', style: TextStyle(fontWeight: FontWeight.w700)),
+            Text('${_items.where(_isToday).length} today', style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w500, color: Colors.white70)),
+          ],
+        ),
         actions: [IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load)],
       ),
-      body: Column(
-        children: [
-          SizedBox(
-            height: 50,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: kGold))
+          : Column(
               children: [
-                for (final c in chips)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: ChoiceChip(
-                      label: Text('${c.$2} (${_countFor(c.$1)})'),
-                      selected: _filter == c.$1,
-                      onSelected: (_) => setState(() => _filter = c.$1),
-                      selectedColor: kGold,
-                      labelStyle: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: _filter == c.$1 ? Colors.white : Colors.grey.shade700),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
+                _searchBar(),
+                _chips(),
+                Expanded(
+                  child: visible.isEmpty
+                      ? Center(
+                          child: Text(
+                            _items.where(_isToday).isEmpty
+                                ? 'No accounts scheduled for today'
+                                : 'No accounts match this filter',
+                            style: TextStyle(color: Colors.grey.shade500),
+                          ),
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _load,
+                          child: ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(12, 2, 12, 24),
+                            itemCount: visible.length,
+                            itemBuilder: (_, i) => _card(visible[i]),
+                          ),
+                        ),
+                ),
               ],
             ),
-          ),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator(color: kGold))
-                : visible.isEmpty
-                    ? Center(child: Text(
-                        _items.isEmpty
-                            ? 'No leads in your areas'
-                            : _filter == 'today'
-                                ? 'No accounts scheduled for today'
-                                : 'No leads in this label',
-                        style: TextStyle(color: Colors.grey.shade500)))
-                    : RefreshIndicator(
-                        onRefresh: _load,
-                        child: ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
-                          itemCount: visible.length,
-                          itemBuilder: (_, i) => _row(visible[i]),
-                        ),
-                      ),
-          ),
+    );
+  }
+
+  // ── Search ──────────────────────────────────────────────────────────────────
+  Widget _searchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 3))],
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Row(
+          children: [
+            Icon(Icons.search_rounded, size: 20, color: Colors.grey.shade400),
+            const SizedBox(width: 9),
+            Expanded(
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _search = v),
+                decoration: const InputDecoration(
+                  hintText: 'Search name, company, city…',
+                  border: InputBorder.none,
+                  isCollapsed: true,
+                  contentPadding: EdgeInsets.symmetric(vertical: 13),
+                ),
+                style: const TextStyle(fontSize: 14),
+              ),
+            ),
+            if (_search.isNotEmpty)
+              GestureDetector(
+                onTap: () {
+                  _searchCtrl.clear();
+                  setState(() => _search = '');
+                },
+                child: Icon(Icons.close_rounded, size: 18, color: Colors.grey.shade400),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Chips ───────────────────────────────────────────────────────────────────
+  Widget _chips() {
+    return SizedBox(
+      height: 46,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        children: [
+          for (final f in _filters)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: GestureDetector(
+                onTap: () => setState(() => _filter = f.$1),
+                child: Container(
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 15),
+                  decoration: BoxDecoration(
+                    color: _filter == f.$1 ? kGold : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: _filter == f.$1 ? kGold : const Color(0xFFE7E7E7), width: 1.4),
+                  ),
+                  child: Text(
+                    '${f.$2} (${_countFor(f.$1)})',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: _filter == f.$1 ? Colors.white : const Color(0xFF5A6472),
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
 
-  Widget _row(Map<String, dynamic> w) {
-    final ls = worklistLabelStyle('${w['label'] ?? kLabelNotCalled}');
-    final phone = '${w['phone'] ?? ''}';
+  // ── Card ────────────────────────────────────────────────────────────────────
+  Widget _card(Map<String, dynamic> w) {
+    final name = '${w['name'] ?? 'Unknown'}';
+    final business = '${w['business_name'] ?? ''}'.trim();
+    final city = '${w['city'] ?? w['area'] ?? ''}'.trim();
+    final stage = '${w['stage'] ?? ''}';
+    final st = stageStyle(stage);
+    final temp = tempForStage(stage);
+    final prio = priorityForStage(stage);
+    final score = stageProgress(stage);
+    final seed = '${w['account_id'] ?? name}';
+    // Title prefers the person; subtitle is "business · city".
+    final title = '${w['person_name'] ?? ''}'.trim().isNotEmpty ? '${w['person_name']}'.trim() : name;
+    final sub = [if (business.isNotEmpty && business != title) business, if (city.isNotEmpty) city].join(' · ');
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 11),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFEEEEEE)),
+        borderRadius: BorderRadius.circular(16),
+        border: Border(left: BorderSide(color: st.color, width: 4)),
         boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 3))],
       ),
-      padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('${w['name'] ?? 'Unknown'}', style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
-                    Text('$phone${(w['area'] ?? '').toString().isNotEmpty ? ' · ${w['area']}' : ''}',
-                        style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-                  ],
-                ),
-              ),
-              if (_isToday(w)) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                      color: const Color(0xFF43A047).withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20)),
-                  child: const Text('Today',
-                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF2E7D32))),
-                ),
-                const SizedBox(width: 6),
-              ],
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(color: ls.color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
-                child: Text(ls.text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: ls.color)),
-              ),
-            ],
-          ),
-          const Divider(height: 16),
-          Row(
-            children: [
-              _action(Icons.call_rounded, 'Call', const Color(0xFF43A047), () => launchPhoneCall(phone)),
-              _action(Icons.chat_rounded, 'WhatsApp', const Color(0xFF25D366), () => launchWhatsApp(phone)),
-              _action(Icons.report_gmailerrorred_rounded, 'Wrong No.', const Color(0xFFE53935), () => _setLabel(w, kLabelWrongNumber)),
-              _action(Icons.block_rounded, 'Do Not Call', Colors.black87, () => _setLabel(w, kLabelDoNotCall)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _action(IconData icon, String label, Color color, VoidCallback onTap) {
-    return Expanded(
       child: InkWell(
-        onTap: _busy ? null : onTap,
-        borderRadius: BorderRadius.circular(8),
+        onTap: () => _openProfile(w),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
+          padding: const EdgeInsets.fromLTRB(13, 13, 13, 11),
           child: Column(
             children: [
-              Icon(icon, size: 18, color: color),
-              const SizedBox(height: 2),
-              Text(label, style: TextStyle(fontSize: 9.5, color: color, fontWeight: FontWeight.w600), textAlign: TextAlign.center),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(color: avatarColorFor(seed), borderRadius: BorderRadius.circular(13)),
+                    alignment: Alignment.center,
+                    child: Text(initialsOf(title), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white)),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        if (sub.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 1),
+                            child: Text(sub, style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500), maxLines: 2, overflow: TextOverflow.ellipsis),
+                          ),
+                        const SizedBox(height: 7),
+                        Wrap(spacing: 5, runSpacing: 5, children: [
+                          _stagePill(st),
+                          _pill(temp.text, temp.color),
+                          _pill(prio.text, prio.color),
+                        ]),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _ring(score, st.color),
+                ],
+              ),
+              const Divider(height: 20, color: Color(0xFFF0F0F0)),
+              Row(
+                children: [
+                  _foot('Last contact', _fmtDate('${w['last_contact'] ?? ''}'), Colors.black87),
+                  _foot('Next follow-up', _fmtDate('${w['next_follow_up'] ?? ''}'),
+                      '${w['next_follow_up'] ?? ''}'.isNotEmpty ? kGoldDark : Colors.black87),
+                  _foot('Revenue', '₹0', Colors.black87, end: true),
+                ],
+              ),
             ],
           ),
         ),
@@ -237,16 +344,82 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
     );
   }
 
-  Future<void> _setLabel(Map<String, dynamic> w, String label) async {
-    setState(() => _busy = true);
-    final ok = await ApiService.setTelecallerLabel('${w['account_id']}', '${w['account_type']}', label);
-    if (!mounted) return;
-    setState(() => _busy = false);
-    if (ok) {
-      Fluttertoast.showToast(msg: '${w['name']} → ${worklistLabelStyle(label).text}', backgroundColor: kGoldDark, textColor: Colors.white);
-      _load();
-    } else {
-      Fluttertoast.showToast(msg: 'Could not update', backgroundColor: Colors.red, textColor: Colors.white);
-    }
+  Widget _foot(String label, String value, Color color, {bool end = false}) => Expanded(
+        child: Column(
+          crossAxisAlignment: end ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            Text(label, style: TextStyle(fontSize: 10, color: Colors.grey.shade400, fontWeight: FontWeight.w500)),
+            const SizedBox(height: 2),
+            Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color)),
+          ],
+        ),
+      );
+
+  Widget _stagePill(({String text, Color color}) st) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+        decoration: BoxDecoration(color: st.color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(width: 6, height: 6, decoration: BoxDecoration(color: st.color, shape: BoxShape.circle)),
+            const SizedBox(width: 5),
+            Text(st.text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: st.color)),
+          ],
+        ),
+      );
+
+  Widget _pill(String text, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
+        child: Text(text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
+      );
+
+  Widget _ring(int value, Color color) => SizedBox(
+        width: 40,
+        height: 40,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            SizedBox(
+              width: 40,
+              height: 40,
+              child: CircularProgressIndicator(
+                value: value / 100,
+                strokeWidth: 3.5,
+                backgroundColor: Colors.grey.shade200,
+                valueColor: AlwaysStoppedAnimation(color),
+              ),
+            ),
+            Text('$value', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: color)),
+          ],
+        ),
+      );
+
+  String _fmtDate(String? iso) {
+    if (iso == null || iso.isEmpty || iso == 'null') return '—';
+    final d = DateTime.tryParse(iso);
+    if (d == null) return '—';
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${d.day} ${months[d.month - 1]}';
+  }
+
+  void _openProfile(Map<String, dynamic> w) {
+    context.push('/telecaller/profile', extra: {
+      'account': {
+        'id': w['account_id'],
+        'account_id': w['account_id'],
+        'businessName': w['business_name'] ?? w['name'],
+        'name': w['name'],
+        'personName': w['person_name'],
+        'contactNumber': w['phone'],
+        'phone': w['phone'],
+        'area': w['area'],
+        'city': w['city'],
+        'pincode': w['pincode'],
+        'customerStage': w['stage'],
+        'label': w['label'],
+      },
+      'accountType': '${w['account_type'] ?? 'lead'}',
+    });
   }
 }

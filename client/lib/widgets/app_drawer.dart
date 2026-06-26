@@ -205,12 +205,12 @@ class AppDrawer extends StatelessWidget {
             'route': '/allotted-customer-accounts',
             'color': const Color(0xFF26A69A),
           },
-          {
-            'title': 'Verify Lead Accounts',
-            'icon': Icons.verified_user_rounded,
-            'route': '/verify-lead-accounts',
-            'color': const Color(0xFF66BB6A),
-          },
+          // {
+          //   'title': 'Verify Lead Accounts',
+          //   'icon': Icons.verified_user_rounded,
+          //   'route': '/verify-lead-accounts',
+          //   'color': const Color(0xFF66BB6A),
+          // },
           {
             'title': "Today's Callbacks",
             'icon': Icons.event_repeat_rounded,
@@ -224,7 +224,7 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF1E88E5),
           },
           {
-            'title': 'Worklist',
+            'title': 'Today Worklist',
             'icon': Icons.checklist_rounded,
             'route': '/telecaller/worklist',
             'color': const Color(0xFF8E24AA),
