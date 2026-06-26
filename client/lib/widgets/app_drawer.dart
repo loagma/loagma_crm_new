@@ -211,12 +211,12 @@ class AppDrawer extends StatelessWidget {
           //   'route': '/verify-lead-accounts',
           //   'color': const Color(0xFF66BB6A),
           // },
-          {
-            'title': "Today's Callbacks",
-            'icon': Icons.event_repeat_rounded,
-            'route': '/telecaller/callbacks',
-            'color': const Color(0xFFFB8C00),
-          },
+          // {
+          //   'title': "Today's Callbacks",
+          //   'icon': Icons.event_repeat_rounded,
+          //   'route': '/telecaller/callbacks',
+          //   'color': const Color(0xFFFB8C00),
+          // },
           {
             'title': 'Call History',
             'icon': Icons.history_rounded,

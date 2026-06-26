@@ -268,16 +268,16 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
   Widget _card(Map<String, dynamic> w) {
     final name = '${w['name'] ?? 'Unknown'}';
     final business = '${w['business_name'] ?? ''}'.trim();
+    final person = '${w['person_name'] ?? ''}'.trim();
     final city = '${w['city'] ?? w['area'] ?? ''}'.trim();
     final stage = '${w['stage'] ?? ''}';
     final st = stageStyle(stage);
-    final temp = tempForStage(stage);
     final prio = priorityForStage(stage);
-    final score = stageProgress(stage);
-    final seed = '${w['account_id'] ?? name}';
-    // Title prefers the person; subtitle is "business · city".
-    final title = '${w['person_name'] ?? ''}'.trim().isNotEmpty ? '${w['person_name']}'.trim() : name;
-    final sub = [if (business.isNotEmpty && business != title) business, if (city.isNotEmpty) city].join(' · ');
+    final seed = '${w['account_id'] ?? business}';
+    // Shop / business name on top (dark); owner name below (lighter).
+    final title = business.isNotEmpty ? business : (person.isNotEmpty ? person : name);
+    final owner = (person.isNotEmpty && person != title) ? person : '';
+    final sub = [if (owner.isNotEmpty) owner, if (city.isNotEmpty) city].join(' · ');
 
     return Container(
       margin: const EdgeInsets.only(bottom: 11),
@@ -318,14 +318,11 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
                         const SizedBox(height: 7),
                         Wrap(spacing: 5, runSpacing: 5, children: [
                           _stagePill(st),
-                          _pill(temp.text, temp.color),
                           _pill(prio.text, prio.color),
                         ]),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  _ring(score, st.color),
                 ],
               ),
               const Divider(height: 20, color: Color(0xFFF0F0F0)),
@@ -372,27 +369,6 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
         decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
         child: Text(text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
-      );
-
-  Widget _ring(int value, Color color) => SizedBox(
-        width: 40,
-        height: 40,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            SizedBox(
-              width: 40,
-              height: 40,
-              child: CircularProgressIndicator(
-                value: value / 100,
-                strokeWidth: 3.5,
-                backgroundColor: Colors.grey.shade200,
-                valueColor: AlwaysStoppedAnimation(color),
-              ),
-            ),
-            Text('$value', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: color)),
-          ],
-        ),
       );
 
   String _fmtDate(String? iso) {
