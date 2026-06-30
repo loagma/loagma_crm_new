@@ -53,6 +53,17 @@ class CallLogController extends Controller
             'called_at'       => now(),
         ]));
 
+        // Close every open follow-up for this account so notifications clear.
+        // The new log itself may open a fresh follow-up if follow_up_date is set.
+        if (!empty($validated['account_id'])) {
+            CallLog::where('employee_mobile', $mobile)
+                ->where('account_id', $validated['account_id'])
+                ->whereNotNull('follow_up_date')
+                ->where('callback_done', false)
+                ->where('id', '!=', $log->id)
+                ->update(['callback_done' => true]);
+        }
+
         return response()->json(['success' => true, 'data' => $log], 201);
     }
 

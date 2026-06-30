@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
-import '../../services/notification_service.dart';
 import 'telecaller_mock_data.dart';
 
 /// Worklist — Customers-style list (mockup): search, filter chips, and rich
@@ -18,13 +17,16 @@ class TelecallerWorklistScreen extends StatefulWidget {
   State<TelecallerWorklistScreen> createState() => _TelecallerWorklistScreenState();
 }
 
-class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
+class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
+    with WidgetsBindingObserver {
   bool _loading = true;
   List<Map<String, dynamic>> _items = [];
-  // account_id's scheduled in the beat plan for today — the worklist scopes to these.
+  // account_id's scheduled in the beat plan for today.
   Set<String> _todayIds = {};
+  // account_id's with a follow-up due today or overdue.
+  Set<String> _followUpIds = {};
   // account_id's that the telecaller has called in this session.
-  Set<String> _calledToday = {};
+  final Set<String> _calledToday = {};
   String _filter = 'all';
   String _search = '';
   final _searchCtrl = TextEditingController();
@@ -33,37 +35,46 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
   static const _filters = <(String, String)>[
     ('all', 'All'),
     ('follow_up', 'Follow-up due'),
-    ('hot', 'Hot'),
-    ('high_value', 'High-value'),
-    ('repeat', 'Repeat'),
   ];
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
-    NotificationService.checkFollowUps();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchCtrl.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _load();
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
-    final worklistF = ApiService.getTelecallerWorklist();
-    final todayF = ApiService.getTodayBeatPlan();
-    final items = await worklistF;
-    final todayRes = await todayF;
+    final worklistF   = ApiService.getTelecallerWorklist();
+    final todayF      = ApiService.getTodayBeatPlan();
+    final callbacksF  = ApiService.getTelecallerCallbacks();
+    final items       = await worklistF;
+    final todayRes    = await todayF;
+    final callbacks   = await callbacksF;
     if (!mounted) return;
 
-    // Today = accounts whose beat plan fires today. Merge any that aren't already
-    // in the area-scoped worklist so the scheduled accounts always show.
-    final todayIds = <String>{};
+    final now       = DateTime.now();
+    final todayDate = DateTime(now.year, now.month, now.day);
+
+    final todayIds    = <String>{};
+    final followUpIds = <String>{};
     final merged = [...items];
-    final byId = {for (final w in items) '${w['account_id']}': w};
+    final byId   = {for (final w in items) '${w['account_id']}': w};
+
+    // Beat plan — accounts scheduled for today.
     final todayRaw = todayRes['data'];
     if (todayRaw is List) {
       for (final t in todayRaw) {
@@ -74,9 +85,9 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
         if (id.isEmpty || id == 'null') continue;
         todayIds.add(id);
         if (!byId.containsKey(id)) {
-          final biz = '${acc['businessName'] ?? ''}'.trim();
-          final person = '${acc['personName'] ?? ''}'.trim();
-          merged.add({
+          final biz    = '${acc['businessName'] ?? ''}'.trim();
+          final person = '${acc['personName']   ?? ''}'.trim();
+          final item = {
             'account_id':     id,
             'account_type':   '${t['account_type'] ?? 'lead'}',
             'name':           biz.isNotEmpty ? biz : (person.isNotEmpty ? person : 'Unknown'),
@@ -90,27 +101,198 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
             'label':          kLabelNotCalled,
             'last_contact':   null,
             'next_follow_up': null,
-          });
+          };
+          merged.add(item);
+          byId[id] = item;
         }
       }
     }
 
+    // Follow-ups — accounts with a due/overdue follow-up regardless of beat plan.
+    for (final cb in callbacks) {
+      final id    = '${cb['account_id'] ?? ''}';
+      if (id.isEmpty || id == 'null') continue;
+      final fuStr = '${cb['follow_up_date'] ?? ''}';
+      if (fuStr.isEmpty || fuStr == 'null') continue;
+      final fuDate = DateTime.tryParse(fuStr);
+      if (fuDate == null) continue;
+      if (!DateTime(fuDate.year, fuDate.month, fuDate.day).isAfter(todayDate)) {
+        followUpIds.add(id);
+        // Add to list only if not already present from worklist or beat plan.
+        if (!byId.containsKey(id)) {
+          final item = {
+            'account_id':     id,
+            'account_type':   '${cb['account_type'] ?? 'lead'}',
+            'name':           '${cb['name'] ?? 'Unknown'}',
+            'business_name':  '',
+            'person_name':    '${cb['name'] ?? ''}',
+            'phone':          '${cb['phone'] ?? ''}',
+            'area':           '${cb['area'] ?? ''}',
+            'city':           '${cb['area'] ?? ''}',
+            'pincode':        '',
+            'stage':          '${cb['stage'] ?? 'lead'}',
+            'label':          kLabelFollowUp,
+            'last_contact':   null,
+            'next_follow_up': fuStr,
+          };
+          merged.add(item);
+          byId[id] = item;
+        }
+      }
+    }
+
+    // Also mark worklist items that have a due follow-up (even if not in beat plan).
+    for (final w in merged) {
+      final id    = '${w['account_id']}';
+      final fuStr = '${w['next_follow_up'] ?? ''}';
+      if (fuStr.isEmpty || fuStr == 'null') continue;
+      final fuDate = DateTime.tryParse(fuStr);
+      if (fuDate == null) continue;
+      if (!DateTime(fuDate.year, fuDate.month, fuDate.day).isAfter(todayDate)) {
+        followUpIds.add(id);
+      }
+    }
+
     setState(() {
-      _items = merged;
-      _todayIds = todayIds;
-      _loading = false;
+      _items       = merged;
+      _todayIds    = todayIds;
+      _followUpIds = followUpIds;
+      _loading     = false;
+    });
+
+  }
+
+  // Silent background refresh — same data logic as _load() but no spinner.
+  Future<void> _backgroundSync() async {
+    final worklistF  = ApiService.getTelecallerWorklist();
+    final todayF     = ApiService.getTodayBeatPlan();
+    final callbacksF = ApiService.getTelecallerCallbacks();
+    final items      = await worklistF;
+    final todayRes   = await todayF;
+    final callbacks  = await callbacksF;
+    if (!mounted) return;
+
+    final now       = DateTime.now();
+    final todayDate = DateTime(now.year, now.month, now.day);
+    final todayIds    = <String>{};
+    final followUpIds = <String>{};
+    final merged = [...items];
+    final byId   = {for (final w in items) '${w['account_id']}': w};
+
+    final todayRaw = todayRes['data'];
+    if (todayRaw is List) {
+      for (final t in todayRaw) {
+        if (t is! Map) continue;
+        final acc = t['account'];
+        if (acc is! Map) continue;
+        final id = '${acc['id']}';
+        if (id.isEmpty || id == 'null') continue;
+        todayIds.add(id);
+        if (!byId.containsKey(id)) {
+          final biz    = '${acc['businessName'] ?? ''}'.trim();
+          final person = '${acc['personName']   ?? ''}'.trim();
+          final item = {
+            'account_id':     id,
+            'account_type':   '${t['account_type'] ?? 'lead'}',
+            'name':           biz.isNotEmpty ? biz : (person.isNotEmpty ? person : 'Unknown'),
+            'business_name':  biz,
+            'person_name':    person,
+            'phone':          '${acc['contactNumber'] ?? ''}',
+            'area':           '${acc['area'] ?? ''}',
+            'city':           '${acc['city'] ?? acc['area'] ?? ''}',
+            'pincode':        '${acc['pincode'] ?? ''}',
+            'stage':          '${acc['customerStage'] ?? 'lead'}',
+            'label':          kLabelNotCalled,
+            'last_contact':   null,
+            'next_follow_up': null,
+          };
+          merged.add(item);
+          byId[id] = item;
+        }
+      }
+    }
+
+    for (final cb in callbacks) {
+      final id    = '${cb['account_id'] ?? ''}';
+      if (id.isEmpty || id == 'null') continue;
+      final fuStr = '${cb['follow_up_date'] ?? ''}';
+      if (fuStr.isEmpty || fuStr == 'null') continue;
+      final fuDate = DateTime.tryParse(fuStr);
+      if (fuDate == null) continue;
+      if (!DateTime(fuDate.year, fuDate.month, fuDate.day).isAfter(todayDate)) {
+        followUpIds.add(id);
+        if (!byId.containsKey(id)) {
+          final item = {
+            'account_id':     id,
+            'account_type':   '${cb['account_type'] ?? 'lead'}',
+            'name':           '${cb['name'] ?? 'Unknown'}',
+            'business_name':  '',
+            'person_name':    '${cb['name'] ?? ''}',
+            'phone':          '${cb['phone'] ?? ''}',
+            'area':           '${cb['area'] ?? ''}',
+            'city':           '${cb['area'] ?? ''}',
+            'pincode':        '',
+            'stage':          '${cb['stage'] ?? 'lead'}',
+            'label':          kLabelFollowUp,
+            'last_contact':   null,
+            'next_follow_up': fuStr,
+          };
+          merged.add(item);
+          byId[id] = item;
+        }
+      }
+    }
+
+    for (final w in merged) {
+      final id    = '${w['account_id']}';
+      final fuStr = '${w['next_follow_up'] ?? ''}';
+      if (fuStr.isEmpty || fuStr == 'null') continue;
+      final fuDate = DateTime.tryParse(fuStr);
+      if (fuDate == null) continue;
+      if (!DateTime(fuDate.year, fuDate.month, fuDate.day).isAfter(todayDate)) {
+        followUpIds.add(id);
+      }
+    }
+
+    setState(() {
+      _items       = merged;
+      _todayIds    = todayIds;
+      _followUpIds = followUpIds;
     });
   }
 
-  // Today = the account is scheduled in the beat plan for today.
-  bool _isToday(Map<String, dynamic> w) => _todayIds.contains('${w['account_id']}');
+  // Immediately update a single item's follow-up date and pill without an API round-trip.
+  void _onFollowUpScheduled(String accountId, String date) {
+    final now       = DateTime.now();
+    final todayDate = DateTime(now.year, now.month, now.day);
+    final fuDate    = DateTime.tryParse(date);
+
+    final idx = _items.indexWhere((w) => '${w['account_id']}' == accountId);
+    if (idx != -1) {
+      _items[idx] = {..._items[idx], 'next_follow_up': date};
+    }
+
+    if (fuDate != null &&
+        !DateTime(fuDate.year, fuDate.month, fuDate.day).isAfter(todayDate)) {
+      _followUpIds.add(accountId);
+      _todayIds.add(accountId);
+    }
+
+    setState(() {});
+  }
+
+  // Today = in beat plan for today OR has a follow-up due/overdue today.
+  bool _isToday(Map<String, dynamic> w) {
+    final id = '${w['account_id']}';
+    return _todayIds.contains(id) || _followUpIds.contains(id);
+  }
 
   // ── Filtering ───────────────────────────────────────────────────────────────
   bool _matchesFilter(Map<String, dynamic> w) {
     final stage = '${w['stage'] ?? ''}';
     switch (_filter) {
       case 'follow_up':
-        return '${w['next_follow_up'] ?? ''}'.isNotEmpty || w['label'] == kLabelFollowUp;
+        return _followUpIds.contains('${w['account_id']}');
       case 'hot':
         return tempForStage(stage).text == 'Hot';
       case 'high_value':
@@ -133,12 +315,14 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
 
   List<Map<String, dynamic>> get _visible {
     final list = _items.where(_isToday).where(_matchesFilter).where(_matchesSearch).toList();
-    // Uncalled accounts first; called-today accounts sink to the bottom.
-    list.sort((a, b) {
-      final aCalled = _calledToday.contains('${a['account_id']}') ? 1 : 0;
-      final bCalled = _calledToday.contains('${b['account_id']}') ? 1 : 0;
-      return aCalled - bCalled;
-    });
+    // Sort order: follow-up due (0) → beat-plan only (1) → called-today (2).
+    int rank(Map<String, dynamic> w) {
+      final id = '${w['account_id']}';
+      if (_calledToday.contains(id)) return 2;
+      if (_followUpIds.contains(id)) return 0;
+      return 1;
+    }
+    list.sort((a, b) => rank(a) - rank(b));
     return list;
   }
 
@@ -285,9 +469,9 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
     final stage = '${w['stage'] ?? ''}';
     final st = stageStyle(stage);
     final prio = priorityForStage(stage);
-    final seed = '${w['account_id'] ?? business}';
-    final accountId = '${w['account_id']}';
-    final wasCalled = _calledToday.contains(accountId);
+    final accountId    = '${w['account_id']}';
+    final wasCalled    = _calledToday.contains(accountId);
+    final isFollowUp   = _followUpIds.contains(accountId);
     // Shop / business name on top (dark); owner name below (lighter).
     final title = business.isNotEmpty ? business : (person.isNotEmpty ? person : name);
     final owner = (person.isNotEmpty && person != title) ? person : '';
@@ -311,14 +495,6 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(color: avatarColorFor(seed), borderRadius: BorderRadius.circular(13)),
-                    alignment: Alignment.center,
-                    child: Text(initialsOf(title), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white)),
-                  ),
-                  const SizedBox(width: 11),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -333,6 +509,7 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
                         Wrap(spacing: 5, runSpacing: 5, children: [
                           _stagePill(st),
                           _pill(prio.text, prio.color),
+                          if (isFollowUp) _followUpPill(),
                           if (wasCalled) _calledPill(),
                         ]),
                       ],
@@ -386,6 +563,23 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
         child: Text(text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
       );
 
+  Widget _followUpPill() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE53935).withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFE53935).withValues(alpha: 0.4), width: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.schedule_rounded, size: 10, color: Color(0xFFE53935)),
+            SizedBox(width: 4),
+            Text('Follow-up due', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFFE53935))),
+          ],
+        ),
+      );
+
   Widget _calledPill() => Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
         decoration: BoxDecoration(
@@ -411,9 +605,9 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
     return '${d.day} ${months[d.month - 1]}';
   }
 
-  void _pushProfile(Map<String, dynamic> w) {
+  Future<void> _pushProfile(Map<String, dynamic> w) async {
     final accountId = '${w['account_id']}';
-    context.push('/telecaller/profile', extra: {
+    await context.push('/telecaller/profile', extra: {
       'account': {
         'id': w['account_id'],
         'account_id': w['account_id'],
@@ -429,11 +623,14 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
         'label': w['label'],
       },
       'accountType': '${w['account_type'] ?? 'lead'}',
-      'onCalled': () => setState(() => _calledToday.add(accountId)),
+      'onCalled':            () => setState(() => _calledToday.add(accountId)),
+      'onFollowUpScheduled': (String date) => _onFollowUpScheduled(accountId, date),
     });
+    // User navigated back — silently sync to pick up outcome/follow-up changes.
+    if (mounted) _backgroundSync();
   }
 
-  void _openProfile(Map<String, dynamic> w) {
+  Future<void> _openProfile(Map<String, dynamic> w) async {
     final accountId = '${w['account_id']}';
     if (_calledToday.contains(accountId)) {
       final name = '${w['business_name'] ?? w['name'] ?? 'this customer'}'.trim();
@@ -466,7 +663,7 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(ctx).pop();
-                _pushProfile(w);
+                _pushProfile(w); // async, fire-and-forget is fine here
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: kGold,

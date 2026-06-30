@@ -3,6 +3,7 @@ import 'package:fluttertoast/fluttertoast.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 import '../../services/api_service.dart';
+import '../../services/notification_service.dart';
 import 'telecaller_actions.dart';
 import 'telecaller_mock_data.dart';
 
@@ -18,12 +19,14 @@ class TelecallerProfileScreen extends StatefulWidget {
   final Map<String, dynamic> account;
   final String accountType; // 'lead' | 'customer'
   final VoidCallback? onCalled; // notifies worklist when a call is initiated
+  final void Function(String date)? onFollowUpScheduled; // notifies worklist with the new follow-up date
 
   const TelecallerProfileScreen({
     super.key,
     required this.account,
     required this.accountType,
     this.onCalled,
+    this.onFollowUpScheduled,
   });
 
   @override
@@ -219,14 +222,6 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
       ),
     );
   }
-
-  Widget _avatar(double size, double font) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(color: avatarColorFor(_id.isNotEmpty ? _id : _name), borderRadius: BorderRadius.circular(14)),
-        alignment: Alignment.center,
-        child: Text(initialsOf(_name), style: TextStyle(fontSize: font, fontWeight: FontWeight.w700, color: Colors.white)),
-      );
 
   Widget _qa(Widget iconWidget, String label, Color color, VoidCallback onTap) => Expanded(
         child: InkWell(
@@ -744,12 +739,13 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
     if (ok) {
       _toast('Follow-up marked done');
       _load();
+      NotificationService.cancelFollowUpReminders(_id);
     } else {
       _toast('Could not update');
     }
   }
 
-  Future<void> _scheduleFollowUp(String date, String summary) async {
+  Future<void> _scheduleFollowUp(String date, String summary, DateTime? followUpDateTime) async {
     setState(() => _busy = true);
     final res = await ApiService.createCallLog({
       'account_id': _id,
@@ -763,6 +759,11 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
     if (res != null) {
       _toast('Follow-up scheduled');
       _load();
+      final d = DateTime.tryParse(date);
+      final fuTime = followUpDateTime ??
+          (d != null ? DateTime(d.year, d.month, d.day, 9, 0) : DateTime.now().add(const Duration(hours: 1)));
+      NotificationService.scheduleFollowUpReminders(_id, _name, fuTime);
+      widget.onFollowUpScheduled?.call(date);
     } else {
       _toast('Could not schedule');
     }
@@ -787,6 +788,7 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
           if (res != null) {
             _toast('Outcome saved · ${kOutcomeLabels[outcome] ?? outcome}');
             _load();
+            NotificationService.cancelFollowUpReminders(_id);
             return true;
           }
           _toast('Could not save');
@@ -1039,7 +1041,7 @@ class _OutcomeSheetState extends State<_OutcomeSheet> {
 // ── Schedule-follow-up form card ────────────────────────────────────────────────
 class _ScheduleFollowUp extends StatefulWidget {
   final bool busy;
-  final Future<void> Function(String date, String summary) onSchedule;
+  final Future<void> Function(String date, String summary, DateTime? followUpDateTime) onSchedule;
   const _ScheduleFollowUp({required this.busy, required this.onSchedule});
 
   @override
@@ -1152,12 +1154,18 @@ class _ScheduleFollowUpState extends State<_ScheduleFollowUp> {
       return;
     }
     final d = _date!;
+    final t = _time ?? const TimeOfDay(hour: 9, minute: 0);
+    final followUpDateTime = DateTime(d.year, d.month, d.day, t.hour, t.minute);
+    if (followUpDateTime.isBefore(DateTime.now())) {
+      Fluttertoast.showToast(msg: 'Follow-up time is in the past', backgroundColor: Colors.red, textColor: Colors.white);
+      return;
+    }
     final dateStr = '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
     final bits = <String>['Follow-up [$_priority]'];
-    if (_time != null) bits.add(_time!.format(context));
+    bits.add(t.format(context));
     final purpose = _purpose.text.trim();
     if (purpose.isNotEmpty) bits.add('— $purpose');
-    widget.onSchedule(dateStr, bits.join(' '));
+    widget.onSchedule(dateStr, bits.join(' '), followUpDateTime);
   }
 
   Future<void> _pickDate() async {
@@ -1176,8 +1184,23 @@ class _ScheduleFollowUpState extends State<_ScheduleFollowUp> {
   }
 
   Future<void> _pickTime() async {
-    final picked = await showTimePicker(context: context, initialTime: _time ?? const TimeOfDay(hour: 16, minute: 30));
-    if (picked != null) setState(() => _time = picked);
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _time ?? const TimeOfDay(hour: 16, minute: 30),
+    );
+    if (picked == null) return;
+    // Reject past times when the selected date is today
+    final now = DateTime.now();
+    final d = _date ?? now;
+    final isToday = d.year == now.year && d.month == now.month && d.day == now.day;
+    if (isToday) {
+      final pickedDt = DateTime(now.year, now.month, now.day, picked.hour, picked.minute);
+      if (pickedDt.isBefore(now)) {
+        Fluttertoast.showToast(msg: 'Pick a future time for today', backgroundColor: Colors.red, textColor: Colors.white);
+        return;
+      }
+    }
+    setState(() => _time = picked);
   }
 
   Widget _label(String t) => Text(t.toUpperCase(),

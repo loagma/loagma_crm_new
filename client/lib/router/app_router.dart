@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../screens/auth/login_screen.dart';
@@ -266,9 +267,10 @@ final appRouter = GoRouter(
       builder: (context, state) {
         final extra = state.extra as Map<String, dynamic>? ?? {};
         return TelecallerProfileScreen(
-          account:     extra['account']     as Map<String, dynamic>? ?? {},
-          accountType: extra['accountType'] as String?               ?? 'lead',
-          onCalled:    extra['onCalled']    as VoidCallback?,
+          account:               extra['account']               as Map<String, dynamic>? ?? {},
+          accountType:           extra['accountType']           as String?               ?? 'lead',
+          onCalled:              extra['onCalled']              as VoidCallback?,
+          onFollowUpScheduled:   extra['onFollowUpScheduled']   as void Function(String)?,
         );
       },
     ),
