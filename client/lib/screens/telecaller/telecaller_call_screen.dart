@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -309,7 +310,7 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                       onPressed: contact.isNotEmpty ? _openWhatsApp : null,
-                      icon: const Icon(Icons.chat_rounded, size: 18),
+                      icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 18),
                       label: const Text('WhatsApp',
                           style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                     ),

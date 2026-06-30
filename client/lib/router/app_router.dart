@@ -268,6 +268,7 @@ final appRouter = GoRouter(
         return TelecallerProfileScreen(
           account:     extra['account']     as Map<String, dynamic>? ?? {},
           accountType: extra['accountType'] as String?               ?? 'lead',
+          onCalled:    extra['onCalled']    as VoidCallback?,
         );
       },
     ),

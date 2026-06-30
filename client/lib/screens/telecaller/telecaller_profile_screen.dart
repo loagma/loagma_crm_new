@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 import '../../services/api_service.dart';
 import 'telecaller_actions.dart';
@@ -16,20 +17,24 @@ import 'telecaller_mock_data.dart';
 class TelecallerProfileScreen extends StatefulWidget {
   final Map<String, dynamic> account;
   final String accountType; // 'lead' | 'customer'
+  final VoidCallback? onCalled; // notifies worklist when a call is initiated
 
   const TelecallerProfileScreen({
     super.key,
     required this.account,
     required this.accountType,
+    this.onCalled,
   });
 
   @override
   State<TelecallerProfileScreen> createState() => _TelecallerProfileScreenState();
 }
 
-class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
+class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
+    with WidgetsBindingObserver {
   bool _loading = true;
   bool _busy = false;
+  bool _callInitiated = false;
   int _tab = 0; // 0 Overview · 1 Activity · 2 Orders · 3 Follow-up
 
   /// Merged account detail (full lead record when available, else the row we
@@ -46,8 +51,35 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _acc = Map<String, dynamic>.from(widget.account);
     _load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _callInitiated) {
+      _callInitiated = false;
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) _openOutcomeSheet();
+      });
+    }
+  }
+
+  Future<void> _callAndLog() async {
+    if (_phone.isEmpty) {
+      _toast('No phone number on file');
+      return;
+    }
+    _callInitiated = true;
+    widget.onCalled?.call();
+    await launchPhoneCall(_phone);
   }
 
   Future<void> _load() async {
@@ -124,7 +156,6 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
         ),
         actions: [IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load)],
       ),
-      bottomNavigationBar: _footerBar(),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: kGold))
           : RefreshIndicator(
@@ -150,42 +181,38 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
   Widget _headerCard() {
     final st = stageStyle(_stage);
     final badge = _activityBadge;
-    final prog = stageProgress(_stage);
     return _card(
       child: Column(
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _avatar(48, 18),
-              const SizedBox(width: 12),
+              // _avatar(64, 24),
+              // const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (_code.isNotEmpty)
-                      Text('#$_code', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Colors.grey.shade400, letterSpacing: .3)),
-                    Text(_name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, height: 1.15)),
+                      Text('#$_code', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Colors.grey.shade400, letterSpacing: .3)),
+                    Text(_name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, height: 1.2)),
                     if (_person.isNotEmpty && _person != _name)
-                      Text(_person, style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-                    const SizedBox(height: 6),
+                      Text(_person, style: TextStyle(fontSize: 13.5, color: Colors.grey.shade500)),
+                    const SizedBox(height: 8),
                     Wrap(spacing: 6, runSpacing: 4, children: [_pill(st.text, st.color), _pill(badge.text, badge.color)]),
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              _ring(prog, st.color),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 18),
           Row(
             children: [
-              _qa(Icons.call_rounded, 'Call', const Color(0xFF2F9E57), () => launchPhoneCall(_phone)),
-              _qa(Icons.chat_rounded, 'WhatsApp', const Color(0xFF25D366), () => launchWhatsApp(_phone)),
-              _qa(Icons.mail_rounded, 'Email', const Color(0xFF3B6FD4), _emailAction),
-              _qa(Icons.shopping_bag_rounded, 'Order', kGoldDark, _openOrderSheet),
-              _qa(Icons.event_rounded, 'Follow-up', const Color(0xFFD98A2B), () => setState(() => _tab = 3)),
-              _qa(Icons.add_ic_call_rounded, 'Log Call', const Color(0xFF7C5CD6), _openOutcomeSheet),
+              _qa(const Icon(Icons.call_rounded, size: 22, color: Color(0xFF2F9E57)), 'Call', const Color(0xFF2F9E57), _callAndLog),
+              _qa(const FaIcon(FontAwesomeIcons.whatsapp, size: 22, color: Color(0xFF25D366)), 'WhatsApp', const Color(0xFF25D366), () => launchWhatsApp(_phone)),
+              _qa(const Icon(Icons.mail_rounded, size: 22, color: Color(0xFF3B6FD4)), 'Email', const Color(0xFF3B6FD4), _emailAction),
+              _qa(Icon(Icons.shopping_bag_rounded, size: 22, color: kGoldDark), 'Order', kGoldDark, _openOrderSheet),
+              _qa(const Icon(Icons.event_rounded, size: 22, color: Color(0xFFD98A2B)), 'Follow-up', const Color(0xFFD98A2B), () => setState(() => _tab = 3)),
             ],
           ),
         ],
@@ -201,7 +228,7 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
         child: Text(initialsOf(_name), style: TextStyle(fontSize: font, fontWeight: FontWeight.w700, color: Colors.white)),
       );
 
-  Widget _qa(IconData icon, String label, Color color, VoidCallback onTap) => Expanded(
+  Widget _qa(Widget iconWidget, String label, Color color, VoidCallback onTap) => Expanded(
         child: InkWell(
           onTap: _busy ? null : onTap,
           borderRadius: BorderRadius.circular(10),
@@ -210,41 +237,20 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
             child: Column(
               children: [
                 Container(
-                  height: 40,
-                  width: 40,
+                  height: 50,
+                  width: 50,
                   decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
-                  child: Icon(icon, size: 18, color: color),
+                  alignment: Alignment.center,
+                  child: iconWidget,
                 ),
-                const SizedBox(height: 4),
-                Text(label, style: TextStyle(fontSize: 9, color: Colors.grey.shade600, fontWeight: FontWeight.w600), textAlign: TextAlign.center),
+                const SizedBox(height: 5),
+                Text(label, style: TextStyle(fontSize: 10, color: Colors.grey.shade600, fontWeight: FontWeight.w600), textAlign: TextAlign.center),
               ],
             ),
           ),
         ),
       );
 
-  Widget _ring(int value, Color color) {
-    return SizedBox(
-      width: 46,
-      height: 46,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          SizedBox(
-            width: 46,
-            height: 46,
-            child: CircularProgressIndicator(
-              value: value / 100,
-              strokeWidth: 4,
-              backgroundColor: Colors.grey.shade200,
-              valueColor: AlwaysStoppedAnimation(color),
-            ),
-          ),
-          Text('$value', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: color)),
-        ],
-      ),
-    );
-  }
 
   // ── Tab bar ─────────────────────────────────────────────────────────────────
   Widget _tabBar() {
@@ -282,13 +288,12 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
     final st = stageStyle(_stage);
     return [
       _sectionCard('Basic information', [
-        _info('Phone', _phone.isEmpty ? '—' : '+91 $_phone', full: true),
-        _info('Email', _email.isEmpty ? '—' : _email, full: true),
-        _info('Company', _name),
-        _info('Type', '${_acc['businessType'] ?? '—'}'),
-        _info('Address', '${_acc['address'] ?? '—'}', full: true),
+        _info('Phone', _phone.isEmpty ? '—' : '+91 $_phone'),
+        _info('Email', _email.isEmpty ? '—' : _email),
+        _info('Address', '${_acc['address'] ?? '—'}'),
         _info('City', '${_acc['city'] ?? _acc['area'] ?? '—'}'),
         _info('GST', '${_acc['gstNumber'] ?? '—'}'),
+        _info('Type', '${_acc['businessType'] ?? '—'}'),
       ]),
       _sectionCard('Sales information', [
         _info('Stage', st.text),
@@ -770,6 +775,7 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
       backgroundColor: Colors.transparent,
       builder: (_) => _OutcomeSheet(
         name: _name,
+        onFollowUp: () => setState(() => _tab = 3),
         onSave: (outcome, note) async {
           final res = await ApiService.createCallLog({
             'account_id': _id,
@@ -790,49 +796,6 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
     );
   }
 
-  Widget _footerBar() {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 52,
-              height: 50,
-              child: OutlinedButton(
-                onPressed: () => launchWhatsApp(_phone),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF25D366),
-                  side: const BorderSide(color: Color(0x3325D366)),
-                  backgroundColor: const Color(0x1425D366),
-                  padding: EdgeInsets.zero,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-                child: const Icon(Icons.chat_rounded, size: 22),
-              ),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: SizedBox(
-                height: 50,
-                child: ElevatedButton.icon(
-                  onPressed: _busy ? null : _openOutcomeSheet,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kGold,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                  icon: const Icon(Icons.add_ic_call_rounded, size: 19),
-                  label: const Text('Log Call Outcome', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   // ── Small shared widgets / helpers ──────────────────────────────────────────
   void _toast(String m) => Fluttertoast.showToast(msg: m, backgroundColor: kGoldDark, textColor: Colors.white);
@@ -855,13 +818,13 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _cardTitle(title),
-            const SizedBox(height: 12),
-            Wrap(runSpacing: 13, children: infos),
+            const SizedBox(height: 8),
+            Wrap(runSpacing: 10, children: infos),
           ],
         ),
       );
 
-  Widget _cardTitle(String t) => Text(t, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Colors.black87));
+  Widget _cardTitle(String t) => Text(t, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.black87));
 
   Widget _info(String label, String value, {bool full = false}) => SizedBox(
         width: full ? double.infinity : (MediaQuery.of(context).size.width - 24 - 28) / 2 - 1,
@@ -870,8 +833,8 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
           children: [
             Text(label.toUpperCase(),
                 style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, letterSpacing: .5, color: Colors.grey.shade400)),
-            const SizedBox(height: 3),
-            Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Color(0xFF20242B))),
+            const SizedBox(height: 2),
+            Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF20242B))),
           ],
         ),
       );
@@ -937,7 +900,8 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen> {
 class _OutcomeSheet extends StatefulWidget {
   final String name;
   final Future<bool> Function(String outcome, String note) onSave;
-  const _OutcomeSheet({required this.name, required this.onSave});
+  final VoidCallback onFollowUp;
+  const _OutcomeSheet({required this.name, required this.onSave, required this.onFollowUp});
 
   @override
   State<_OutcomeSheet> createState() => _OutcomeSheetState();
@@ -1021,7 +985,22 @@ class _OutcomeSheetState extends State<_OutcomeSheet> {
               focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: kGold)),
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.of(context).pop();
+              widget.onFollowUp();
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: kGoldDark,
+              side: const BorderSide(color: kGold),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
+              minimumSize: const Size(double.infinity, 44),
+            ),
+            icon: const Icon(Icons.event_rounded, size: 17),
+            label: const Text('Set Follow-up', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+          ),
+          const SizedBox(height: 12),
           SizedBox(
             height: 50,
             width: double.infinity,

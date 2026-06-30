@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
+import '../../services/notification_service.dart';
 import 'telecaller_mock_data.dart';
 
 /// Worklist — Customers-style list (mockup): search, filter chips, and rich
@@ -22,6 +23,8 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
   List<Map<String, dynamic>> _items = [];
   // account_id's scheduled in the beat plan for today — the worklist scopes to these.
   Set<String> _todayIds = {};
+  // account_id's that the telecaller has called in this session.
+  Set<String> _calledToday = {};
   String _filter = 'all';
   String _search = '';
   final _searchCtrl = TextEditingController();
@@ -39,6 +42,7 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
   void initState() {
     super.initState();
     _load();
+    NotificationService.checkFollowUps();
   }
 
   @override
@@ -127,8 +131,16 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
     return hay.contains(q);
   }
 
-  List<Map<String, dynamic>> get _visible =>
-      _items.where(_isToday).where(_matchesFilter).where(_matchesSearch).toList();
+  List<Map<String, dynamic>> get _visible {
+    final list = _items.where(_isToday).where(_matchesFilter).where(_matchesSearch).toList();
+    // Uncalled accounts first; called-today accounts sink to the bottom.
+    list.sort((a, b) {
+      final aCalled = _calledToday.contains('${a['account_id']}') ? 1 : 0;
+      final bCalled = _calledToday.contains('${b['account_id']}') ? 1 : 0;
+      return aCalled - bCalled;
+    });
+    return list;
+  }
 
   int _countFor(String key) {
     final old = _filter;
@@ -274,6 +286,8 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
     final st = stageStyle(stage);
     final prio = priorityForStage(stage);
     final seed = '${w['account_id'] ?? business}';
+    final accountId = '${w['account_id']}';
+    final wasCalled = _calledToday.contains(accountId);
     // Shop / business name on top (dark); owner name below (lighter).
     final title = business.isNotEmpty ? business : (person.isNotEmpty ? person : name);
     final owner = (person.isNotEmpty && person != title) ? person : '';
@@ -319,6 +333,7 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
                         Wrap(spacing: 5, runSpacing: 5, children: [
                           _stagePill(st),
                           _pill(prio.text, prio.color),
+                          if (wasCalled) _calledPill(),
                         ]),
                       ],
                     ),
@@ -371,6 +386,23 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
         child: Text(text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
       );
 
+  Widget _calledPill() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+        decoration: BoxDecoration(
+          color: const Color(0xFF2F9E57).withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFF2F9E57).withValues(alpha: 0.4), width: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.check_circle_rounded, size: 10, color: Color(0xFF2F9E57)),
+            SizedBox(width: 4),
+            Text('Called', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF2F9E57))),
+          ],
+        ),
+      );
+
   String _fmtDate(String? iso) {
     if (iso == null || iso.isEmpty || iso == 'null') return '—';
     final d = DateTime.tryParse(iso);
@@ -379,7 +411,8 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
     return '${d.day} ${months[d.month - 1]}';
   }
 
-  void _openProfile(Map<String, dynamic> w) {
+  void _pushProfile(Map<String, dynamic> w) {
+    final accountId = '${w['account_id']}';
     context.push('/telecaller/profile', extra: {
       'account': {
         'id': w['account_id'],
@@ -396,6 +429,57 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen> {
         'label': w['label'],
       },
       'accountType': '${w['account_type'] ?? 'lead'}',
+      'onCalled': () => setState(() => _calledToday.add(accountId)),
     });
+  }
+
+  void _openProfile(Map<String, dynamic> w) {
+    final accountId = '${w['account_id']}';
+    if (_calledToday.contains(accountId)) {
+      final name = '${w['business_name'] ?? w['name'] ?? 'this customer'}'.trim();
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          title: Row(
+            children: const [
+              Icon(Icons.check_circle_rounded, color: Color(0xFF2F9E57), size: 22),
+              SizedBox(width: 8),
+              Text('Already Called', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+            ],
+          ),
+          content: Text(
+            'You already called $name today. Do you want to call again?',
+            style: const TextStyle(fontSize: 14),
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          actions: [
+            OutlinedButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.grey.shade600,
+                side: BorderSide(color: Colors.grey.shade300),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('Skip'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                _pushProfile(w);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kGold,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('Call Again'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    _pushProfile(w);
   }
 }
