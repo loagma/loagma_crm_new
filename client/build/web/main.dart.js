@@ -35935,7 +35935,7 @@ case 3:s=6
 return A.k(A.jg(p,B.lQ),$async$aam)
 case 6:case 4:case 1:return A.r(q,r)}})
 return A.t($async$aam,r)},
-bG(){return"http://localhost:8000"},
+bG(){return"https://loagma-crm-new-1.onrender.com"},
 VX(){var s=0,r=A.u(t.H),q,p
 var $async$VX=A.p(function(a,b){if(a===1)return A.q(b,r)
 for(;;)switch(s){case 0:if($.apl){s=1
