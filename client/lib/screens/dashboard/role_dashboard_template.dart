@@ -18,9 +18,12 @@ class RoleDashboardTemplate extends StatefulWidget {
 class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
   int _pendingCount = 0;
 
+  // Any role above the leaf submitter roles (salesman/telecaller) can be an
+  // approver somewhere in the hierarchy, so gate on exclusion rather than an
+  // allow-list — this keeps working if new incharge-type roles are added.
   bool get _showBell {
-    final r = widget.role.toLowerCase();
-    return r == 'admin' || r == 'incharge' || r == 'head_incharge';
+    final r = widget.role.toLowerCase().trim();
+    return r.isNotEmpty && r != 'salesman' && r != 'telecaller';
   }
 
   @override

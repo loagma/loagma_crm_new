@@ -19,12 +19,12 @@ class _EmployeeHomeScreenState extends State<EmployeeHomeScreen> {
 
   int _pendingCount = 0;
 
+  // Any role above the leaf submitter roles (salesman/telecaller) can be an
+  // approver somewhere in the hierarchy, so gate on exclusion rather than an
+  // allow-list — this keeps working if new incharge-type roles are added.
   bool get _showBell {
-    final r = widget.role.toLowerCase();
-    return r == 'incharge' ||
-        r == 'head_incharge' ||
-        r == 'zonal_incharge' ||
-        r == 'area_incharge';
+    final r = widget.role.toLowerCase().trim();
+    return r.isNotEmpty && r != 'salesman' && r != 'telecaller';
   }
 
   @override
