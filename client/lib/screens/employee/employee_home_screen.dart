@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
+import '../../services/notification_service.dart';
 import '../../services/user_service.dart';
 import '../../widgets/app_drawer.dart';
 
@@ -18,6 +21,7 @@ class _EmployeeHomeScreenState extends State<EmployeeHomeScreen> {
   static const _accent2 = Color(0xFFC09E3E);
 
   int _pendingCount = 0;
+  Timer? _pollTimer;
 
   // Any role above the leaf submitter roles (salesman/telecaller) can be an
   // approver somewhere in the hierarchy, so gate on exclusion rather than an
@@ -30,12 +34,33 @@ class _EmployeeHomeScreenState extends State<EmployeeHomeScreen> {
   @override
   void initState() {
     super.initState();
-    if (_showBell) _loadPendingCount();
+    if (_showBell) {
+      _loadPendingCount();
+      // Poll while this screen is alive so approvers get a device
+      // notification the moment a new request comes in below them.
+      _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) => _loadPendingCount());
+    }
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadPendingCount() async {
     final count = await ApiService.adminPendingCount();
-    if (mounted) setState(() => _pendingCount = count);
+    if (!mounted) return;
+    if (count > _pendingCount) {
+      NotificationService.showNow(
+        id: 9100,
+        title: 'Attendance approval needed',
+        body: count == 1
+            ? 'You have 1 pending punch request to review.'
+            : 'You have $count pending punch requests to review.',
+      );
+    }
+    setState(() => _pendingCount = count);
   }
 
   Future<void> _logout(BuildContext context) async {

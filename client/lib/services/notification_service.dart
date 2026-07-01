@@ -89,6 +89,39 @@ class NotificationService {
     return (raw % 333333) * 3 + 100; // +100 avoids old hard-coded IDs 1 & 2
   }
 
+  /// Fire an immediate (non-scheduled) local notification — used for
+  /// attendance-approval events (new request to review / your request was
+  /// approved-rejected) detected while this device's app is polling.
+  static Future<void> showNow({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    if (!_initialized) return;
+    try {
+      const android = AndroidNotificationDetails(
+        'approval_channel',
+        'Attendance Approvals',
+        channelDescription: 'Punch in/out approval requests and results',
+        importance: Importance.high,
+        priority: Priority.high,
+      );
+      const ios = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+      await _plugin.show(
+        id,
+        title,
+        body,
+        const NotificationDetails(android: android, iOS: ios),
+      );
+    } catch (e) {
+      debugPrint('NotificationService.showNow error: $e');
+    }
+  }
+
   static Future<void> _scheduleOne({
     required int id,
     required String title,

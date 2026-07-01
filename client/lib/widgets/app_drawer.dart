@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../services/api_service.dart';
+import '../services/notification_service.dart';
 
 class AppDrawer extends StatelessWidget {
   final String role;
@@ -553,7 +554,21 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
 
       final record = res?['data'];
       if (record != null && record is Map) {
+        final prevStatus = _attendanceStatus;
         _attendanceStatus = record['status'] as String? ?? 'on_time';
+
+        // Notify once, the moment our own pending request gets a verdict.
+        if (prevStatus == 'pending' &&
+            (_attendanceStatus == 'approved' || _attendanceStatus == 'rejected')) {
+          final approved = _attendanceStatus == 'approved';
+          NotificationService.showNow(
+            id: 9200,
+            title: approved ? 'Attendance approved' : 'Attendance rejected',
+            body: approved
+                ? 'Your punch request was approved. Confirm with photo to continue.'
+                : 'Your punch request was rejected.',
+          );
+        }
 
         final punchInStr = record['punch_in_time'] as String?;
         final punchOutStr = record['punch_out_time'] as String?;
