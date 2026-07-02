@@ -395,6 +395,15 @@ class _AreaCard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        Text(
+                          'Marketing Area',
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
                         Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                         const SizedBox(height: 2),
                         Text('ID: $id --- $pincodeCount pincodes ', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
