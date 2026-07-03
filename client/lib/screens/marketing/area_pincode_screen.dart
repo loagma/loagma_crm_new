@@ -492,9 +492,23 @@ class _AreaPincodeScreenState extends State<AreaPincodeScreen> {
                                         ),
                                         const SizedBox(width: 12),
                                         Expanded(
-                                          child: Text(
-                                            p,
-                                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: 1),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'Pincode',
+                                                style: TextStyle(
+                                                  fontSize: 9.5,
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: 0.3,
+                                                  color: Colors.grey.shade600,
+                                                ),
+                                              ),
+                                              Text(
+                                                p,
+                                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: 1),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                         IconButton(

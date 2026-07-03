@@ -377,19 +377,63 @@ class _AllottedCustomerAccountsScreenState
     }
 
     if (alreadyAssigned.isNotEmpty && mounted) {
-      final lines = alreadyAssigned.map((a) {
-        final plan = _beatPlans[a['id'] as String]!;
-        final name = a['businessName'] as String? ?? a['shop_name'] as String? ?? 'Account';
-        return '• $name  (${_planLabelFrom(plan)})';
-      }).join('\n');
-
       final proceed = await showDialog<bool>(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => AlertDialog(
           title: const Text('Already Assigned'),
-          content: Text(
-            'The following account(s) already have a beat plan:\n\n$lines\n\nDo you want to reassign them?',
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('The following account(s) already have a beat plan:'),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 320),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: alreadyAssigned.length,
+                      separatorBuilder: (_, _) => const Divider(height: 16),
+                      itemBuilder: (_, i) {
+                        final a = alreadyAssigned[i];
+                        final plan = _beatPlans[a['id'] as String]!;
+                        final name = a['businessName'] as String? ?? a['shop_name'] as String? ?? 'Account';
+                        final isLead = (a['_type'] as String?) == 'lead';
+                        final code = a['accountCode'] as String? ?? '';
+                        final phone = a['contactNumber'] as String? ?? '';
+                        final pincode = a['pincode'] as String? ?? '';
+                        final detailParts = [
+                          isLead ? 'Lead' : 'Customer',
+                          if (code.isNotEmpty) code,
+                          if (pincode.isNotEmpty) 'Pin $pincode',
+                          if (phone.isNotEmpty) phone,
+                        ];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 2),
+                            Text(
+                              detailParts.join(' · '),
+                              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                            ),
+                            Text(
+                              _planLabelFrom(plan),
+                              style: const TextStyle(fontSize: 12, color: Colors.black87),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text('Do you want to reassign them?'),
+              ],
+            ),
           ),
           actions: [
             TextButton(

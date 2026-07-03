@@ -586,6 +586,12 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            Text('Marketing Area',
+                                style: TextStyle(
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.3,
+                                    color: Colors.grey.shade600)),
                             Text(areaName, style: TextStyle(
                               fontSize: 13.5,
                               fontWeight: FontWeight.w700,
