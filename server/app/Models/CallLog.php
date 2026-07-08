@@ -20,7 +20,7 @@ class CallLog extends Model
     ];
 
     protected $casts = [
-        'follow_up_date' => 'date',
+        'follow_up_date' => 'date:Y-m-d', // plain day — default UTC-Z serialization shifts IST dates a day back
         'called_at'      => 'datetime',
         'callback_done'  => 'boolean',
     ];

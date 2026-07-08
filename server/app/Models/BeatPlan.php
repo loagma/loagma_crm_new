@@ -29,9 +29,9 @@ class BeatPlan extends Model
         'month_date'        => 'integer',
         'specific_dates'    => 'array',
         'appointment_date'  => 'datetime',
-        'week_anchor_date'  => 'date',
+        'week_anchor_date'  => 'date:Y-m-d', // plain day — default UTC-Z serialization shifts IST dates a day back
         'interval_days'     => 'integer',
-        'start_date'        => 'date',
+        'start_date'        => 'date:Y-m-d',
         'is_active'         => 'boolean',
     ];
 

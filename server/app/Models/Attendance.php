@@ -49,7 +49,7 @@ class Attendance extends Model
         'punch_out_time'     => 'datetime',
         'approved_at'        => 'datetime',
         'last_ping_at'       => 'datetime',
-        'date'               => 'date',
+        'date'               => 'date:Y-m-d', // plain day — default UTC-Z serialization shifts IST dates a day back
     ];
 
     public function employee(): BelongsTo

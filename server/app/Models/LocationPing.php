@@ -33,7 +33,7 @@ class LocationPing extends Model
         'battery'     => 'integer',
         'is_mock'     => 'boolean',
         'recorded_at' => 'datetime',
-        'date'        => 'date',
+        'date'        => 'date:Y-m-d', // plain day — default UTC-Z serialization shifts IST dates a day back
     ];
 
     public function employee(): BelongsTo

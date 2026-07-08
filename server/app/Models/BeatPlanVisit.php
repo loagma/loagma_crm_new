@@ -19,7 +19,7 @@ class BeatPlanVisit extends Model
     ];
 
     protected $casts = [
-        'visit_date' => 'date',
+        'visit_date' => 'date:Y-m-d', // plain day — default UTC-Z serialization shifts IST dates a day back
     ];
 
     public function beatPlan(): BelongsTo

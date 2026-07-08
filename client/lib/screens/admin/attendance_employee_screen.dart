@@ -95,15 +95,21 @@ class _AttendanceEmployeeScreenState extends State<AttendanceEmployeeScreen> {
       '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
 
   /// Extract the 'yyyy-mm-dd' portion from a record's date string.
+  /// Parses and converts to local time first: a UTC-serialized date
+  /// ("...T18:30:00Z") substring'd directly lands on the previous day.
   String? _keyOf(String? raw) {
     if (raw == null) return null;
+    final d = DateTime.tryParse(raw)?.toLocal();
+    if (d != null) {
+      return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    }
     return raw.length >= 10 ? raw.substring(0, 10) : raw;
   }
 
   String _fmtDate(String? raw) {
     if (raw == null) return '—';
     try {
-      final d = DateTime.parse(raw);
+      final d = DateTime.parse(raw).toLocal();
       return '${_wk[d.weekday-1]}, ${d.day.toString().padLeft(2,'0')} ${_mo[d.month-1]} ${d.year}';
     } catch (_) { return raw; }
   }
