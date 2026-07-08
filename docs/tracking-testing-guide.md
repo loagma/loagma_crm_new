@@ -1,6 +1,25 @@
 # GPS Tracking — How to Test Everything (Phase 2)
 
 Test account: mobile **9876500001** (Aman Sharma, salesman) · OTP **5555** · device A069.
+> ⚠️ 2026-07-08: account 9876500001 was deleted from deli_staff; current test salesman is **9000400001** (same OTP).
+
+## Timezone convention (read before touching any timestamp)
+
+The authoritative version lives in the doc-comment at the top of
+`server/app/Http/Controllers/TrackingController.php`. Summary:
+
+- DB stores **naive Asia/Kolkata wall-clock**; the DB session tz is UTC, so never
+  use `NOW()`/`CURRENT_TIMESTAMP` against these columns.
+- Inbound client timestamps are UTC-`Z`; always
+  `Carbon::parse(...)->setTimezone(config('app.timezone'))` before storing/comparing.
+- Outbound JSON datetimes are UTC-`Z` (Laravel default); Flutter must
+  `DateTime.parse(...).toLocal()` — never `substring()` a datetime.
+- Date-only columns must use the `'date:Y-m-d'` cast, or serialization shifts
+  the day back by one (this bug shipped four times before this note existed).
+
+Simulated test data rule: any pings injected by hand/script MUST set
+`is_mock: true`, or be deleted in the same session — otherwise they are
+indistinguishable from real routes in Phase 5 history.
 
 ---
 

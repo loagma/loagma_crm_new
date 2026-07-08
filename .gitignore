@@ -1,0 +1,6 @@
+# JVM crash dumps and replay logs (Gradle/AS crashes)
+hs_err_pid*.log
+replay_pid*.log
+
+# Local tooling binaries
+server/composer.phar
