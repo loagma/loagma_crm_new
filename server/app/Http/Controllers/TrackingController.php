@@ -5,16 +5,35 @@ namespace App\Http\Controllers;
 use App\Models\Attendance;
 use App\Models\DeliStaff;
 use App\Models\LocationPing;
+use App\Support\RouteDistance;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
+/**
+ * TIMEZONE CONVENTION (applies to all tracking + attendance code; see
+ * docs/tracking-testing-guide.md §Timezone):
+ *
+ *  - DB datetime columns store naive Asia/Kolkata (config('app.timezone'))
+ *    wall-clock. The DB session timezone is UTC (`SYSTEM`), so DB-side time
+ *    functions (NOW(), CURRENT_TIMESTAMP defaults) must NEVER be used against
+ *    these columns — build times in PHP.
+ *  - Every timestamp arriving from a client (ping recorded_at, ?since=) is
+ *    UTC ISO-8601 with Z; normalize with
+ *    Carbon::parse(...)->setTimezone(config('app.timezone')) BEFORE any store
+ *    or comparison.
+ *  - Outbound: Laravel's default serializeDate converts datetime casts to
+ *    UTC-Z; Flutter must DateTime.parse(...) (never substring) and .toLocal()
+ *    for display. Date-only columns use the 'date:Y-m-d' cast — the default
+ *    UTC-Z serialization would shift IST dates to the previous day.
+ */
 class TrackingController extends Controller
 {
     private const MAX_ACCURACY_METERS = 50;
     private const MAX_SPEED_KMH = 150;
-    private const INTERRUPTED_GAP_MINUTES = 5;
+    // Same threshold the distance gap-exclusion uses — keep them in lockstep.
+    private const INTERRUPTED_GAP_MINUTES = RouteDistance::GAP_MINUTES;
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -23,16 +42,6 @@ class TrackingController extends Controller
         // Same proven pattern as AttendanceController::authMobile() — the
         // default guard is web/session, so auth() resolves to null here.
         return JWTAuth::parseToken()->authenticate()->mobile;
-    }
-
-    private function haversineKm(float $lat1, float $lng1, float $lat2, float $lng2): float
-    {
-        $earthRadiusKm = 6371;
-        $dLat = deg2rad($lat2 - $lat1);
-        $dLng = deg2rad($lng2 - $lng1);
-        $a = sin($dLat / 2) ** 2
-            + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
-        return $earthRadiusKm * 2 * atan2(sqrt($a), sqrt(1 - $a));
     }
 
     // ─── Employee: Batch ping ingest ──────────────────────────────────────────
@@ -85,7 +94,7 @@ class TrackingController extends Controller
             if ($anchorAt) {
                 $seconds = abs($recordedAt->diffInSeconds($anchorAt));
                 if ($seconds > 0) {
-                    $km = $this->haversineKm($anchorLat, $anchorLng, (float) $p['lat'], (float) $p['lng']);
+                    $km = RouteDistance::haversineKm($anchorLat, $anchorLng, (float) $p['lat'], (float) $p['lng']);
                     $kmh = $km / ($seconds / 3600);
                     if ($kmh > self::MAX_SPEED_KMH) {
                         continue; // teleport jump — drop
@@ -121,15 +130,25 @@ class TrackingController extends Controller
 
         $attendance = Attendance::where('employee_mobile', $mobile)->where('date', $today)->first();
         if ($attendance) {
+            $prevPingAt = $attendance->last_ping_at
+                ? Carbon::parse($attendance->last_ping_at)
+                : null;
+
+            // Forward-only gap check and monotonic last_ping_at: a delayed
+            // offline backlog can arrive AFTER newer live points — it must
+            // neither flag a false interruption nor move last_ping_at back.
             $wasInterrupted = $attendance->was_interrupted;
-            if ($attendance->last_ping_at) {
-                $gapMinutes = Carbon::parse($attendance->last_ping_at)->diffInMinutes($latestAt);
+            if ($prevPingAt && $latestAt->greaterThan($prevPingAt)) {
+                $gapMinutes = $prevPingAt->diffInMinutes($latestAt);
                 if ($gapMinutes > self::INTERRUPTED_GAP_MINUTES) {
                     $wasInterrupted = true;
                 }
             }
+
             $attendance->update([
-                'last_ping_at'    => $latestAt,
+                'last_ping_at'    => $prevPingAt && $prevPingAt->greaterThan($latestAt)
+                    ? $prevPingAt
+                    : $latestAt,
                 'was_interrupted' => $wasInterrupted,
             ]);
         }
@@ -158,10 +177,16 @@ class TrackingController extends Controller
             ->whereNull('punch_out_time')
             ->get();
 
-        $data = $open->map(function (Attendance $a) {
-            $ping = LocationPing::where('employee_mobile', $a->employee_mobile)
-                ->orderByDesc('recorded_at')
-                ->first();
+        $data = $open->map(function (Attendance $a) use ($today) {
+            // TODO(scale): one pings query per on-duty salesman. Fine at the
+            // current fleet size; aggregate/cache when the list grows.
+            $pings = LocationPing::where('employee_mobile', $a->employee_mobile)
+                ->where('date', $today)
+                ->orderBy('recorded_at')
+                ->get(['lat', 'lng', 'battery', 'is_mock', 'recorded_at']);
+
+            $last  = $pings->last();
+            $stats = RouteDistance::stats($pings);
 
             return [
                 'employee_mobile' => $a->employee_mobile,
@@ -170,10 +195,12 @@ class TrackingController extends Controller
                 'start'           => $a->punch_in_location, // {lat, lng} captured at punch-in
                 'last_ping_at'    => $a->last_ping_at,
                 'was_interrupted' => $a->was_interrupted,
-                'lat'             => $ping?->lat,
-                'lng'             => $ping?->lng,
-                'battery'         => $ping?->battery,
-                'is_mock'         => (bool) ($ping?->is_mock),
+                'lat'             => $last?->lat,
+                'lng'             => $last?->lng,
+                'battery'         => $last?->battery,
+                'is_mock'         => (bool) ($last?->is_mock),
+                'distance_km'     => $stats['distance_km'],
+                'has_gaps'        => $stats['has_gaps'],
             ];
         })->values();
 
@@ -195,15 +222,22 @@ class TrackingController extends Controller
         $today  = Carbon::today()->toDateString();
         $mobile = $validated['mobile'];
 
-        $query = LocationPing::where('employee_mobile', $mobile)
+        // Full day's trail in one query: the distance total always spans the
+        // whole day, while the returned points honor ?since= (delta polling).
+        $all = LocationPing::where('employee_mobile', $mobile)
             ->where('date', $today)
-            ->orderBy('recorded_at');
+            ->orderBy('recorded_at')
+            ->get(['lat', 'lng', 'heading', 'battery', 'is_mock', 'recorded_at']);
 
+        $stats = RouteDistance::stats($all);
+
+        $points = $all;
         if (!empty($validated['since'])) {
-            $query->where('recorded_at', '>', Carbon::parse($validated['since']));
+            // Client echoes back the UTC-serialized recorded_at; the column
+            // stores app-timezone wall-clock time, so normalize before comparing.
+            $since  = Carbon::parse($validated['since'])->setTimezone(config('app.timezone'));
+            $points = $all->filter(fn ($p) => $p->recorded_at->greaterThan($since))->values();
         }
-
-        $points = $query->get(['lat', 'lng', 'heading', 'battery', 'is_mock', 'recorded_at']);
 
         $attendance = Attendance::where('employee_mobile', $mobile)
             ->where('date', $today)
@@ -216,6 +250,55 @@ class TrackingController extends Controller
                 'is_active'    => (bool) ($attendance && $attendance->punch_in_time && !$attendance->punch_out_time),
                 'start'        => $attendance?->punch_in_location,
                 'last_ping_at' => $attendance?->last_ping_at,
+                'distance_km'  => $stats['distance_km'],
+                'has_gaps'     => $stats['has_gaps'],
+            ],
+        ]);
+    }
+
+    // ─── Admin: Historical route for one day (Phase 5) ────────────────────────
+
+    public function route(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'mobile' => 'required|string|max:20',
+            'date'   => 'required|date_format:Y-m-d',
+        ]);
+
+        $mobile = $validated['mobile'];
+        $date   = $validated['date'];
+
+        $points = LocationPing::where('employee_mobile', $mobile)
+            ->where('date', $date)
+            ->orderBy('recorded_at')
+            ->get(['lat', 'lng', 'heading', 'battery', 'is_mock', 'recorded_at']);
+
+        $attendance = Attendance::where('employee_mobile', $mobile)
+            ->where('date', $date)
+            ->first();
+
+        $stats    = RouteDistance::stats($points);
+        $isClosed = (bool) ($attendance && $attendance->punch_out_time);
+
+        // Lazy fill: freeze the distance onto the attendance row once, but only
+        // after the shift is closed — storing mid-shift would freeze a partial.
+        if ($attendance && $isClosed && $attendance->total_distance_km === null) {
+            $attendance->update(['total_distance_km' => $stats['distance_km']]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'points'            => $points,
+                'start'             => $attendance?->punch_in_location,
+                'end'               => $attendance?->punch_out_location,
+                'punch_in_time'     => $attendance?->punch_in_time,
+                'punch_out_time'    => $attendance?->punch_out_time,
+                'was_interrupted'   => (bool) ($attendance?->was_interrupted),
+                'auto_closed'       => (bool) ($attendance?->auto_closed),
+                'total_distance_km' => $attendance?->total_distance_km ?? $stats['distance_km'],
+                'has_gaps'          => $stats['has_gaps'],
+                'is_active'         => (bool) ($attendance && $attendance->punch_in_time && !$attendance->punch_out_time),
             ],
         ]);
     }

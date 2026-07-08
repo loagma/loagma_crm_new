@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
+import '../../utils/distance_format.dart';
 
 /// Admin: who is on duty right now.
 ///
@@ -189,7 +190,8 @@ class _LiveSalesmenScreenState extends State<LiveSalesmenScreen> {
           ],
         ),
         subtitle: Text(
-          _lastSeen(item),
+          '${_lastSeen(item)} · 📏 ${formatDistance(item['distance_km'] as num?, hasGaps: item['has_gaps'] == true)}'
+          '${item['has_gaps'] == true ? '\n$kGapWarningText' : ''}',
           style: TextStyle(
               fontSize: 12.5,
               color: stale ? Colors.orange.shade800 : Colors.grey.shade600),

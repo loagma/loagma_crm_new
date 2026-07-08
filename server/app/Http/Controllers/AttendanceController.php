@@ -5,9 +5,12 @@ namespace App\Http\Controllers;
 use App\Models\Attendance;
 use App\Models\DeliStaff;
 use App\Models\InchargeAssign;
+use App\Models\LocationPing;
+use App\Support\RouteDistance;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
@@ -192,6 +195,19 @@ class AttendanceController extends Controller
             'total_break_minutes' => $breakMinutes,
             'status'              => $status,
         ]);
+
+        // Tracking add-on (purely additive): freeze today's route distance onto
+        // the closed shift. History reads fall back to computing when this is
+        // null, so a failure here must never block the punch-out itself.
+        try {
+            $pings = LocationPing::where('employee_mobile', $mobile)
+                ->where('date', $today)
+                ->orderBy('recorded_at')
+                ->get(['lat', 'lng', 'recorded_at']);
+            $record->update(['total_distance_km' => RouteDistance::stats($pings)['distance_km']]);
+        } catch (\Throwable $e) {
+            Log::warning("punchOut distance fill failed for {$mobile}: {$e->getMessage()}");
+        }
 
         return response()->json(['success' => true, 'data' => $record->fresh()]);
     }

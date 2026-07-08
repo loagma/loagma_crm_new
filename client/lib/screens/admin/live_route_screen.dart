@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../services/api_service.dart';
+import '../../utils/distance_format.dart';
 
 /// Admin: watch one salesman's route grow live on the map.
 ///
@@ -27,9 +29,16 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
 
   final MapController _mapController = MapController();
 
+  // Matches RouteDistance::GAP_MINUTES server-side: a longer silence is an
+  // interruption — the jump across it is not counted as walked distance.
+  static const _gapRule = Duration(minutes: 5);
+
   Timer? _timer;
   final List<LatLng> _points = [];
   String? _lastRecordedAt;
+  DateTime? _lastPointAt;
+  double _distanceKm = 0;
+  bool _hasGaps = false;
   LatLng? _start; // punch-in location (green pin)
   bool _isActive = true;
   bool _loading = true;
@@ -69,6 +78,9 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
 
     final data = res['data'] as Map<String, dynamic>;
     final incoming = (data['points'] as List).cast<Map<String, dynamic>>();
+    // A request without ?since= returned the full trail — the server's
+    // distance covers exactly these points. Deltas extend the sum locally.
+    final fullFetch = _lastRecordedAt == null;
 
     setState(() {
       _loading = false;
@@ -83,11 +95,29 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
       }
 
       for (final p in incoming) {
-        _points.add(LatLng(
+        final pt = LatLng(
           (p['lat'] as num).toDouble(),
           (p['lng'] as num).toDouble(),
-        ));
+        );
+        final at = DateTime.tryParse(p['recorded_at'] as String? ?? '');
+
+        if (!fullFetch && _points.isNotEmpty && at != null && _lastPointAt != null) {
+          if (at.difference(_lastPointAt!) > _gapRule) {
+            _hasGaps = true; // interrupted — do not count the jump
+          } else {
+            _distanceKm +=
+                const Distance().as(LengthUnit.Kilometer, _points.last, pt);
+          }
+        }
+
+        _points.add(pt);
+        if (at != null) _lastPointAt = at;
         _lastRecordedAt = p['recorded_at'] as String;
+      }
+
+      if (fullFetch) {
+        _distanceKm = (data['distance_km'] as num?)?.toDouble() ?? 0;
+        _hasGaps = data['has_gaps'] == true;
       }
 
       final wasActive = _isActive;
@@ -127,13 +157,76 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
         ),
         actions: [
           IconButton(
+            tooltip: 'Route history',
+            icon: const Icon(Icons.history),
+            onPressed: () => context.push('/route-history', extra: {
+              'mobile': widget.mobile,
+              'name': widget.name,
+            }),
+          ),
+          IconButton(
             tooltip: _followTip ? 'Following position' : 'Free camera',
             icon: Icon(_followTip ? Icons.gps_fixed : Icons.gps_not_fixed),
             onPressed: () => setState(() => _followTip = !_followTip),
           ),
         ],
       ),
-      body: _buildBody(),
+      body: Stack(
+        children: [
+          _buildBody(),
+          if (!_loading && _error == null)
+            Positioned(left: 0, right: 0, bottom: 0, child: _distanceStrip()),
+        ],
+      ),
+    );
+  }
+
+  /// Bottom strip: running distance, extended client-side on each delta poll.
+  Widget _distanceStrip() {
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.all(10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.94),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.15),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.straighten, size: 20, color: _routeColor),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    formatDistance(_distanceKm, hasGaps: _hasGaps),
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  if (_hasGaps)
+                    Text(
+                      kGapWarningText,
+                      style: TextStyle(
+                          fontSize: 11, color: Colors.orange.shade800),
+                    ),
+                ],
+              ),
+            ),
+            Text(
+              '${_points.length} pts',
+              style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

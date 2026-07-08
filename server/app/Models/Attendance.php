@@ -34,6 +34,7 @@ class Attendance extends Model
         'last_ping_at',
         'was_interrupted',
         'auto_closed',
+        'total_distance_km',
     ];
 
     protected $casts = [
@@ -45,6 +46,7 @@ class Attendance extends Model
         'is_early_in'        => 'boolean',
         'was_interrupted'    => 'boolean',
         'auto_closed'        => 'boolean',
+        'total_distance_km'  => 'float',
         'punch_in_time'      => 'datetime',
         'punch_out_time'     => 'datetime',
         'approved_at'        => 'datetime',
