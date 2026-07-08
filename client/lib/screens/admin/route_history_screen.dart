@@ -128,6 +128,99 @@ class _RouteHistoryScreenState extends State<RouteHistoryScreen> {
     );
   }
 
+  /// Route days keyed 'yyyy-mm-dd' for the calendar grid.
+  Map<String, Map<String, dynamic>> get _byDate => {
+        for (final r in _records)
+          if ((r['date'] as String? ?? '').isNotEmpty) r['date'] as String: r,
+      };
+
+  void _openDay(Map<String, dynamic> r) {
+    final date = r['date'] as String? ?? '';
+    if (date.isEmpty) return;
+    context.push('/route-view', extra: {
+      'mobile': widget.mobile,
+      'name': widget.name,
+      'date': date,
+    });
+  }
+
+  /// Month calendar: tinted day cells have a recorded route — tap to open it.
+  Widget _calendar() {
+    final byDate = _byDate;
+    final first = DateTime(_month.year, _month.month, 1);
+    final daysInMonth = DateTime(_month.year, _month.month + 1, 0).day;
+    final leadingBlanks = first.weekday - 1; // Monday-first grid
+    final today = DateTime.now();
+
+    final cells = <Widget>[
+      for (final w in _wk)
+        Center(
+            child: Text(w.substring(0, 2),
+                style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade500))),
+      for (var i = 0; i < leadingBlanks; i++) const SizedBox.shrink(),
+      for (var d = 1; d <= daysInMonth; d++)
+        _dayCell(d, byDate[
+            '${_month.year}-${_month.month.toString().padLeft(2, '0')}-${d.toString().padLeft(2, '0')}'],
+            isToday: today.year == _month.year &&
+                today.month == _month.month &&
+                today.day == d),
+    ];
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+      child: GridView.count(
+        crossAxisCount: 7,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        childAspectRatio: 1.25,
+        children: cells,
+      ),
+    );
+  }
+
+  Widget _dayCell(int day, Map<String, dynamic>? r, {required bool isToday}) {
+    final hasRoute = r != null;
+    final interrupted =
+        r?['was_interrupted'] == true || r?['was_interrupted'] == 1;
+    final km = r?['total_distance_km'] as num?;
+
+    return InkWell(
+      onTap: hasRoute ? () => _openDay(r) : null,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        margin: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: hasRoute
+              ? (interrupted ? Colors.orange.shade50 : const Color(0xFFEAF3EC))
+              : null,
+          borderRadius: BorderRadius.circular(8),
+          border: isToday ? Border.all(color: _gold, width: 1.5) : null,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('$day',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: hasRoute ? FontWeight.w700 : FontWeight.w400,
+                    color: hasRoute ? Colors.black87 : Colors.grey.shade500)),
+            if (hasRoute)
+              Text(km != null ? formatDistance(km) : '•',
+                  style: TextStyle(
+                      fontSize: 8.5,
+                      color: interrupted
+                          ? Colors.orange.shade800
+                          : const Color(0xFF2F7D46))),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildBody() {
     if (_loading) {
       return const Center(child: CircularProgressIndicator(color: _gold));
@@ -140,8 +233,8 @@ class _RouteHistoryScreenState extends State<RouteHistoryScreen> {
     }
     return ListView.builder(
       padding: const EdgeInsets.all(12),
-      itemCount: _records.length,
-      itemBuilder: (context, i) => _row(_records[i]),
+      itemCount: _records.length + 1,
+      itemBuilder: (context, i) => i == 0 ? _calendar() : _row(_records[i - 1]),
     );
   }
 
