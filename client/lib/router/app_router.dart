@@ -17,6 +17,8 @@ import '../screens/admin/attendance_employee_screen.dart';
 import '../screens/admin/attendance_settings_screen.dart';
 import '../screens/admin/live_salesmen_screen.dart';
 import '../screens/admin/live_route_screen.dart';
+import '../screens/admin/route_history_screen.dart';
+import '../screens/admin/route_view_screen.dart';
 import '../screens/admin/admin_notifications_screen.dart';
 import '../screens/admin/admin_incharge_assign_screen.dart';
 import '../screens/admin/incharge_levels.dart';
@@ -166,6 +168,27 @@ final appRouter = GoRouter(
         return LiveRouteScreen(
           mobile: extra['mobile'] as String? ?? '',
           name: extra['name'] as String? ?? '',
+        );
+      },
+    ),
+    GoRoute(
+      path: '/route-history',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? {};
+        return RouteHistoryScreen(
+          mobile: extra['mobile'] as String? ?? '',
+          name: extra['name'] as String? ?? '',
+        );
+      },
+    ),
+    GoRoute(
+      path: '/route-view',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? {};
+        return RouteViewScreen(
+          mobile: extra['mobile'] as String? ?? '',
+          name: extra['name'] as String? ?? '',
+          date: extra['date'] as String? ?? '',
         );
       },
     ),

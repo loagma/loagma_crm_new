@@ -108,6 +108,8 @@ Route::prefix('tracking')->middleware('jwtauth')->group(function () {
         ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin');
     Route::get('/live-route', [TrackingController::class, 'liveRoute'])
         ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin');
+    Route::get('/route', [TrackingController::class, 'route'])
+        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin');
 });
 
 // ---------------------------------------------------------------------------

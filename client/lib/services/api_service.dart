@@ -1035,6 +1035,28 @@ class ApiService {
     return null;
   }
 
+  /// Admin: full route + summary for one salesman on one day (history).
+  /// One-shot — history screens must NOT poll this.
+  static Future<Map<String, dynamic>?> getRouteHistory({
+    required String mobile,
+    required String date, // yyyy-mm-dd
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/tracking/route')
+        .replace(queryParameters: {'mobile': mobile, 'date': date});
+    try {
+      final response = await http
+          .get(url, headers: _authHeaders)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('getRouteHistory failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getRouteHistory error: $e');
+    }
+    return null;
+  }
+
   static Future<Map<String, dynamic>?> attendanceBreak({
     required String type,
     required String action,
