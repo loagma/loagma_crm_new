@@ -969,6 +969,72 @@ class ApiService {
     return null;
   }
 
+  /// Batch-upload GPS pings captured by TrackingService.
+  /// Returns the decoded body on 2xx, {'_status': 401} on auth failure
+  /// (so the caller can re-auth or shut down), null on everything else.
+  static Future<Map<String, dynamic>?> postPings(
+      List<Map<String, dynamic>> pings) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/tracking/ping');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'pings': pings}))
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      if (response.statusCode == 401) {
+        return {'_status': 401};
+      }
+      print('postPings failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('postPings error: $e');
+    }
+    return null;
+  }
+
+  /// Admin: currently on-duty salesmen with their latest location.
+  static Future<Map<String, dynamic>?> getLiveSalesmen() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/tracking/live');
+    try {
+      final response = await http
+          .get(url, headers: _authHeaders)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('getLiveSalesmen failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getLiveSalesmen error: $e');
+    }
+    return null;
+  }
+
+  /// Admin: a salesman's route for today. Pass [since] (last recorded_at)
+  /// to fetch only newer points, so the live map appends deltas.
+  static Future<Map<String, dynamic>?> getLiveRoute({
+    required String mobile,
+    String? since,
+  }) async {
+    final params = <String, String>{
+      'mobile': mobile,
+      if (since != null) 'since': since,
+    };
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/tracking/live-route')
+        .replace(queryParameters: params);
+    try {
+      final response = await http
+          .get(url, headers: _authHeaders)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('getLiveRoute failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getLiveRoute error: $e');
+    }
+    return null;
+  }
+
   static Future<Map<String, dynamic>?> attendanceBreak({
     required String type,
     required String action,

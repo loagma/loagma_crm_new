@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 
 import '../services/api_service.dart';
 import '../services/notification_service.dart';
+import '../services/tracking_service.dart';
 
 class AppDrawer extends StatelessWidget {
   final String role;
@@ -74,6 +75,13 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF66BB6A),
           },
           {
+            'title': 'Live Salesmen',
+            'icon': Icons.location_searching_rounded,
+            'route': '/live-salesmen',
+            'color': const Color(0xFF2F9E57),
+            'subtitle': 'On-duty tracking',
+          },
+          {
             'title': 'Settings',
             'icon': Icons.settings_rounded,
             'route': '/admin/settings',
@@ -94,6 +102,13 @@ class AppDrawer extends StatelessWidget {
             'route': '/manager/reports',
             'color': const Color(0xFF5C6BC0),
           },
+          {
+            'title': 'Live Salesmen',
+            'icon': Icons.location_searching_rounded,
+            'route': '/live-salesmen',
+            'color': const Color(0xFF2F9E57),
+            'subtitle': 'On-duty tracking',
+          },
         ];
 
       case 'head_incharge':
@@ -104,7 +119,13 @@ class AppDrawer extends StatelessWidget {
             'route': '/my-incharges',
             'color': const Color(0xFFAB47BC),
           },
-        
+          {
+            'title': 'Live Salesmen',
+            'icon': Icons.location_searching_rounded,
+            'route': '/live-salesmen',
+            'color': const Color(0xFF2F9E57),
+            'subtitle': 'On-duty tracking',
+          },
         ];
       case 'zonal_incharge':
         return [
@@ -114,7 +135,13 @@ class AppDrawer extends StatelessWidget {
             'route': '/my-incharges',
             'color': const Color(0xFFAB47BC),
           },
-          
+          {
+            'title': 'Live Salesmen',
+            'icon': Icons.location_searching_rounded,
+            'route': '/live-salesmen',
+            'color': const Color(0xFF2F9E57),
+            'subtitle': 'On-duty tracking',
+          },
         ];
       case 'area_incharge':
         return [
@@ -124,7 +151,13 @@ class AppDrawer extends StatelessWidget {
             'route': '/my-incharges',
             'color': const Color(0xFFAB47BC),
           },
-       
+          {
+            'title': 'Live Salesmen',
+            'icon': Icons.location_searching_rounded,
+            'route': '/live-salesmen',
+            'color': const Color(0xFF2F9E57),
+            'subtitle': 'On-duty tracking',
+          },
         ];
          case 'teleadmin':
         return [
@@ -134,7 +167,13 @@ class AppDrawer extends StatelessWidget {
             'route': '/my-incharges',
             'color': const Color(0xFFAB47BC),
           },
-       
+          {
+            'title': 'Live Salesmen',
+            'icon': Icons.location_searching_rounded,
+            'route': '/live-salesmen',
+            'color': const Color(0xFF2F9E57),
+            'subtitle': 'On-duty tracking',
+          },
         ];
       case 'salesman':
         return [
@@ -817,6 +856,7 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             _workDuration = Duration.zero;
             _breakDuration = Duration.zero;
             _startTimer();
+            TrackingService.start();
           } else {
             _needsConfirmOut = false;
           }
@@ -890,6 +930,7 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
         if (res != null && res['success'] == true) {
           _timer?.cancel();
           _timer = null;
+          TrackingService.stop();
           final data = res['data'] as Map<String, dynamic>?;
           setState(() {
             _isPunchedIn = false;
@@ -979,7 +1020,10 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             _breakDuration = Duration.zero;
           });
           // Start timer for on_time and early_in (both are immediate punch-ins)
-          if (newStatus == 'on_time' || newStatus == 'early_in') _startTimer();
+          if (newStatus == 'on_time' || newStatus == 'early_in') {
+            _startTimer();
+            TrackingService.start();
+          }
           final String msg;
           if (needsApproval) {
             msg = 'Punched in — awaiting admin approval';

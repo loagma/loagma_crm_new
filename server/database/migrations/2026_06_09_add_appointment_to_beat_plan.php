@@ -8,8 +8,12 @@ use Illuminate\Support\Facades\DB;
 return new class extends Migration {
     public function up(): void
     {
-        Schema::table('beat_plan_crm', function (Blueprint $table) {
-            $table->dateTime('appointment_date')->nullable()->after('specific_dates');
+        $afterColumn = Schema::hasColumn('beat_plan_crm', 'specific_dates')
+            ? 'specific_dates'
+            : 'month_date';
+
+        Schema::table('beat_plan_crm', function (Blueprint $table) use ($afterColumn) {
+            $table->dateTime('appointment_date')->nullable()->after($afterColumn);
         });
 
         if (Schema::hasTable('beat_plan_crm')) {

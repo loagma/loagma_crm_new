@@ -15,6 +15,8 @@ import '../screens/admin/salesman_area_assign_screen.dart';
 import '../screens/admin/attendance_manage_screen.dart';
 import '../screens/admin/attendance_employee_screen.dart';
 import '../screens/admin/attendance_settings_screen.dart';
+import '../screens/admin/live_salesmen_screen.dart';
+import '../screens/admin/live_route_screen.dart';
 import '../screens/admin/admin_notifications_screen.dart';
 import '../screens/admin/admin_incharge_assign_screen.dart';
 import '../screens/admin/incharge_levels.dart';
@@ -152,6 +154,20 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/attendance-manage',
       builder: (context, state) => const AttendanceManageScreen(),
+    ),
+    GoRoute(
+      path: '/live-salesmen',
+      builder: (context, state) => const LiveSalesmenScreen(),
+    ),
+    GoRoute(
+      path: '/live-route',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? {};
+        return LiveRouteScreen(
+          mobile: extra['mobile'] as String? ?? '',
+          name: extra['name'] as String? ?? '',
+        );
+      },
     ),
     GoRoute(
       path: '/attendance-manage/:id',

@@ -18,7 +18,10 @@ class CheckRole
             return response()->json(['success' => false, 'message' => 'Unauthorized.'], 401);
         }
 
-        if (!in_array($staff->role, $roles, true)) {
+        $staffRole = strtolower(trim($staff->role ?? ''));
+        $allowed   = array_map(fn ($r) => strtolower(trim($r)), $roles);
+
+        if (!in_array($staffRole, $allowed, true)) {
             return response()->json(['success' => false, 'message' => 'Forbidden.'], 403);
         }
 

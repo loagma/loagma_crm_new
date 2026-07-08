@@ -43,6 +43,11 @@ dependencies:
   flutter_local_notifications: ^17.2.4
   timezone: ^0.9.0
   fl_chart: ^0.69.2
+  flutter_foreground_task: ^9.2.2
+  sqflite: ^2.4.2+1
+  battery_plus: ^6.2.1
+  flutter_map: ^8.3.1
+  latlong2: ^0.10.1
 
 dev_dependencies:
   flutter_test:

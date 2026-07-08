@@ -31,6 +31,9 @@ class Attendance extends Model
         'admin_notes',
         'approved_by',
         'approved_at',
+        'last_ping_at',
+        'was_interrupted',
+        'auto_closed',
     ];
 
     protected $casts = [
@@ -40,9 +43,12 @@ class Attendance extends Model
         'is_late'            => 'boolean',
         'is_early_out'       => 'boolean',
         'is_early_in'        => 'boolean',
+        'was_interrupted'    => 'boolean',
+        'auto_closed'        => 'boolean',
         'punch_in_time'      => 'datetime',
         'punch_out_time'     => 'datetime',
         'approved_at'        => 'datetime',
+        'last_ping_at'       => 'datetime',
         'date'               => 'date',
     ];
 

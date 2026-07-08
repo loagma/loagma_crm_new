@@ -15,6 +15,7 @@ use App\Http\Controllers\OrderFunnelController;
 use App\Http\Controllers\PincodeController;
 use App\Http\Controllers\TelecallerController;
 use App\Http\Controllers\CallScriptController;
+use App\Http\Controllers\TrackingController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -36,7 +37,7 @@ Route::prefix('auth')->group(function () {
     Route::post('/send-otp',   [OtpAuthController::class, 'sendOtp']);
     Route::post('/verify-otp', [OtpAuthController::class, 'verifyOtp']);
 
-    Route::middleware('jwt.auth')->group(function () {
+    Route::middleware('jwtauth')->group(function () {
         Route::get('/me',       [OtpAuthController::class, 'me']);
         Route::post('/logout',  [OtpAuthController::class, 'logout']);
     });
@@ -96,6 +97,17 @@ Route::prefix('admin/attendance')->group(function () {
     Route::post('/{id}/approve',             [AttendanceController::class, 'approve']);
     Route::post('/{id}/reject',              [AttendanceController::class, 'reject']);
     Route::get('/{employeeMobile}',          [AttendanceController::class, 'adminEmployeeAttendance']);
+});
+
+// ---------------------------------------------------------------------------
+// Tracking (Phase 1: salesman GPS ping ingest only; admin views land in later phases)
+// ---------------------------------------------------------------------------
+Route::prefix('tracking')->middleware('jwtauth')->group(function () {
+    Route::post('/ping', [TrackingController::class, 'ping']);
+    Route::get('/live', [TrackingController::class, 'live'])
+        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin');
+    Route::get('/live-route', [TrackingController::class, 'liveRoute'])
+        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin');
 });
 
 // ---------------------------------------------------------------------------
