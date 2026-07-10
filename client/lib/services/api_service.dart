@@ -461,6 +461,38 @@ class ApiService {
     return false;
   }
 
+  /// Trigger a Knowlarity bridge call: rings the telecaller's own number,
+  /// then the customer's, and connects them. Returns the created call-log
+  /// record (outcome starts as 'pending' until Knowlarity's webhook lands).
+  static Future<Map<String, dynamic>?> triggerKnowlarityCall({
+    required String accountId,
+    required String accountType,
+    required String customerNumber,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/call');
+    try {
+      final response = await http
+          .post(
+            url,
+            headers: _authHeaders,
+            body: jsonEncode({
+              'account_id': accountId,
+              'account_type': accountType,
+              'customer_number': customerNumber,
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return decoded['data'] as Map<String, dynamic>?;
+      }
+      print('triggerKnowlarityCall unexpected status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('triggerKnowlarityCall failed: $e');
+    }
+    return null;
+  }
+
   // ── Telecaller dashboard + modules (live data) ─────────────────────────────
 
   static Future<Map<String, dynamic>?> _tcGetMap(String path) async {

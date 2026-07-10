@@ -11,6 +11,8 @@ use App\Http\Controllers\InchargeAssignController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\BeatPlanController;
 use App\Http\Controllers\CallLogController;
+use App\Http\Controllers\KnowlarityCallController;
+use App\Http\Controllers\KnowlarityWebhookController;
 use App\Http\Controllers\OrderFunnelController;
 use App\Http\Controllers\PincodeController;
 use App\Http\Controllers\TelecallerController;
@@ -165,7 +167,18 @@ Route::prefix('telecaller')->group(function () {
     Route::post('/scripts',        [CallScriptController::class, 'store']);
     Route::put('/scripts/{id}',    [CallScriptController::class, 'update']);
     Route::delete('/scripts/{id}', [CallScriptController::class, 'destroy']);
+
+    // Knowlarity click-to-call bridge (agent's own number <-> customer number)
+    Route::middleware('jwtauth')->post('/call', [KnowlarityCallController::class, 'store']);
 });
+
+// ---------------------------------------------------------------------------
+// Knowlarity webhooks (inbound from Knowlarity - no CRM auth, secret-protected)
+// Register this exact URL in the SuperReceptionist account:
+//   Resources > Hook APIs > Call Data Post API -> https://yourcrm.com/api/webhooks/knowlarity/{secret}/call-completed
+// (this file is mounted under /api - see bootstrap/app.php)
+// ---------------------------------------------------------------------------
+Route::post('/webhooks/knowlarity/{secret}/call-completed', [KnowlarityWebhookController::class, 'callCompleted']);
 
 // ---------------------------------------------------------------------------
 // Order Funnel (dynamic stages from order_funnel_crm + saved responses)

@@ -76,12 +76,33 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
     super.dispose();
   }
 
+  bool _calling = false;
+
   Future<void> _call() async {
     final phone = (widget.account['contactNumber'] ?? '').toString();
-    if (phone.isEmpty) return;
+    if (phone.isEmpty || _calling) return;
+    final accountId = (widget.account['id'] ?? '').toString();
+
+    setState(() => _calling = true);
+    final result = await ApiService.triggerKnowlarityCall(
+      accountId: accountId,
+      accountType: widget.accountType,
+      customerNumber: phone,
+    );
+    if (!mounted) return;
+    setState(() => _calling = false);
+
+    if (result == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not start the call. Try again.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
     setState(() => _called = true); // unlock the post-call notes
-    final uri = Uri.parse('tel:$phone');
-    if (await canLaunchUrl(uri)) launchUrl(uri);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Calling… your phone will ring first, then the customer.')),
+    );
   }
 
   Future<void> _openWhatsApp() async {
@@ -288,10 +309,18 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         elevation: 0,
                       ),
-                      onPressed: contact.isNotEmpty ? _call : null,
-                      icon: const Icon(Icons.call_rounded, size: 20),
+                      onPressed: (contact.isNotEmpty && !_calling) ? _call : null,
+                      icon: _calling
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.call_rounded, size: 20),
                       label: Text(
-                        contact.isNotEmpty ? 'Call  $contact' : 'No Phone Number',
+                        _calling
+                            ? 'Calling…'
+                            : (contact.isNotEmpty ? 'Call  $contact' : 'No Phone Number'),
                         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                       ),
                     ),
