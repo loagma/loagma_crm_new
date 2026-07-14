@@ -27,23 +27,29 @@ class KnowlarityCallController extends Controller
             'customer_number' => 'required|string|max:20',
         ])->validate();
 
+        // Pre-create the log row so the call-completed webhook updates this
+        // exact row (matched by knowlarity_call_id, or by the row id we pass to
+        // Knowlarity as additional_params.uniqueid) instead of guessing the
+        // account/agent link from phone numbers alone.
+        $log = CallLog::create([
+            'employee_mobile' => $mobile,
+            'source'          => 'knowlarity',
+            'direction'       => 'outbound',
+            'account_id'      => $validated['account_id'] ?? null,
+            'account_type'    => $validated['account_type'],
+            'call_outcome'    => 'pending',
+            'called_at'       => now(),
+        ]);
+
         $result = $this->knowlarity->makeCall(
             agentNumber: $mobile,
             customerNumber: $validated['customer_number'],
+            uniqueId: (string) $log->id,
         );
 
-        // Pre-create the log row so the call-completed webhook updates this
-        // exact row (matched by knowlarity_call_id) instead of guessing the
-        // account/agent link from phone numbers alone.
-        $log = CallLog::create([
-            'employee_mobile'    => $mobile,
-            'source'             => 'knowlarity',
-            'direction'          => 'outbound',
-            'knowlarity_call_id' => $result['call_id'] ?? $result['id'] ?? null,
-            'account_id'         => $validated['account_id'] ?? null,
-            'account_type'       => $validated['account_type'],
-            'call_outcome'       => 'pending',
-            'called_at'          => now(),
+        // makecall nests the id as {"success": {"call_id": ...}}; keep flat fallbacks.
+        $log->update([
+            'knowlarity_call_id' => $result['success']['call_id'] ?? $result['call_id'] ?? $result['id'] ?? null,
             'raw_payload'        => $result,
         ]);
 

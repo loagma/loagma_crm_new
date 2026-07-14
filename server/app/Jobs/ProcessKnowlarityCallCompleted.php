@@ -44,7 +44,25 @@ class ProcessKnowlarityCallCompleted implements ShouldQueue
         // click-to-call button (KnowlarityCallController pre-creates it).
         $log = $callId ? CallLog::where('knowlarity_call_id', $callId)->first() : null;
 
+        // Fallback: the CRM sends its own call_log row id to Knowlarity as
+        // additional_params.uniqueid, which is echoed back here. If call_id
+        // didn't line up (response-shape drift), this still finds the
+        // pre-created row instead of spawning a duplicate inbound record.
+        if (!$log) {
+            $extraParams = $payload['additional_params'] ?? [];
+            if (is_string($extraParams)) {
+                $extraParams = json_decode($extraParams, true) ?: [];
+            }
+            $uniqueId = $extraParams['uniqueid'] ?? $payload['uniqueid'] ?? null;
+            if ($uniqueId) {
+                $log = CallLog::where('id', $uniqueId)->where('source', 'knowlarity')->first();
+            }
+        }
+
         if ($log) {
+            if (!$log->knowlarity_call_id && $callId) {
+                $log->knowlarity_call_id = $callId;
+            }
             $log->fill([
                 'call_outcome'     => $outcome,
                 'duration_seconds' => $duration,
