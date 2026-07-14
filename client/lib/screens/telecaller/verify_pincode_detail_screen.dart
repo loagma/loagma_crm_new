@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../widgets/account_map_screen.dart';
+
 class VerifyPincodeDetailScreen extends StatefulWidget {
   final String pincode;
   final Map<String, dynamic> initialData;
@@ -99,6 +101,21 @@ class _VerifyPincodeDetailScreenState extends State<VerifyPincodeDetailScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.map_rounded, color: Colors.white),
+            tooltip: 'Show in Map',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => AccountMapScreen(
+                  title: 'Pincode ${widget.pincode} — Map',
+                  accounts: [..._leads, ..._customers],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       body: Column(
         children: [

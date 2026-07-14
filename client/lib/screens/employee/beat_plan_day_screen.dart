@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
+import '../../widgets/account_map_screen.dart';
 
 class BeatPlanDayScreen extends StatefulWidget {
   final String date; // YYYY-MM-DD
@@ -86,6 +87,25 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
+          if (_items.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.map_rounded),
+              tooltip: 'Show in Map',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AccountMapScreen(
+                    title: '$_displayDate — Map',
+                    accounts: _items.map((item) {
+                      final acc = Map<String, dynamic>.from(
+                          item['account'] as Map? ?? {});
+                      acc['_type'] = item['account_type'] ?? 'lead';
+                      return acc;
+                    }).toList(),
+                  ),
+                ),
+              ),
+            ),
           IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load),
         ],
       ),

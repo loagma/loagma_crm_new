@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
 import '../../services/user_service.dart';
+import '../../widgets/account_map_screen.dart';
 
 class VerifyLeadAccountsScreen extends StatefulWidget {
   const VerifyLeadAccountsScreen({super.key});
@@ -314,19 +315,42 @@ class _PincodeCard extends StatelessWidget {
                             ],
                           ),
                         ),
-                        // Right: total badge + chevron
+                        // Right: total badge + map button + chevron
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: _gold.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: _gold.withValues(alpha: 0.4)),
-                              ),
-                              child: Text('$total contact${total == 1 ? '' : 's'}',
-                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFC09E3E))),
+                            Row(
+                              children: [
+                                if (total > 0)
+                                  GestureDetector(
+                                    onTap: () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => AccountMapScreen(
+                                          title: 'Pincode $pincode — Map',
+                                          accounts: [
+                                            ...(group['leads'] as List).cast<Map<String, dynamic>>(),
+                                            ...(group['customers'] as List).cast<Map<String, dynamic>>(),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    child: const Padding(
+                                      padding: EdgeInsets.only(right: 6),
+                                      child: Icon(Icons.map_rounded, size: 18, color: Color(0xFF8A6D1B)),
+                                    ),
+                                  ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: _gold.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(color: _gold.withValues(alpha: 0.4)),
+                                  ),
+                                  child: Text('$total contact${total == 1 ? '' : 's'}',
+                                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFC09E3E))),
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 8),
                             const Icon(Icons.chevron_right_rounded, color: Colors.black26, size: 22),

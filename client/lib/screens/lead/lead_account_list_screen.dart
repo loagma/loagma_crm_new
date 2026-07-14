@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
+import '../../widgets/account_map_screen.dart';
 
 class LeadAccountListScreen extends StatefulWidget {
   const LeadAccountListScreen({super.key});
@@ -113,6 +114,22 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
         backgroundColor: gold,
         foregroundColor: Colors.white,
         actions: [
+          if (_items.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.map_rounded),
+              tooltip: 'Show in Map',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AccountMapScreen(
+                    title: 'Lead Accounts — Map',
+                    accounts: _items
+                        .map((a) => {...a, '_type': 'lead'})
+                        .toList(),
+                  ),
+                ),
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refresh',

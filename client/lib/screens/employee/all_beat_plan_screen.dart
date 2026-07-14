@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
+import '../../widgets/account_map_screen.dart';
 
 class AllBeatPlanScreen extends StatefulWidget {
   const AllBeatPlanScreen({super.key});
@@ -25,6 +26,8 @@ class _AllBeatPlanScreenState extends State<AllBeatPlanScreen> {
 
   // {dayName: {date, count}}
   Map<String, Map<String, dynamic>> _days = {};
+
+  bool _mapLoading = false;
 
   static const _dayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -64,6 +67,54 @@ class _AllBeatPlanScreenState extends State<AllBeatPlanScreen> {
       }
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = 'Error loading beat plan.'; });
+    }
+  }
+
+  Future<void> _openWeekMap() async {
+    final dates = _dayOrder
+        .map((d) => _days[d]?['date'] as String? ?? '')
+        .where((d) => d.isNotEmpty)
+        .toSet() // a plan can span multiple weekdays with the same date (shouldn't normally), dedupe fetches
+        .toList();
+
+    if (dates.isEmpty) return;
+
+    setState(() => _mapLoading = true);
+    try {
+      final results = await Future.wait(
+          dates.map((d) => ApiService.getWeekBeatPlan(date: d)));
+
+      // Merge all days, de-duplicating the same account if it's scheduled
+      // more than once across the week (e.g. weekly plans hitting several days).
+      final seen = <String>{};
+      final accounts = <Map<String, dynamic>>[];
+      for (final res in results) {
+        if (res['success'] != true) continue;
+        final raw = res['data'];
+        if (raw is! List) continue;
+        for (final e in raw) {
+          final item = Map<String, dynamic>.from(e as Map);
+          final acc  = Map<String, dynamic>.from(item['account'] as Map? ?? {});
+          final type = item['account_type'] ?? 'lead';
+          final key  = '$type:${acc['id']}';
+          if (!seen.add(key)) continue;
+          acc['_type'] = type;
+          accounts.add(acc);
+        }
+      }
+
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AccountMapScreen(
+            title: 'This Week — Map',
+            accounts: accounts,
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _mapLoading = false);
     }
   }
 
@@ -133,8 +184,13 @@ class _AllBeatPlanScreenState extends State<AllBeatPlanScreen> {
                               ])),
                               const SizedBox(width: 8),
                               OutlinedButton.icon(
-                                onPressed: () {},
-                                icon: const Icon(Icons.map_outlined, size: 13),
+                                onPressed: _mapLoading ? null : _openWeekMap,
+                                icon: _mapLoading
+                                    ? const SizedBox(
+                                        width: 12, height: 12,
+                                        child: CircularProgressIndicator(strokeWidth: 1.5),
+                                      )
+                                    : const Icon(Icons.map_outlined, size: 13),
                                 label: const Text('Show All in Map',
                                     style: TextStyle(fontSize: 10)),
                                 style: OutlinedButton.styleFrom(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/api_service.dart';
+import '../../widgets/single_location_map_screen.dart';
 
 class EmployeeDetailScreen extends StatefulWidget {
   final Map<String, dynamic>? employee;
@@ -338,13 +339,16 @@ class _DetailView extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10, top: 4),
       child: GestureDetector(
-        onTap: () {
-          final uri = 'https://www.google.com/maps?q=$_lat,$_lng';
-          Clipboard.setData(ClipboardData(text: uri));
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Maps link copied to clipboard'), duration: Duration(seconds: 2)),
-          );
-        },
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SingleLocationMapScreen(
+              title: _name,
+              latitude: _lat!,
+              longitude: _lng!,
+            ),
+          ),
+        ),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
@@ -356,9 +360,9 @@ class _DetailView extends StatelessWidget {
             children: [
               const Icon(Icons.map_rounded, size: 16, color: Color(0xFF1565C0)),
               const SizedBox(width: 8),
-              const Text('View on Google Maps', style: TextStyle(fontSize: 12, color: Color(0xFF1565C0), fontWeight: FontWeight.w600)),
+              const Text('View on Map', style: TextStyle(fontSize: 12, color: Color(0xFF1565C0), fontWeight: FontWeight.w600)),
               const Spacer(),
-              const Icon(Icons.copy_rounded, size: 13, color: Color(0xFF1565C0)),
+              const Icon(Icons.chevron_right_rounded, size: 15, color: Color(0xFF1565C0)),
             ],
           ),
         ),

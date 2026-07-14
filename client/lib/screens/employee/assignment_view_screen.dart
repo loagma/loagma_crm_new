@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
+import '../../widgets/account_map_screen.dart';
 
 class AssignmentViewScreen extends StatefulWidget {
   const AssignmentViewScreen({super.key});
@@ -270,6 +271,26 @@ class _DayCard extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (expanded && (accounts ?? []).isNotEmpty)
+                    IconButton(
+                      icon: const Icon(Icons.map_rounded, size: 20, color: Color(0xFF8A6D1B)),
+                      tooltip: 'Show in Map',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AccountMapScreen(
+                            title: '$dayName ($dateLabel) — Map',
+                            accounts: accounts!.map((item) {
+                              final acc = Map<String, dynamic>.from(
+                                  item['account'] as Map? ?? {});
+                              acc['_type'] = item['account_type'] ?? 'lead';
+                              return acc;
+                            }).toList(),
+                          ),
+                        ),
+                      ),
+                    ),
                   Icon(expanded
                       ? Icons.keyboard_arrow_up_rounded
                       : Icons.keyboard_arrow_down_rounded,

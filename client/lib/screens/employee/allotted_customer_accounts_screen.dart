@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../services/user_service.dart';
+import '../../widgets/account_map_screen.dart';
 import 'customer_detail_screen.dart';
 
 // Flow:
@@ -126,6 +127,8 @@ class _AllottedCustomerAccountsScreenState
         'contactNumber': (u['contactno'] ?? '').toString(),
         'address':       (u['shop_address'] ?? u['address'] ?? '').toString(),
         'pincode':       (u['pincode'] ?? '').toString(),
+        'latitude':      u['latitude'],
+        'longitude':     u['longitude'],
         '_type':         'customer',
       }).toList();
 
@@ -901,19 +904,39 @@ class _PincodeSectionState extends State<_PincodeSection> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Pincode + expand toggle
-                InkWell(
-                  onTap: widget.onToggle,
-                  child: Row(
-                    children: [
-                      Text(pincode,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-                      const Spacer(),
-                      Icon(expanded
-                          ? Icons.keyboard_arrow_up_rounded
-                          : Icons.keyboard_arrow_down_rounded,
-                          color: Colors.black45),
-                    ],
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: widget.onToggle,
+                        child: Row(
+                          children: [
+                            Text(pincode,
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                            const Spacer(),
+                            Icon(expanded
+                                ? Icons.keyboard_arrow_up_rounded
+                                : Icons.keyboard_arrow_down_rounded,
+                                color: Colors.black45),
+                          ],
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.map_rounded, size: 20, color: Color(0xFF8A6D1B)),
+                      tooltip: 'Show in Map',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AccountMapScreen(
+                            title: 'Pincode $pincode — Map',
+                            accounts: widget.filteredAccounts,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 // Clickable filter buttons — single row

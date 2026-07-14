@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
+import '../../widgets/account_map_screen.dart';
 
 class TodaysBeatPlanScreen extends StatefulWidget {
   const TodaysBeatPlanScreen({super.key});
@@ -112,7 +113,20 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
                                 color: const Color(0xFF43A047)),
                             const SizedBox(width: 8),
                             OutlinedButton.icon(
-                              onPressed: () {},
+                              onPressed: _items.isEmpty ? null : () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => AccountMapScreen(
+                                    title: "Today's Beat Plan — Map",
+                                    accounts: _items.map((item) {
+                                      final acc = Map<String, dynamic>.from(
+                                          item['account'] as Map? ?? {});
+                                      acc['_type'] = item['account_type'] ?? 'lead';
+                                      return acc;
+                                    }).toList(),
+                                  ),
+                                ),
+                              ),
                               icon: const Icon(Icons.map_outlined, size: 13),
                               label: const Text('Show in Map',
                                   style: TextStyle(fontSize: 11)),
@@ -391,8 +405,15 @@ class _CustomerCard extends StatelessWidget {
                 icon: Icons.map_rounded,
                 color: const Color(0xFF1565C0),
                 onTap: (acc['latitude'] != null && acc['longitude'] != null)
-                    ? () => _launch(
-                        'https://www.google.com/maps/search/?api=1&query=${acc['latitude']},${acc['longitude']}')
+                    ? () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AccountMapScreen(
+                            title: name,
+                            accounts: [{...acc, '_type': accountType}],
+                          ),
+                        ),
+                      )
                     : null,
               ),
             ]),

@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_config.dart';
 import '../../services/api_service.dart';
+import '../../widgets/account_map_screen.dart';
 
 class OrderFunnelScreen extends StatefulWidget {
   final String accountId;
@@ -394,8 +395,18 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                         icon: Icons.map_rounded,
                         color: const Color(0xFF1565C0),
                         onTap: (lat != null && lng != null)
-                            ? () => _launch(
-                                'https://www.google.com/maps/search/?api=1&query=$lat,$lng')
+                            ? () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => AccountMapScreen(
+                                    title: shop,
+                                    accounts: [{
+                                      ..._acc,
+                                      '_type': _acc['account_type'] ?? 'lead',
+                                    }],
+                                  ),
+                                ),
+                              )
                             : null,
                       ),
                       const Spacer(),

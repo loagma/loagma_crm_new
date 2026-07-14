@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../services/api_config.dart';
+import '../../widgets/single_location_map_screen.dart';
 
-Future<void> _openMaps(double lat, double lng) async {
-  final uri = Uri.parse('https://maps.google.com/?q=$lat,$lng');
-  if (await canLaunchUrl(uri)) launchUrl(uri);
+void _openMaps(BuildContext context, double lat, double lng, {String? title}) {
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => SingleLocationMapScreen(
+        title: title ?? 'Location',
+        latitude: lat,
+        longitude: lng,
+      ),
+    ),
+  );
 }
 
 class AttendanceEmployeeScreen extends StatefulWidget {
@@ -758,7 +766,7 @@ class _PunchCell extends StatelessWidget {
           // Location
           if (hasLoc)
             GestureDetector(
-              onTap: () => _openMaps(lat, lng),
+              onTap: () => _openMaps(context, lat, lng, title: '$label — $time'),
               child: Text.rich(
                 TextSpan(children: [
                   const WidgetSpan(
