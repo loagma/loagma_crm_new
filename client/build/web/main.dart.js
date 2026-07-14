@@ -37714,7 +37714,7 @@ case 3:s=6
 return A.k(A.lm(p,B.mn),$async$adD)
 case 6:case 4:case 1:return A.t(q,r)}})
 return A.u($async$adD,r)},
-bH(){return"http://localhost:8000"},
+bH(){return"https://loagma-crm-new-1.onrender.com"},
 Ys(){var s=0,r=A.v(t.H),q,p
 var $async$Ys=A.q(function(a,b){if(a===1)return A.r(b,r)
 for(;;)switch(s){case 0:if($.Yr){s=1
