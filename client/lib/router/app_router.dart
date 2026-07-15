@@ -44,6 +44,7 @@ import '../screens/telecaller/telecaller_call_screen.dart';
 import '../screens/telecaller/telecaller_dashboard_screen.dart';
 import '../screens/telecaller/telecaller_callbacks_screen.dart';
 import '../screens/telecaller/telecaller_call_history_screen.dart';
+import '../screens/telecaller/order_list_screen.dart';
 import '../screens/telecaller/telecaller_worklist_screen.dart';
 import '../screens/telecaller/telecaller_profile_screen.dart';
 import '../screens/telecaller/telecaller_call_scripts_screen.dart';
@@ -296,6 +297,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/telecaller/call-history',
       builder: (context, state) => const TelecallerCallHistoryScreen(),
+    ),
+    GoRoute(
+      path: '/orders-list',
+      builder: (context, state) => const OrderListScreen(),
     ),
     GoRoute(
       path: '/telecaller/worklist',

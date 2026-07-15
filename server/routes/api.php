@@ -14,6 +14,7 @@ use App\Http\Controllers\CallLogController;
 use App\Http\Controllers\KnowlarityCallController;
 use App\Http\Controllers\KnowlarityWebhookController;
 use App\Http\Controllers\OrderFunnelController;
+use App\Http\Controllers\OrderListController;
 use App\Http\Controllers\PincodeController;
 use App\Http\Controllers\TelecallerController;
 use App\Http\Controllers\CallScriptController;
@@ -49,6 +50,11 @@ Route::prefix('auth')->group(function () {
 // Lead Accounts CRUD
 // ---------------------------------------------------------------------------
 Route::get('/customers', [LeadsAccountController::class, 'customers']);
+
+// Order list (real orders/user/admin tables — separate from the order-funnel feature)
+Route::get('/orders', [OrderListController::class, 'index']);
+Route::get('/orders/owner/{buyerUserId}/products', [OrderListController::class, 'ownerProductHistory']); // must be before /orders/{orderId}
+Route::get('/orders/{orderId}', [OrderListController::class, 'show']);
 
 Route::prefix('lead-accounts')->group(function () {
     Route::get('/',                [LeadsAccountController::class, 'index']);

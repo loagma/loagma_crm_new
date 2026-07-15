@@ -272,6 +272,67 @@ class ApiService {
     return [];
   }
 
+  /// Fetch a page of orders (real `orders` table, joined with buyer/admin info).
+  static Future<Map<String, dynamic>> getOrders({
+    int page = 1,
+    int perPage = 20,
+    String? q,
+    String? paymentStatus,
+    String? buyerUserId,
+  }) async {
+    final params = <String, String>{
+      'page':     page.toString(),
+      'per_page': perPage.toString(),
+      if (q != null && q.isNotEmpty) 'q': q,
+      if (paymentStatus != null && paymentStatus.isNotEmpty) 'payment_status': paymentStatus,
+      if (buyerUserId != null && buyerUserId.isNotEmpty) 'buyer_userid': buyerUserId,
+    };
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/orders').replace(queryParameters: params);
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('getOrders status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getOrders error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  /// Fetch full detail (owner, driver, items) for one order.
+  static Future<Map<String, dynamic>?> getOrderDetail(String orderId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/orders/$orderId');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (decoded['success'] == true) return decoded['data'] as Map<String, dynamic>;
+      }
+      print('getOrderDetail status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getOrderDetail error: $e');
+    }
+    return null;
+  }
+
+  /// Aggregated per-product purchase history for one buyer across all their orders.
+  static Future<List<Map<String, dynamic>>> getOwnerProductHistory(String buyerUserId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/orders/owner/$buyerUserId/products');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = (decoded['data'] as List?) ?? [];
+        return data.cast<Map<String, dynamic>>();
+      }
+      print('getOwnerProductHistory status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getOwnerProductHistory error: $e');
+    }
+    return [];
+  }
+
   /// Fetch a single lead account by id.
   static Future<Map<String, dynamic>?> getLeadAccount(String id) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/$id');

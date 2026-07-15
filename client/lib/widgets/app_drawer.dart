@@ -159,7 +159,7 @@ class AppDrawer extends StatelessWidget {
             'subtitle': 'On-duty tracking',
           },
         ];
-         case 'teleadmin':
+      case 'teleadmin':
         return [
           {
             'title': 'My Team',
@@ -270,31 +270,10 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF8E24AA),
           },
           {
-            'title': 'Call Scripts',
-            'icon': Icons.menu_book_rounded,
-            'route': '/telecaller/call-scripts',
-            'color': const Color(0xFF00897B),
-          },
-          {
-            'title': 'Profile',
-            'icon': Icons.person_rounded,
-            'route': '/profile',
-            'color': const Color(0xFF78909C),
-          },
-        ];
-      case 'user':
-        return [
-          {
-            'title': 'Profile',
-            'icon': Icons.person_rounded,
-            'route': '/profile',
-            'color': const Color(0xFF78909C),
-          },
-          {
-            'title': 'Requests',
-            'icon': Icons.list_alt_rounded,
-            'route': '/requests',
-            'color': const Color(0xFF42A5F5),
+            'title': 'Order List',
+            'icon': Icons.shopping_bag_rounded,
+            'route': '/orders-list',
+            'color': const Color(0xFF3F51B5),
           },
         ];
       default:
@@ -598,7 +577,8 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
 
         // Notify once, the moment our own pending request gets a verdict.
         if (prevStatus == 'pending' &&
-            (_attendanceStatus == 'approved' || _attendanceStatus == 'rejected')) {
+            (_attendanceStatus == 'approved' ||
+                _attendanceStatus == 'rejected')) {
           final approved = _attendanceStatus == 'approved';
           NotificationService.showNow(
             id: 9200,
