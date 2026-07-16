@@ -191,4 +191,128 @@ class SalesOrderController extends Controller
             ],
         ], 201);
     }
+
+    /**
+     * PUT /api/orders/{orderId}/items
+     *
+     * Persist an add/edit/remove of line items on an EXISTING order — the
+     * missing counterpart to store() that the Order Detail screen needs so
+     * edits survive a refresh instead of only living in local widget state.
+     *
+     * Deliberately scoped to `order_state = 'pending'` only, same reasoning
+     * as store(): per SALES_MODULE.md §7, stock only moves once an order is
+     * `invoiced`, and re-editing an invoiced order in the real system
+     * reverses+reapplies the stock ledger — logic this app does not
+     * implement. Editing a pending order touches no stock/ledger/invoice
+     * fields at all, so it's safe to do here with a plain delete+reinsert of
+     * `orders_item`, mirroring the real update()'s item-replacement approach
+     * (SALES_MODULE.md §4).
+     */
+    public function updateItems(string $orderId): JsonResponse
+    {
+        $data  = request()->all();
+        $items = $data['items'] ?? [];
+
+        if (!is_array($items) || count($items) === 0) {
+            return response()->json(['success' => false, 'message' => 'At least one item is required'], 422);
+        }
+
+        $productIds = collect($items)->pluck('product_id')->filter()->unique()->values();
+        $products = DB::table('product')
+            ->whereIn('product_id', $productIds)
+            ->where('is_deleted', 0)
+            ->pluck('name', 'product_id');
+
+        foreach ($items as $item) {
+            $pid = $item['product_id'] ?? null;
+            if (!$pid || !$products->has((int) $pid)) {
+                return response()->json(['success' => false, 'message' => "Invalid or unknown product_id: {$pid}"], 422);
+            }
+            if (((float) ($item['quantity'] ?? 0)) <= 0) {
+                return response()->json(['success' => false, 'message' => 'Every item needs a quantity greater than 0'], 422);
+            }
+        }
+
+        $result = null;
+
+        DB::transaction(function () use ($orderId, $items, &$result) {
+            $order = DB::table('orders')->where('order_id', $orderId)->lockForUpdate()->first(['order_id', 'order_state', 'discount', 'delivery_charge']);
+
+            if (!$order) {
+                $result = ['status' => 404, 'body' => ['success' => false, 'message' => 'Order not found']];
+                return;
+            }
+
+            if ($order->order_state !== 'pending') {
+                $result = ['status' => 422, 'body' => [
+                    'success' => false,
+                    'message' => 'Only draft (pending) orders can have items edited here — this order is already ' . $order->order_state . '.',
+                ]];
+                return;
+            }
+
+            DB::table('orders_item')->where('order_id', $orderId)->delete();
+
+            $nextItemId = (int) (DB::table('orders_item')->lockForUpdate()->max('item_id')) + 1;
+            $beforeDiscount = 0.0;
+            $itemId = $nextItemId;
+
+            foreach ($items as $item) {
+                $qty   = (float) $item['quantity'];
+                $price = (float) ($item['item_price'] ?? 0);
+                $lineTotal = round($qty * $price, 2);
+                $beforeDiscount += $lineTotal;
+
+                DB::table('orders_item')->insert([
+                    'order_id'   => $orderId,
+                    'item_id'    => $itemId,
+                    'product_id' => (int) $item['product_id'],
+                    'pinfo'      => json_encode([
+                        'unit'                  => $item['unit'] ?? 'PCS',
+                        'price_inclusive'       => true,
+                        'unit_price_inclusive'  => $price,
+                        'tax_percent'           => 0,
+                        'discount_percent'      => 0,
+                    ]),
+                    'quantity'   => (int) round($qty),
+                    'item_price' => $price,
+                    'item_total' => $lineTotal,
+                    'commission' => 0,
+                ]);
+                $itemId++;
+            }
+
+            $discount       = (float) $order->discount;
+            $deliveryCharge = (float) $order->delivery_charge;
+            $orderTotal     = round($beforeDiscount - $discount + $deliveryCharge, 2);
+            if ($orderTotal < 0) {
+                $orderTotal = 0.0;
+            }
+
+            DB::table('orders')->where('order_id', $orderId)->update([
+                'items_count'      => count($items),
+                'before_discount'  => $beforeDiscount,
+                'order_total'      => $orderTotal,
+                'last_update_time' => now()->timestamp,
+            ]);
+
+            DB::table('master_orders')->where('id', $orderId)->update([
+                'order_count'     => count($items),
+                'before_discount' => $beforeDiscount,
+                'order_total'     => $orderTotal,
+            ]);
+
+            $result = ['status' => 200, 'body' => [
+                'success' => true,
+                'data' => [
+                    'order_id'        => (string) $orderId,
+                    'items_count'     => count($items),
+                    'before_discount' => $beforeDiscount,
+                    'order_total'     => $orderTotal,
+                ],
+            ]];
+        });
+
+        return response()->json($result['body'], $result['status']);
+    }
 }

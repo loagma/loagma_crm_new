@@ -6,6 +6,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 import '../../services/api_service.dart';
 import '../../services/notification_service.dart';
+import '../../widgets/product_picker_sheet.dart';
 import 'order_detail_screen.dart';
 import 'telecaller_actions.dart';
 import 'telecaller_mock_data.dart';
@@ -1480,7 +1481,7 @@ class _OrderSheetState extends State<_OrderSheet> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _ProductPickerSheet(),
+      builder: (_) => const ProductPickerSheet(),
     );
     if (picked != null) {
       setState(() {
@@ -1980,101 +1981,6 @@ class _OrderSheetState extends State<_OrderSheet> {
                 child: Icon(Icons.close_rounded, size: 18, color: Colors.grey.shade600),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Product picker (real catalog search) ───────────────────────────────────
-
-class _ProductPickerSheet extends StatefulWidget {
-  const _ProductPickerSheet();
-
-  @override
-  State<_ProductPickerSheet> createState() => _ProductPickerSheetState();
-}
-
-class _ProductPickerSheetState extends State<_ProductPickerSheet> {
-  final _searchCtrl = TextEditingController();
-  Timer? _debounce;
-  bool _loading = false;
-  List<Map<String, dynamic>> _results = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _search('');
-  }
-
-  @override
-  void dispose() {
-    _debounce?.cancel();
-    _searchCtrl.dispose();
-    super.dispose();
-  }
-
-  void _onChanged(String q) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () => _search(q));
-  }
-
-  Future<void> _search(String q) async {
-    setState(() => _loading = true);
-    final results = await ApiService.searchProducts(q);
-    if (!mounted) return;
-    setState(() { _results = results; _loading = false; });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.75,
-      padding: EdgeInsets.fromLTRB(18, 8, 18, 12 + MediaQuery.of(context).viewInsets.bottom),
-      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(child: Container(width: 42, height: 4, margin: const EdgeInsets.only(top: 8, bottom: 16), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(3)))),
-          const Text('Select Product', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _searchCtrl,
-            autofocus: true,
-            onChanged: _onChanged,
-            decoration: InputDecoration(
-              hintText: 'Search products…',
-              prefixIcon: const Icon(Icons.search_rounded, color: kGold),
-              isDense: true,
-              filled: true,
-              fillColor: const Color(0xFFFAFAFA),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: Color(0xFFE7E7E7))),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: Color(0xFFE7E7E7))),
-              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: kGold)),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator(color: kGold))
-                : _results.isEmpty
-                    ? Center(child: Text('No products found', style: TextStyle(fontSize: 13, color: Colors.grey.shade500)))
-                    : ListView.separated(
-                        itemCount: _results.length,
-                        separatorBuilder: (_, _) => const Divider(height: 1),
-                        itemBuilder: (context, i) {
-                          final p = _results[i];
-                          final name = (p['name'] ?? '').toString();
-                          final hsn  = (p['hsn_code'] ?? '').toString();
-                          return ListTile(
-                            title: Text(name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
-                            subtitle: hsn.isNotEmpty ? Text('HSN: $hsn', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)) : null,
-                            onTap: () => Navigator.of(context).pop(p),
-                          );
-                        },
-                      ),
           ),
         ],
       ),

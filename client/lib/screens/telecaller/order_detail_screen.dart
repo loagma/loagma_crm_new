@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../services/invoice_printer.dart';
+import '../../widgets/order_item_form_sheet.dart';
 import '../../widgets/single_location_map_screen.dart';
 import 'order_list_screen.dart';
 
@@ -103,165 +105,111 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     return double.tryParse(v.toString());
   }
 
-  Future<void> _showEditItemDialog(int index, Map<String, dynamic> item) async {
-    final name = (item['name'] ?? 'Item').toString();
-    final qtyCtrl   = TextEditingController(text: ((item['quantity'] as int?) ?? 0).toString());
-    final priceCtrl = TextEditingController(text: (_toDouble(item['item_price']) ?? 0).toStringAsFixed(2));
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) {
-          final qty   = int.tryParse(qtyCtrl.text) ?? 0;
-          final price = double.tryParse(priceCtrl.text) ?? 0;
-          final total = qty * price;
-
-          return AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            title: Text('Edit Item', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: qtyCtrl,
-                  keyboardType: TextInputType.number,
-                  onChanged: (_) => setDialogState(() {}),
-                  decoration: const InputDecoration(labelText: 'Quantity', isDense: true, border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: priceCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  onChanged: (_) => setDialogState(() {}),
-                  decoration: const InputDecoration(labelText: 'Price', isDense: true, border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    const Text('Total', style: TextStyle(fontSize: 13, color: Colors.black54)),
-                    const Spacer(),
-                    Text('₹${total.toStringAsFixed(2)}',
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
-                  ],
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: _gold, foregroundColor: Colors.white),
-                onPressed: () => Navigator.pop(ctx, {'quantity': qty, 'item_price': price, 'item_total': total}),
-                child: const Text('Save'),
-              ),
-            ],
-          );
-        },
-      ),
+  // Recompute the order-level money fields from the current items list —
+  // without this, adding/editing/deleting an item leaves order_total/
+  // before_discount frozen at whatever the server originally returned.
+  void _recalcTotals() {
+    final items = (_order?['items'] as List?) ?? [];
+    final beforeDiscount = items.fold<double>(
+      0, (sum, it) => sum + (_toDouble((it as Map)['item_total']) ?? 0),
     );
+    final discount = _toDouble(_order?['discount']) ?? 0;
+    final deliveryCharge = _toDouble(_order?['delivery_charge']) ?? 0;
+    final rawTotal = beforeDiscount - discount + deliveryCharge;
+    _order!['before_discount'] = beforeDiscount;
+    _order!['order_total'] = rawTotal < 0 ? 0.0 : rawTotal;
+    _order!['items_count'] = items.length;
+  }
 
+  void _showSavedSnack(String message, {bool error = false}) {
+    Fluttertoast.showToast(
+      msg: message,
+      backgroundColor: error ? Colors.red : const Color(0xFF43A047),
+      textColor: Colors.white,
+    );
+  }
+
+  bool _savingItems = false;
+
+  // Sends the full current items list to the server so the edit survives a
+  // refresh — the server only accepts this while order_state is 'pending'
+  // (see SalesOrderController::updateItems); anything else (invoiced,
+  // dispatched, etc.) is preview-only here since re-editing those safely
+  // requires stock-ledger reversal this app doesn't implement.
+  Future<void> _persistItems() async {
+    if (_order == null) return;
+    final orderState = (_order!['order_state'] ?? '').toString();
+    if (orderState != 'pending') {
+      _showSavedSnack(
+        'This order is already "$orderState" — item changes here are preview only and are NOT saved to the server.',
+        error: true,
+      );
+      return;
+    }
+
+    setState(() => _savingItems = true);
+    final items = (_order!['items'] as List).cast<Map>();
+    final payload = items.map((it) => {
+      'product_id': it['product_id'],
+      'quantity':   it['quantity'],
+      'item_price': it['item_price'],
+      'unit':       it['unit'] ?? 'PCS',
+    }).toList();
+
+    final result = await ApiService.updateOrderItems(_currentOrderId, payload.cast<Map<String, dynamic>>());
+    if (!mounted) return;
+    setState(() => _savingItems = false);
+
+    if (result['success'] == true) {
+      final data = result['data'] as Map<String, dynamic>?;
+      if (data != null) {
+        setState(() {
+          _order!['before_discount'] = data['before_discount'];
+          _order!['order_total']     = data['order_total'];
+          _order!['items_count']     = data['items_count'];
+        });
+      }
+      _showSavedSnack('Saved — total ₹${(_toDouble(_order!['order_total']) ?? 0).toStringAsFixed(2)}');
+    } else {
+      _showSavedSnack((result['message'] ?? 'Could not save changes.').toString(), error: true);
+    }
+  }
+
+  Future<void> _showEditItemDialog(int index, Map<String, dynamic> item) async {
+    final result = await showOrderItemFormSheet(context, initial: item, itemNumber: index + 1);
     if (result == null || _order == null) return;
     setState(() {
       (_order!['items'] as List)[index] = {
         ...item,
+        'product_id': result['product_id'],
+        'name':       result['name'],
+        'pack_size':  result['pack_size'],
         'quantity':   result['quantity'],
         'item_price': result['item_price'],
         'item_total': result['item_total'],
       };
+      _recalcTotals();
     });
+    await _persistItems();
   }
 
   Future<void> _showAddItemDialog() async {
-    final nameCtrl  = TextEditingController();
-    final qtyCtrl   = TextEditingController(text: '1');
-    final priceCtrl = TextEditingController();
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) {
-          final qty   = int.tryParse(qtyCtrl.text) ?? 0;
-          final price = double.tryParse(priceCtrl.text) ?? 0;
-          final total = qty * price;
-
-          return AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            title: const Text('Add Item', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: nameCtrl,
-                  onChanged: (_) => setDialogState(() {}),
-                  decoration: const InputDecoration(labelText: 'Item Name', isDense: true, border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: qtyCtrl,
-                  keyboardType: TextInputType.number,
-                  onChanged: (_) => setDialogState(() {}),
-                  decoration: const InputDecoration(labelText: 'Quantity', isDense: true, border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: priceCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  onChanged: (_) => setDialogState(() {}),
-                  decoration: const InputDecoration(labelText: 'Price', isDense: true, border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    const Text('Total', style: TextStyle(fontSize: 13, color: Colors.black54)),
-                    const Spacer(),
-                    Text('₹${total.toStringAsFixed(2)}',
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
-                  ],
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: _gold, foregroundColor: Colors.white),
-                onPressed: nameCtrl.text.trim().isEmpty
-                    ? null
-                    : () => Navigator.pop(ctx, {
-                          'name':        nameCtrl.text.trim(),
-                          'quantity':    qty,
-                          'item_price':  price,
-                          'item_total':  total,
-                        }),
-                child: const Text('Save'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-
+    final items = (_order?['items'] as List?) ?? [];
+    final result = await showOrderItemFormSheet(context, itemNumber: items.length + 1);
     if (result == null || _order == null) return;
     setState(() {
       (_order!['items'] as List).add({
-        'product_id':    null,
+        'product_id':    result['product_id'],
         'name':          result['name'],
-        'pack_size':     null,
+        'pack_size':     result['pack_size'],
         'quantity':      result['quantity'],
         'qty_delivered': 0,
         'item_price':    result['item_price'],
         'item_total':    result['item_total'],
       });
-      _order!['items_count'] = ((_order!['items_count'] as int?) ?? 0) + 1;
+      _recalcTotals();
     });
+    await _persistItems();
   }
 
   @override
@@ -534,7 +482,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 children: [
                   Expanded(child: _sectionHeader(Icons.shopping_bag_rounded, 'Items ($itemsCount)')),
                   GestureDetector(
-                    onTap: _showAddItemDialog,
+                    onTap: _savingItems ? null : _showAddItemDialog,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
@@ -542,12 +490,19 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(color: _gold.withValues(alpha: 0.4)),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.add_rounded, size: 15, color: Color(0xFFB89A3E)),
-                          SizedBox(width: 3),
-                          Text('Add Item', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFFB89A3E))),
+                          if (_savingItems)
+                            const SizedBox(
+                              width: 13, height: 13,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFB89A3E)),
+                            )
+                          else
+                            const Icon(Icons.add_rounded, size: 15, color: Color(0xFFB89A3E)),
+                          const SizedBox(width: 5),
+                          Text(_savingItems ? 'Saving…' : 'Add Item',
+                              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFFB89A3E))),
                         ],
                       ),
                     ),
@@ -600,7 +555,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       const SizedBox(width: 6),
                       _iconBtn(
                         const Icon(Icons.edit_rounded, size: 15, color: Color(0xFFD7BE69)),
-                        () => _showEditItemDialog(index, item),
+                        _savingItems ? () {} : () => _showEditItemDialog(index, item),
                         bg: const Color(0xFFD7BE69).withValues(alpha: 0.12),
                       ),
                     ],

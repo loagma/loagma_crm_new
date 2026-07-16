@@ -335,10 +335,12 @@ class ApiService {
 
   /// Search the real product catalog (`product` table) — used to pick a
   /// genuine product_id for a Sales Order line item.
-  static Future<List<Map<String, dynamic>>> searchProducts(String q) async {
+  /// Returns null (not []) on failure, so callers can tell "search failed"
+  /// apart from "genuinely no matching products".
+  static Future<List<Map<String, dynamic>>?> searchProducts(String q) async {
     final uri = Uri.parse('${ApiConfig.baseUrl}/api/products/search').replace(queryParameters: {'q': q});
     try {
-      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 20));
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final decoded = jsonDecode(response.body) as Map<String, dynamic>;
         final data = (decoded['data'] as List?) ?? [];
@@ -348,7 +350,7 @@ class ApiService {
     } catch (e) {
       print('searchProducts error: $e');
     }
-    return [];
+    return null;
   }
 
   /// Create a real Sales Order (draft/`pending` state — see SalesOrderController).
@@ -395,6 +397,24 @@ class ApiService {
       print('createSalesOrder error: $e');
     }
     return null;
+  }
+
+  /// Persist an add/edit/remove of items against an EXISTING order (server
+  /// only allows this while the order is still `pending` — see
+  /// SalesOrderController::updateItems). Returns the raw decoded response
+  /// (not just `data`) so callers can show the server's own rejection
+  /// message, e.g. when the order is already invoiced/dispatched.
+  static Future<Map<String, dynamic>> updateOrderItems(String orderId, List<Map<String, dynamic>> items) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/orders/$orderId/items');
+    try {
+      final response = await http
+          .put(url, headers: _authHeaders, body: jsonEncode({'items': items}))
+          .timeout(const Duration(seconds: 20));
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('updateOrderItems error: $e');
+      return {'success': false, 'message': 'Network error — check your connection.'};
+    }
   }
 
   /// Non-authoritative preview of the order_id the next Sales Order would get
