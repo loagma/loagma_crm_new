@@ -1,0 +1,194 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * Minimal, safe slice of the real Sales Order model documented in
+ * client/SALES_MODULE.md. `orders`/`orders_item` are shared, live production
+ * tables (not owned by this app) with NO real AUTO_INCREMENT on TiDB, so IDs
+ * are computed here the same way the documented system does it — but with an
+ * explicit `lockForUpdate()` the doc flags as *missing* in the real
+ * single-row `store()` path, to reduce (not fully eliminate) collision risk.
+ *
+ * Scope deliberately stops at `order_state = 'pending'` (draft) — no
+ * invoicing, no stock-ledger movement, no PDF generation. Per the doc,
+ * stock only moves once an order transitions to `invoiced`, so a plain
+ * "Create Sales Order" action from the CRM staying in `pending` cannot
+ * corrupt stock or numbering sequences owned by the real invoicing flow.
+ */
+class SalesOrderController extends Controller
+{
+    /**
+     * GET /api/sales-orders/next-order-id
+     *
+     * Non-authoritative preview of the order_id this order WOULD get if
+     * created right now (same "preview, not reserved" pattern as the real
+     * system's `series()` endpoint for invoice numbers — see SALES_MODULE.md
+     * §4). No lock is held, so the real `store()` call may still end up
+     * assigning a different (higher) id if another order is created in
+     * between; it's shown purely so the create form doesn't display a made-up
+     * number.
+     */
+    public function nextOrderId(): JsonResponse
+    {
+        $next = (int) DB::table('orders')->max('order_id') + 1;
+
+        return response()->json(['success' => true, 'data' => ['next_order_id' => $next]]);
+    }
+
+    public function store(): JsonResponse
+    {
+        $data = request()->all();
+
+        $buyerUserId = $data['buyer_userid'] ?? null;
+        $items       = $data['items'] ?? [];
+
+        if (!$buyerUserId) {
+            return response()->json(['success' => false, 'message' => 'buyer_userid is required'], 422);
+        }
+
+        $buyer = DB::table('user')->where('userid', $buyerUserId)->first(['userid']);
+        if (!$buyer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This account has no matching registered customer (user) row — a real sales order can only be created for a registered customer, not a lead.',
+            ], 422);
+        }
+
+        if (!is_array($items) || count($items) === 0) {
+            return response()->json(['success' => false, 'message' => 'At least one item is required'], 422);
+        }
+
+        // Validate every item references a real, non-deleted product — orders_item.product_id is NOT NULL.
+        $productIds = collect($items)->pluck('product_id')->filter()->unique()->values();
+        $products = DB::table('product')
+            ->whereIn('product_id', $productIds)
+            ->where('is_deleted', 0)
+            ->pluck('name', 'product_id');
+
+        foreach ($items as $item) {
+            $pid = $item['product_id'] ?? null;
+            if (!$pid || !$products->has((int) $pid)) {
+                return response()->json(['success' => false, 'message' => "Invalid or unknown product_id: {$pid}"], 422);
+            }
+            if (((float) ($item['quantity'] ?? 0)) <= 0) {
+                return response()->json(['success' => false, 'message' => 'Every item needs a quantity greater than 0'], 422);
+            }
+        }
+
+        $idempotencyKey = $data['idempotency_key'] ?? null;
+        if ($idempotencyKey) {
+            $existing = DB::table('orders')->where('idempotency_key', $idempotencyKey)->first(['order_id']);
+            if ($existing) {
+                return response()->json(['success' => true, 'data' => ['order_id' => (string) $existing->order_id], 'idempotent_replay' => true]);
+            }
+        }
+
+        $discount        = (float) ($data['discount'] ?? 0);
+        $deliveryCharge  = (float) ($data['delivery_charge'] ?? 0);
+        $narration       = $data['narration'] ?? null;
+        $department      = $data['department'] ?? null;
+        $areaName        = $data['area_name'] ?? null;
+        $timeSlot        = $data['time_slot'] ?? 'Now';
+        $documentDate    = $data['document_date'] ?? null; // Y-m-d
+        $deliveryInfo    = $data['delivery_info'] ?? [];
+
+        $beforeDiscount = 0.0;
+        foreach ($items as $item) {
+            $beforeDiscount += ((float) $item['quantity']) * ((float) ($item['item_price'] ?? 0));
+        }
+        $orderTotal = round($beforeDiscount - $discount + $deliveryCharge, 2);
+
+        $orderId = null;
+
+        DB::transaction(function () use (
+            $items, $products, $buyerUserId, $discount, $deliveryCharge, $narration, $department,
+            $areaName, $timeSlot, $documentDate, $deliveryInfo, $beforeDiscount, $orderTotal,
+            $idempotencyKey, &$orderId
+        ) {
+            $nextOrderId = (int) (DB::table('orders')->lockForUpdate()->max('order_id')) + 1;
+            $nextItemId  = (int) (DB::table('orders_item')->lockForUpdate()->max('item_id')) + 1;
+
+            $now = now();
+
+            DB::table('orders')->insert([
+                'order_id'          => $nextOrderId,
+                'master_order_id'   => $nextOrderId,
+                'txn_id'            => 'CRM-' . $nextOrderId . '-' . $now->timestamp,
+                'buyer_userid'      => $buyerUserId,
+                'start_time'        => $now->timestamp,
+                'last_update_time'  => $now->timestamp,
+                'short_datetime'    => $now->format('d-M-y h:i A'),
+                'order_state'       => 'pending',
+                'payment_method'    => 'cod',
+                'items_count'       => count($items),
+                'delivery_charge'   => $deliveryCharge,
+                'order_total'       => $orderTotal,
+                'delivery_info'     => json_encode($deliveryInfo ?: (object) []),
+                'area_name'         => $areaName,
+                'feedback'          => '',
+                'admin_id'          => 0,
+                'payment_status'    => 'not_paid',
+                'discount'          => $discount,
+                'before_discount'   => $beforeDiscount,
+                'time_slot'         => $timeSlot,
+                'Bill_Narration'    => $narration,
+                'Department'        => $department,
+                'Bill_Dt'           => $documentDate,
+                'idempotency_key'   => $idempotencyKey,
+            ]);
+
+            $itemId = $nextItemId;
+            foreach ($items as $item) {
+                $qty   = (float) $item['quantity'];
+                $price = (float) ($item['item_price'] ?? 0);
+                DB::table('orders_item')->insert([
+                    'order_id'   => $nextOrderId,
+                    'item_id'    => $itemId,
+                    'product_id' => (int) $item['product_id'],
+                    'pinfo'      => json_encode([
+                        'unit'                  => $item['unit'] ?? 'PCS',
+                        'price_inclusive'       => true,
+                        'unit_price_inclusive'  => $price,
+                        'tax_percent'           => 0,
+                        'discount_percent'      => 0,
+                    ]),
+                    'quantity'   => (int) round($qty),
+                    'item_price' => $price,
+                    'item_total' => round($qty * $price, 2),
+                    'commission' => 0,
+                ]);
+                $itemId++;
+            }
+
+            DB::table('master_orders')->insert([
+                'id'              => $nextOrderId,
+                'user_id'         => $buyerUserId,
+                'txn_id'          => 'CRM-' . $nextOrderId,
+                'payment_status'  => 'not_paid',
+                'order_count'     => count($items),
+                'payment_method'  => 'cod',
+                'delivery_info'   => json_encode($deliveryInfo ?: (object) []),
+                'order_total'     => $orderTotal,
+                'delivery_charge' => $deliveryCharge,
+                'discount'        => $discount,
+                'before_discount' => $beforeDiscount,
+                'status'          => '1',
+                'created_at'      => $now,
+            ]);
+
+            $orderId = $nextOrderId;
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'order_id'    => (string) $orderId,
+                'order_total' => $orderTotal,
+            ],
+        ], 201);
+    }
+}

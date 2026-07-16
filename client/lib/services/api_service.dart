@@ -333,6 +333,88 @@ class ApiService {
     return [];
   }
 
+  /// Search the real product catalog (`product` table) — used to pick a
+  /// genuine product_id for a Sales Order line item.
+  static Future<List<Map<String, dynamic>>> searchProducts(String q) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/products/search').replace(queryParameters: {'q': q});
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = (decoded['data'] as List?) ?? [];
+        return data.cast<Map<String, dynamic>>();
+      }
+      print('searchProducts status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('searchProducts error: $e');
+    }
+    return [];
+  }
+
+  /// Create a real Sales Order (draft/`pending` state — see SalesOrderController).
+  /// Only works when [buyerUserId] is a real registered customer (a `user` row);
+  /// returns null (with the server's message logged) otherwise.
+  static Future<Map<String, dynamic>?> createSalesOrder({
+    required String buyerUserId,
+    required List<Map<String, dynamic>> items,
+    double discount = 0,
+    double deliveryCharge = 0,
+    String? narration,
+    String? department,
+    String? areaName,
+    String? timeSlot,
+    String? documentDate,
+    Map<String, dynamic>? deliveryInfo,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/sales-orders');
+    try {
+      final response = await http
+          .post(
+            url,
+            headers: _authHeaders,
+            body: jsonEncode({
+              'buyer_userid':     buyerUserId,
+              'items':            items,
+              'discount':         discount,
+              'delivery_charge':  deliveryCharge,
+              if (narration != null)     'narration':     narration,
+              if (department != null)    'department':    department,
+              if (areaName != null)      'area_name':     areaName,
+              if (timeSlot != null)      'time_slot':     timeSlot,
+              if (documentDate != null)  'document_date': documentDate,
+              if (deliveryInfo != null)  'delivery_info': deliveryInfo,
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {
+        return decoded['data'] as Map<String, dynamic>?;
+      }
+      print('createSalesOrder failed: ${decoded['message'] ?? response.body}');
+    } catch (e) {
+      print('createSalesOrder error: $e');
+    }
+    return null;
+  }
+
+  /// Non-authoritative preview of the order_id the next Sales Order would get
+  /// (not reserved — the real id is assigned at create time).
+  static Future<int?> getNextSalesOrderId() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/sales-orders/next-order-id');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = decoded['data'] as Map<String, dynamic>?;
+        return data?['next_order_id'] as int?;
+      }
+      print('getNextSalesOrderId status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getNextSalesOrderId error: $e');
+    }
+    return null;
+  }
+
   /// Fetch a single lead account by id.
   static Future<Map<String, dynamic>?> getLeadAccount(String id) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/$id');

@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 import '../../services/api_service.dart';
 import '../../services/notification_service.dart';
+import 'order_detail_screen.dart';
 import 'telecaller_actions.dart';
 import 'telecaller_mock_data.dart';
 
@@ -44,7 +47,9 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
   /// were navigated with).
   Map<String, dynamic> _acc = {};
   List<Map<String, dynamic>> _logs = [];
-  // Mockup-style orders. Session-local (no orders-with-amounts table yet).
+  // Real orders for customers (fetched from `orders` via buyer_userid).
+  // Leads have no `user` row to query real orders against, so their entries
+  // here are session-local drafts only (see _OrderSheet's onSave handling).
   final List<Map<String, dynamic>> _orders = [];
 
   bool get _isLead => widget.accountType == 'lead';
@@ -85,6 +90,27 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
     await launchPhoneCall(_phone);
   }
 
+  Future<void> _cloudCall() async {
+    if (_phone.isEmpty) {
+      _toast('No phone number on file');
+      return;
+    }
+    _toast('Calling… your phone will ring first, then the customer.');
+    final result = await ApiService.triggerKnowlarityCall(
+      accountId: _id,
+      accountType: widget.accountType,
+      customerNumber: _phone,
+    );
+    if (!mounted) return;
+    if (result != null) {
+      _callInitiated = true;
+      widget.onCalled?.call();
+      _toast('Call started');
+    } else {
+      _toast('Could not start the call. Try again.');
+    }
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
     final logsF = ApiService.getCallLogs(accountId: _id);
@@ -98,6 +124,35 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
       if (detail != null) _acc = {..._acc, ...detail};
       _logs = logs;
       _loading = false;
+    });
+    if (!_isLead) await _loadOrders();
+  }
+
+  String _titleCase(String s) => s.isEmpty
+      ? s
+      : s.split(RegExp(r'[_\s]+')).map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}').join(' ');
+
+  Future<void> _loadOrders() async {
+    if (_id.isEmpty) return;
+    final res = await ApiService.getOrders(buyerUserId: _id, perPage: 50);
+    if (!mounted) return;
+    final raw = res['data'];
+    if (raw is! List) return;
+    setState(() {
+      _orders
+        ..clear()
+        ..addAll(raw.map((o) {
+          final m = Map<String, dynamic>.from(o as Map);
+          return {
+            'order_id': m['order_id']?.toString(),
+            'inv':    'Order #${m['order_id']}',
+            'date':   m['order_datetime'] ?? '',
+            'items':  '${m['items_count'] ?? 0} item(s)',
+            'amt':    ((m['order_total'] as num?) ?? 0).round(),
+            'status': _titleCase((m['order_state'] ?? '').toString()),
+            'pay':    _titleCase((m['payment_status'] ?? '').toString()),
+          };
+        }));
     });
   }
 
@@ -212,6 +267,7 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
           Row(
             children: [
               _qa(const Icon(Icons.call_rounded, size: 22, color: Color(0xFF2F9E57)), 'Call', const Color(0xFF2F9E57), _callAndLog),
+              _qa(const Icon(Icons.ring_volume_rounded, size: 22, color: Color(0xFF8E24AA)), 'Cloud Call', const Color(0xFF8E24AA), _cloudCall),
               _qa(const FaIcon(FontAwesomeIcons.whatsapp, size: 22, color: Color(0xFF25D366)), 'WhatsApp', const Color(0xFF25D366), () => launchWhatsApp(_phone)),
               _qa(const Icon(Icons.mail_rounded, size: 22, color: Color(0xFF3B6FD4)), 'Email', const Color(0xFF3B6FD4), _emailAction),
               _qa(Icon(Icons.shopping_bag_rounded, size: 22, color: kGoldDark), 'Order', kGoldDark, _openOrderSheet),
@@ -521,10 +577,7 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
             Row(children: [
               _cardTitle('Order history'),
               const Spacer(),
-              GestureDetector(
-                onTap: _busy ? null : _openOrderSheet,
-                child: const Text('+ New order', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kGoldDark)),
-              ),
+             
             ]),
             const SizedBox(height: 8),
             if (_orders.isEmpty)
@@ -579,7 +632,15 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
     final status = '${o['status'] ?? ''}';
     final pay = '${o['pay'] ?? ''}';
     final sc = kOrderStatusColors[status] ?? const Color(0xFF5A6472);
-    return Container(
+    final orderId = o['order_id'] as String?;
+    return GestureDetector(
+      onTap: orderId == null
+          ? () => _toast('This is a local draft — no real order to open yet')
+          : () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => OrderDetailScreen(orderId: orderId)),
+              ),
+      child: Container(
       margin: const EdgeInsets.only(bottom: 9),
       padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(12)),
@@ -616,6 +677,7 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
           const SizedBox(width: 8),
           Text(money(amt), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
         ],
+      ),
       ),
     );
   }
@@ -711,7 +773,17 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
       backgroundColor: Colors.transparent,
       builder: (_) => _OrderSheet(
         name: _name,
-        onSave: (items, amt, status, pay) {
+        accountId: _id,
+        accountType: widget.accountType,
+        onSave: (items, amt, status, pay, realOrderId) async {
+          if (realOrderId != null) {
+            // Real order — refetch from the server so the list/summary
+            // reflect the authoritative saved row, not a guessed local copy.
+            await _loadOrders();
+            _toast('Sales order #$realOrderId created · ${money(amt)}');
+            return;
+          }
+          // Lead draft — no backend row exists to refetch, keep it local-only.
           final now = DateTime.now();
           setState(() {
             _orders.insert(0, {
@@ -723,7 +795,7 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
               'pay': pay,
             });
           });
-          _toast('Order created · ${money(amt)}');
+          _toast('Draft saved locally · ${money(amt)}');
         },
       ),
     );
@@ -1231,34 +1303,116 @@ class _ScheduleFollowUpState extends State<_ScheduleFollowUp> {
 }
 
 // ── Create-order bottom sheet (mockup) ──────────────────────────────────────────
+class _OrderLineItem {
+  final product = TextEditingController();
+  final qty = TextEditingController(text: '1');
+  final unitPrice = TextEditingController(text: '0');
+  final totalTax = TextEditingController(text: '0');
+  String unit = 'PCS';
+  String? productId; // real product_id once selected from search — required to submit a real order
+
+  double get qtyNum => double.tryParse(qty.text.trim()) ?? 0;
+  double get priceNum => double.tryParse(unitPrice.text.trim()) ?? 0;
+  double get taxNum => double.tryParse(totalTax.text.trim()) ?? 0;
+  double get productTotal => qtyNum * priceNum;
+  double get grossAmount => productTotal - taxNum;
+
+  void dispose() {
+    product.dispose();
+    qty.dispose();
+    unitPrice.dispose();
+    totalTax.dispose();
+  }
+}
+
+class _OrderAddon {
+  String name;
+  final amount = TextEditingController(text: '0');
+  _OrderAddon(this.name);
+
+  double get amountNum => double.tryParse(amount.text.trim()) ?? 0;
+
+  void dispose() => amount.dispose();
+}
+
 class _OrderSheet extends StatefulWidget {
   final String name;
-  final void Function(String items, int amount, String status, String pay) onSave;
-  const _OrderSheet({required this.name, required this.onSave});
+  final String accountId;
+  final String accountType; // 'lead' | 'customer'
+  final void Function(String items, int amount, String status, String pay, String? realOrderId) onSave;
+  const _OrderSheet({
+    required this.name,
+    required this.accountId,
+    required this.accountType,
+    required this.onSave,
+  });
 
   @override
   State<_OrderSheet> createState() => _OrderSheetState();
 }
 
 class _OrderSheetState extends State<_OrderSheet> {
-  final _items = TextEditingController();
-  final _amount = TextEditingController();
-  String _pay = kPaymentOptions.first;
-  String _status = 'Confirmed';
+  static const _units = ['PCS', 'KG', 'BOX', 'LTR', 'DOZ'];
+  static const _addonNames = ['Hamali', 'Transport', 'Packing', 'Discount', 'Other'];
+
+  int? _voucherNo; // null while loading the real preview from the server
+  DateTime _documentDate = DateTime.now();
+  DateTime _expectedDate = DateTime.now().add(const Duration(days: 1));
+  final _narration = TextEditingController();
+  bool _pricesIncludeTax = true;
+
+  final List<_OrderLineItem> _lineItems = [_OrderLineItem()];
+  final List<_OrderAddon> _addons = [];
+  bool _saving = false;
+
+  bool get _isCustomer => widget.accountType == 'customer';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVoucherPreview();
+  }
+
+  Future<void> _loadVoucherPreview() async {
+    final next = await ApiService.getNextSalesOrderId();
+    if (!mounted) return;
+    setState(() => _voucherNo = next);
+  }
 
   @override
   void dispose() {
-    _items.dispose();
-    _amount.dispose();
+    _narration.dispose();
+    for (final i in _lineItems) {
+      i.dispose();
+    }
+    for (final a in _addons) {
+      a.dispose();
+    }
     super.dispose();
   }
+
+  String get _financialYear {
+    final d = _documentDate;
+    final startYear = d.month >= 4 ? d.year : d.year - 1;
+    return '${(startYear % 100).toString().padLeft(2, '0')}-${((startYear + 1) % 100).toString().padLeft(2, '0')}';
+  }
+
+  String _fmtDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+  double get _grossAmount => _lineItems.fold(0, (s, i) => s + i.grossAmount);
+  double get _totalTax => _lineItems.fold(0, (s, i) => s + i.taxNum);
+  double get _addonsTotal => _addons.fold(0, (s, a) => s + a.amountNum);
+  double get _grandTotal => _grossAmount + _totalTax + _addonsTotal;
 
   OutlineInputBorder _border([Color c = const Color(0xFFE7E7E7)]) =>
       OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: BorderSide(color: c));
 
-  InputDecoration _decor(String hint) => InputDecoration(
+  InputDecoration _decor(String label, {String? hint}) => InputDecoration(
+        labelText: label,
         hintText: hint,
         hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+        isDense: true,
         filled: true,
         fillColor: const Color(0xFFFAFAFA),
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -1273,91 +1427,657 @@ class _OrderSheetState extends State<_OrderSheet> {
             style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, letterSpacing: .5, color: Colors.grey.shade400)),
       );
 
+  Widget _sectionTitle(String t) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Text(t, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: kGoldDark)),
+      );
+
+  Widget _voucherArrow(IconData icon, VoidCallback? onTap) => GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 34, height: 38,
+          alignment: Alignment.center,
+          child: Icon(icon, size: 20, color: onTap != null ? kGoldDark : Colors.grey.shade300),
+        ),
+      );
+
+  Widget _sectionCard({required String title, Widget? trailing, required Widget child}) => Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: kGold.withValues(alpha: 0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Expanded(child: _sectionTitle(title)),
+              ?trailing,
+            ]),
+            child,
+          ],
+        ),
+      );
+
+  Future<void> _pickDate({required bool expected}) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: expected ? _expectedDate : _documentDate,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked != null) {
+      setState(() => expected ? _expectedDate = picked : _documentDate = picked);
+    }
+  }
+
+  Future<void> _pickProduct(_OrderLineItem item) async {
+    final picked = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _ProductPickerSheet(),
+    );
+    if (picked != null) {
+      setState(() {
+        item.product.text = picked['name'] as String? ?? '';
+        item.productId = picked['product_id'] as String?;
+      });
+    }
+  }
+
+  String _isoDate(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  Future<void> _submit() async {
+    final validItems = _lineItems.where((i) => i.product.text.trim().isNotEmpty && i.qtyNum > 0).toList();
+    if (validItems.isEmpty) {
+      Fluttertoast.showToast(msg: 'Add at least one product', backgroundColor: Colors.red, textColor: Colors.white);
+      return;
+    }
+    final itemsSummary = validItems.map((i) => i.product.text.trim()).join(', ');
+
+    if (!_isCustomer) {
+      // Lead — no real `user` row to attach an order to. Local draft only.
+      widget.onSave(itemsSummary, _grandTotal.round(), 'Draft', 'Pending', null);
+      Navigator.of(context).pop();
+      return;
+    }
+
+    final missingProduct = validItems.where((i) => i.productId == null).toList();
+    if (missingProduct.isNotEmpty) {
+      Fluttertoast.showToast(
+        msg: 'Select a real product from search for every item before saving',
+        backgroundColor: Colors.red, textColor: Colors.white,
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    final result = await ApiService.createSalesOrder(
+      buyerUserId: widget.accountId,
+      items: validItems.map((i) => {
+        'product_id':  i.productId,
+        'quantity':    i.qtyNum,
+        'item_price':  i.priceNum,
+        'unit':        i.unit,
+      }).toList(),
+      discount: 0,
+      // Addons (Hamali/Transport/Packing/etc.) are extra charges, not a discount —
+      // the backend has no dedicated "charges" field yet, so fold them into
+      // delivery_charge (which the order-total formula adds, matching intent).
+      deliveryCharge: _addonsTotal,
+      narration: _narration.text.trim().isEmpty ? null : _narration.text.trim(),
+      department: null,
+      areaName: null,
+      timeSlot: _fmtDate(_expectedDate),
+      documentDate: _isoDate(_documentDate),
+    );
+    if (!mounted) return;
+    setState(() => _saving = false);
+
+    if (result == null) {
+      Fluttertoast.showToast(msg: 'Could not create the order. Try again.', backgroundColor: Colors.red, textColor: Colors.white);
+      return;
+    }
+
+    final realOrderId = result['order_id']?.toString();
+    final savedTotal = ((result['order_total'] as num?) ?? _grandTotal).round();
+    widget.onSave(itemsSummary, savedTotal, 'Pending', 'Not Paid', realOrderId);
+    Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
+      height: MediaQuery.of(context).size.height - MediaQuery.of(context).padding.top,
       padding: EdgeInsets.fromLTRB(18, 8, 18, 18 + MediaQuery.of(context).viewInsets.bottom),
       decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Center(child: Container(width: 42, height: 4, margin: const EdgeInsets.only(top: 8, bottom: 16), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(3)))),
-          const Text('Create order', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 2),
-          Text(widget.name, style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-          const SizedBox(height: 16),
-          _label('Products / items'),
-          TextField(controller: _items, decoration: _decor('e.g. Staples + oils · 12 SKUs')),
-          const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  _label('Order value (₹)'),
-                  TextField(controller: _amount, keyboardType: TextInputType.number, decoration: _decor('0')),
-                ]),
+          SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(child: Container(width: 42, height: 4, margin: const EdgeInsets.only(top: 8, bottom: 16), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(3)))),
+                const Text('Create Sales Order', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 2),
+                Text(widget.name, style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                const SizedBox(height: 18),
+
+                // ── Customer & Dates ──────────────────────────────────────────
+            _sectionCard(
+              title: 'Customer & Dates',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        _label('Financial Year'),
+                        Container(
+                          height: 46,
+                          alignment: Alignment.centerLeft,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
+                          child: Text(_financialYear, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        ),
+                      ]),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        _label('Voucher No'),
+                        Container(
+                          height: 46,
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
+                          child: Row(children: [
+                            // No real "previous voucher" to browse to here — this is always
+                            // a *new* order, so only a refresh action makes sense (the preview
+                            // can go stale if another order is created elsewhere meanwhile).
+                            _voucherArrow(Icons.chevron_left_rounded, null),
+                            Expanded(
+                              child: _voucherNo == null
+                                  ? const Center(
+                                      child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: kGold)),
+                                    )
+                                  : Text('$_voucherNo',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                            ),
+                            _voucherArrow(Icons.refresh_rounded, _loadVoucherPreview),
+                          ]),
+                        ),
+                      ]),
+                    ),
+                  ]),
+                  const SizedBox(height: 14),
+                  Row(children: [
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        _label('Document Date *'),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(11),
+                          onTap: () => _pickDate(expected: false),
+                          child: Container(
+                            height: 46,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
+                            child: Row(children: [
+                              Expanded(child: Text(_fmtDate(_documentDate), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+                              Icon(Icons.calendar_today_rounded, size: 15, color: Colors.grey.shade500),
+                            ]),
+                          ),
+                        ),
+                      ]),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        _label('Expected Date'),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(11),
+                          onTap: () => _pickDate(expected: true),
+                          child: Container(
+                            height: 46,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
+                            child: Row(children: [
+                              Expanded(child: Text(_fmtDate(_expectedDate), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+                              Icon(Icons.calendar_today_rounded, size: 15, color: Colors.grey.shade500),
+                            ]),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  ]),
+                  const SizedBox(height: 14),
+                  _label('Customer'),
+                  Container(
+                    width: double.infinity,
+                    height: 46,
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
+                    child: Text(widget.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                  ),
+                  const SizedBox(height: 14),
+                  _label('Narration'),
+                  TextField(controller: _narration, maxLines: 2, decoration: _decor('', hint: 'Notes for this order…')),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
+                    child: Row(children: [
+                      Expanded(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          const Text('Prices include tax', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                          Text('Line prices are entered tax-inclusive', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                        ]),
+                      ),
+                      Switch.adaptive(
+                        value: _pricesIncludeTax,
+                        activeThumbColor: kGold,
+                        onChanged: (v) => setState(() => _pricesIncludeTax = v),
+                      ),
+                    ]),
+                  ),
+                ],
               ),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  _label('Payment'),
-                  _dropdown(_pay, kPaymentOptions, (v) => setState(() => _pay = v)),
-                ]),
+            ),
+
+            // ── Product Detail ────────────────────────────────────────────
+            _sectionCard(
+              title: 'Product Detail',
+              trailing: GestureDetector(
+                onTap: () => setState(() => _lineItems.add(_OrderLineItem())),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(color: kGold.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20), border: Border.all(color: kGold.withValues(alpha: 0.4))),
+                  child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.add_rounded, size: 15, color: kGoldDark),
+                    SizedBox(width: 3),
+                    Text('Add Item', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: kGoldDark)),
+                  ]),
+                ),
               ),
-            ],
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 6),
+                  ..._lineItems.asMap().entries.map((entry) {
+                    final idx = entry.key;
+                    final item = entry.value;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: const Color(0xFFFCFAF3), borderRadius: BorderRadius.circular(12), border: Border.all(color: kGold.withValues(alpha: 0.3))),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            Expanded(
+                              child: Text('Item ${idx + 1}  |  HSN: NA',
+                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.grey.shade600)),
+                            ),
+                            if (_lineItems.length > 1)
+                              GestureDetector(
+                                onTap: () => setState(() { item.dispose(); _lineItems.removeAt(idx); }),
+                                child: const Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFFC0584C)),
+                              ),
+                          ]),
+                          const SizedBox(height: 10),
+                          _label('Product *'),
+                          InkWell(
+                            borderRadius: BorderRadius.circular(11),
+                            onTap: () => _pickProduct(item),
+                            child: IgnorePointer(
+                              child: TextField(
+                                controller: item.product,
+                                decoration: _decor('', hint: 'Tap to search…').copyWith(
+                                  suffixIcon: Icon(Icons.search_rounded, size: 18, color: Colors.grey.shade500),
+                                  suffixIconConstraints: const BoxConstraints(minWidth: 36),
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (item.product.text.isNotEmpty && item.productId == null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text('Select a real product from search results',
+                                  style: TextStyle(fontSize: 10.5, color: Colors.red.shade400)),
+                            ),
+                          const SizedBox(height: 12),
+                          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Expanded(
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                _label('Qty *'),
+                                TextField(controller: item.qty, keyboardType: TextInputType.number, onChanged: (_) => setState(() {}), decoration: _decor('')),
+                              ]),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                _label('Unit'),
+                                Container(
+                                  height: 46,
+                                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                                  decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
+                                  child: DropdownButtonHideUnderline(
+                                    child: DropdownButton<String>(
+                                      value: item.unit,
+                                      isExpanded: true,
+                                      isDense: true,
+                                      style: const TextStyle(fontSize: 13, color: Color(0xFF20242B), fontWeight: FontWeight.w500),
+                                      items: _units.map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
+                                      onChanged: (v) { if (v != null) setState(() => item.unit = v); },
+                                    ),
+                                  ),
+                                ),
+                              ]),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              flex: 2,
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                _label('Unit Price (incl. tax) *'),
+                                TextField(controller: item.unitPrice, keyboardType: const TextInputType.numberWithOptions(decimal: true), onChanged: (_) => setState(() {}), decoration: _decor('')),
+                              ]),
+                            ),
+                          ]),
+                          const SizedBox(height: 12),
+                          Divider(height: 1, color: kGold.withValues(alpha: 0.2)),
+                          const SizedBox(height: 12),
+                          Row(children: [
+                            Expanded(
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                _label('Gross Amount'),
+                                Text(item.grossAmount.toStringAsFixed(2), style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                              ]),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                _label('Total Tax'),
+                                TextField(
+                                  controller: item.totalTax,
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  onChanged: (_) => setState(() {}),
+                                  decoration: _decor(''),
+                                ),
+                              ]),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                _label('Product Total'),
+                                Text(item.productTotal.toStringAsFixed(2), style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: kGoldDark)),
+                              ]),
+                            ),
+                          ]),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+
+            // ── Addon ──────────────────────────────────────────────────────
+            _sectionCard(
+              title: 'Addon',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 4),
+                  ..._addons.asMap().entries.map((entry) {
+                    final idx = entry.key;
+                    final addon = entry.value;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            _label('Name'),
+                            Container(
+                              height: 46,
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
+                              child: DropdownButtonHideUnderline(
+                                child: DropdownButton<String>(
+                                  value: addon.name,
+                                  isExpanded: true,
+                                  isDense: true,
+                                  style: const TextStyle(fontSize: 13, color: Color(0xFF20242B), fontWeight: FontWeight.w500),
+                                  items: _addonNames.map((n) => DropdownMenuItem(value: n, child: Text(n))).toList(),
+                                  onChanged: (v) { if (v != null) setState(() => addon.name = v); },
+                                ),
+                              ),
+                            ),
+                          ]),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            _label('Amount'),
+                            TextField(controller: addon.amount, keyboardType: const TextInputType.numberWithOptions(decimal: true), onChanged: (_) => setState(() {}), decoration: _decor('')),
+                          ]),
+                        ),
+                        const SizedBox(width: 10),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: GestureDetector(
+                            onTap: () => setState(() { addon.dispose(); _addons.removeAt(idx); }),
+                            child: const Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFFC0584C)),
+                          ),
+                        ),
+                      ]),
+                    );
+                  }),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton.icon(
+                      onPressed: () => setState(() => _addons.add(_OrderAddon(_addonNames.first))),
+                      icon: const Icon(Icons.add_rounded, size: 15, color: kGoldDark),
+                      label: const Text('Addons', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kGoldDark)),
+                      style: OutlinedButton.styleFrom(side: const BorderSide(color: kGold), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // ── Summary ────────────────────────────────────────────────────
+            _sectionCard(
+              title: 'Summary',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 4),
+                  Row(children: [
+                    Text('Gross Amount', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                    const Spacer(),
+                    Text(_grossAmount.toStringAsFixed(2), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                  ]),
+                  const SizedBox(height: 10),
+                  Divider(height: 1, color: kGold.withValues(alpha: 0.2)),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    const Text('Total', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                    const Spacer(),
+                    Text('₹${_grandTotal.toStringAsFixed(2)}', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: kGoldDark)),
+                  ]),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: (_isCustomer ? const Color(0xFF2F9E57) : const Color(0xFFD98A2B)).withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                _isCustomer
+                    ? 'This will create a real Sales Order for this customer.'
+                    : 'This account is a lead, not a registered customer yet — saved as a local draft only, not a real order.',
+                style: TextStyle(
+                  fontSize: 11.5, fontWeight: FontWeight.w600,
+                  color: _isCustomer ? const Color(0xFF2F9E57) : const Color(0xFFD98A2B),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _saving ? null : () => Navigator.of(context).pop(),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.grey.shade300),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+                  ),
+                  child: const Text('Cancel', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.black54)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _saving ? null : _submit,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kGold,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: kGold.withValues(alpha: 0.5),
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+                  ),
+                  child: _saving
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Save', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ]),
+          ],
+            ),
           ),
-          const SizedBox(height: 12),
-          _label('Status'),
-          _dropdown(_status, kOrderStatusOptions, (v) => setState(() => _status = v)),
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 50,
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () {
-                final amt = int.tryParse(_amount.text.trim().replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
-                if (amt <= 0) {
-                  Fluttertoast.showToast(msg: 'Enter an order value', backgroundColor: Colors.red, textColor: Colors.white);
-                  return;
-                }
-                final items = _items.text.trim().isEmpty ? 'Order items' : _items.text.trim();
-                widget.onSave(items, amt, _status, _pay);
-                Navigator.of(context).pop();
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: kGold,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+          Positioned(
+            top: 4, right: 0,
+            child: GestureDetector(
+              onTap: _saving ? null : () => Navigator.of(context).pop(),
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                width: 32, height: 32,
+                decoration: BoxDecoration(color: Colors.grey.shade100, shape: BoxShape.circle),
+                child: Icon(Icons.close_rounded, size: 18, color: Colors.grey.shade600),
               ),
-              child: const Text('Create order', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700)),
             ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _dropdown(String value, List<String> options, ValueChanged<String> onChanged) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFAFAFA),
-          borderRadius: BorderRadius.circular(11),
-          border: Border.all(color: const Color(0xFFE7E7E7)),
-        ),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<String>(
-            value: value,
-            isExpanded: true,
-            isDense: true,
-            style: const TextStyle(fontSize: 13, color: Color(0xFF20242B), fontWeight: FontWeight.w500),
-            items: options.map((o) => DropdownMenuItem(value: o, child: Text(o))).toList(),
-            onChanged: (v) {
-              if (v != null) onChanged(v);
-            },
+// ── Product picker (real catalog search) ───────────────────────────────────
+
+class _ProductPickerSheet extends StatefulWidget {
+  const _ProductPickerSheet();
+
+  @override
+  State<_ProductPickerSheet> createState() => _ProductPickerSheetState();
+}
+
+class _ProductPickerSheetState extends State<_ProductPickerSheet> {
+  final _searchCtrl = TextEditingController();
+  Timer? _debounce;
+  bool _loading = false;
+  List<Map<String, dynamic>> _results = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _search('');
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onChanged(String q) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 350), () => _search(q));
+  }
+
+  Future<void> _search(String q) async {
+    setState(() => _loading = true);
+    final results = await ApiService.searchProducts(q);
+    if (!mounted) return;
+    setState(() { _results = results; _loading = false; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.75,
+      padding: EdgeInsets.fromLTRB(18, 8, 18, 12 + MediaQuery.of(context).viewInsets.bottom),
+      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(child: Container(width: 42, height: 4, margin: const EdgeInsets.only(top: 8, bottom: 16), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(3)))),
+          const Text('Select Product', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _searchCtrl,
+            autofocus: true,
+            onChanged: _onChanged,
+            decoration: InputDecoration(
+              hintText: 'Search products…',
+              prefixIcon: const Icon(Icons.search_rounded, color: kGold),
+              isDense: true,
+              filled: true,
+              fillColor: const Color(0xFFFAFAFA),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: Color(0xFFE7E7E7))),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: Color(0xFFE7E7E7))),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: kGold)),
+            ),
           ),
-        ),
-      );
+          const SizedBox(height: 12),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(color: kGold))
+                : _results.isEmpty
+                    ? Center(child: Text('No products found', style: TextStyle(fontSize: 13, color: Colors.grey.shade500)))
+                    : ListView.separated(
+                        itemCount: _results.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (context, i) {
+                          final p = _results[i];
+                          final name = (p['name'] ?? '').toString();
+                          final hsn  = (p['hsn_code'] ?? '').toString();
+                          return ListTile(
+                            title: Text(name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
+                            subtitle: hsn.isNotEmpty ? Text('HSN: $hsn', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)) : null,
+                            onTap: () => Navigator.of(context).pop(p),
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
 }

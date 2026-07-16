@@ -16,6 +16,8 @@ use App\Http\Controllers\KnowlarityWebhookController;
 use App\Http\Controllers\OrderFunnelController;
 use App\Http\Controllers\OrderListController;
 use App\Http\Controllers\PincodeController;
+use App\Http\Controllers\ProductController;
+use App\Http\Controllers\SalesOrderController;
 use App\Http\Controllers\TelecallerController;
 use App\Http\Controllers\CallScriptController;
 use App\Http\Controllers\TrackingController;
@@ -55,6 +57,11 @@ Route::get('/customers', [LeadsAccountController::class, 'customers']);
 Route::get('/orders', [OrderListController::class, 'index']);
 Route::get('/orders/owner/{buyerUserId}/products', [OrderListController::class, 'ownerProductHistory']); // must be before /orders/{orderId}
 Route::get('/orders/{orderId}', [OrderListController::class, 'show']);
+
+// Sales Order create (draft/pending only — see server/app/Http/Controllers/SalesOrderController.php)
+Route::get('/sales-orders/next-order-id', [SalesOrderController::class, 'nextOrderId']); // must be before POST /sales-orders in case of future {id} routes
+Route::post('/sales-orders', [SalesOrderController::class, 'store']);
+Route::get('/products/search', [ProductController::class, 'search']);
 
 Route::prefix('lead-accounts')->group(function () {
     Route::get('/',                [LeadsAccountController::class, 'index']);

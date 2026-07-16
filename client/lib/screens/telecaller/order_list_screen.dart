@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
@@ -298,6 +299,24 @@ class _OrderCard extends StatelessWidget {
     onLaunch('https://wa.me/$number');
   }
 
+  Future<void> _cloudCall(BuildContext context, String buyerUserId, String phone) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Calling… your phone will ring first, then the customer.')),
+    );
+    final result = await ApiService.triggerKnowlarityCall(
+      accountId: buyerUserId,
+      accountType: 'customer',
+      customerNumber: phone,
+    );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result == null ? 'Could not start the call. Try again.' : 'Call started'),
+        backgroundColor: result == null ? Colors.red : const Color(0xFF43A047),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final orderId   = (order['order_id'] ?? '').toString();
@@ -313,6 +332,7 @@ class _OrderCard extends StatelessWidget {
     final total     = _toDouble(order['order_total']) ?? 0;
     final items     = (order['items_count'] as int?) ?? 0;
     final phone     = (order['contact_number'] ?? '').toString();
+    final buyerId   = (order['buyer_userid'] ?? '').toString();
     final lat       = _toDouble(order['latitude']);
     final lng       = _toDouble(order['longitude']);
 
@@ -349,28 +369,49 @@ class _OrderCard extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              _iconBtn(Icons.print_rounded, Colors.black54, () => InvoicePrinter.print(context, orderId)),
+              _iconBtn(
+                const Icon(Icons.print_rounded, size: 16, color: Colors.black54),
+                () => InvoicePrinter.print(context, orderId),
+              ),
               if (phone.isNotEmpty) ...[
                 const SizedBox(width: 6),
-                _iconBtn(Icons.call_rounded, const Color(0xFF1976D2), () => _call(phone)),
+                _iconBtn(
+                  const Icon(Icons.call_rounded, size: 16, color: Color(0xFF1976D2)),
+                  () => _call(phone),
+                  bg: const Color(0xFF1976D2).withValues(alpha: 0.12),
+                ),
                 const SizedBox(width: 6),
-                _iconBtn(Icons.chat_rounded, const Color(0xFF25D366), () => _whatsapp(phone)),
+                _iconBtn(
+                  const Icon(Icons.ring_volume_rounded, size: 16, color: Color(0xFF8E24AA)),
+                  () => _cloudCall(context, buyerId, phone),
+                  bg: const Color(0xFF8E24AA).withValues(alpha: 0.12),
+                ),
+                const SizedBox(width: 6),
+                _iconBtn(
+                  const FaIcon(FontAwesomeIcons.whatsapp, size: 16, color: Color(0xFF25D366)),
+                  () => _whatsapp(phone),
+                  bg: const Color(0xFF25D366).withValues(alpha: 0.12),
+                ),
               ],
               if (lat != null && lng != null) ...[
                 const SizedBox(width: 6),
-                _iconBtn(Icons.location_on_rounded, const Color(0xFFE53935), () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => SingleLocationMapScreen(
-                        title: shop.isNotEmpty ? shop : name,
-                        subtitle: address,
-                        latitude: lat,
-                        longitude: lng,
+                _iconBtn(
+                  const Icon(Icons.location_on_rounded, size: 16, color: Color(0xFFE53935)),
+                  () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => SingleLocationMapScreen(
+                          title: shop.isNotEmpty ? shop : name,
+                          subtitle: address,
+                          latitude: lat,
+                          longitude: lng,
+                        ),
                       ),
-                    ),
-                  );
-                }),
+                    );
+                  },
+                  bg: const Color(0xFFE53935).withValues(alpha: 0.12),
+                ),
               ],
             ],
           ),
@@ -438,12 +479,13 @@ class _OrderCard extends StatelessWidget {
     );
   }
 
-  Widget _iconBtn(IconData icon, Color color, VoidCallback onTap) => GestureDetector(
+  Widget _iconBtn(Widget icon, VoidCallback onTap, {Color bg = const Color(0x14000000)}) => GestureDetector(
     onTap: onTap,
     child: Container(
       width: 32, height: 32,
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
-      child: Icon(icon, size: 16, color: color),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+      child: icon,
     ),
   );
 

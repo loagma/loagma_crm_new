@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -1108,6 +1109,28 @@ class _AccountCard extends StatelessWidget {
     _launch('https://wa.me/$number');
   }
 
+  Future<void> _cloudCall(BuildContext context, String phone) async {
+    final accountId   = (account['id'] as String?) ?? '';
+    final accountType = (account['_type'] as String?) == 'customer' ? 'customer' : 'lead';
+    if (accountId.isEmpty) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Calling… your phone will ring first, then the customer.')),
+    );
+    final result = await ApiService.triggerKnowlarityCall(
+      accountId: accountId,
+      accountType: accountType,
+      customerNumber: phone,
+    );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(result == null ? 'Could not start the call. Try again.' : 'Call started'),
+        backgroundColor: result == null ? Colors.red : const Color(0xFF43A047),
+      ),
+    );
+  }
+
   String _formatAccountId(String code) {
     // Use code if available, otherwise parse ID and remove leading zeros
     if (code.isNotEmpty) return code;
@@ -1293,14 +1316,21 @@ class _AccountCard extends StatelessWidget {
                 const SizedBox(width: 6),
                 // Call button
                 _ActionBtn(
-                  icon: Icons.call_rounded,
+                  icon: const Icon(Icons.call_rounded, size: 18, color: Colors.grey),
                   color: Colors.grey.shade600,
                   onTap: phone.isNotEmpty ? () => _call(phone) : null,
                 ),
                 const SizedBox(width: 4),
+                // Cloud call (Knowlarity click-to-call bridge)
+                _ActionBtn(
+                  icon: const Icon(Icons.ring_volume_rounded, size: 18, color: Color(0xFF8E24AA)),
+                  color: const Color(0xFF8E24AA),
+                  onTap: phone.isNotEmpty ? () => _cloudCall(context, phone) : null,
+                ),
+                const SizedBox(width: 4),
                 // WhatsApp button
                 _ActionBtn(
-                  icon: Icons.chat_rounded,
+                  icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 18, color: Color(0xFF25D366)),
                   color: const Color(0xFF25D366),
                   onTap: phone.isNotEmpty ? () => _whatsapp(phone) : null,
                 ),
@@ -2106,7 +2136,7 @@ class _MultiDateCalendarState extends State<_MultiDateCalendar> {
 // ── Action button ─────────────────────────────────────────────────────────────
 
 class _ActionBtn extends StatelessWidget {
-  final IconData      icon;
+  final Widget        icon;
   final Color         color;
   final VoidCallback? onTap;
   const _ActionBtn({required this.icon, required this.color, this.onTap});
@@ -2116,8 +2146,9 @@ class _ActionBtn extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         child: Container(
           width: 36, height: 36,
+          alignment: Alignment.center,
           decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
-          child: Icon(icon, size: 18, color: color),
+          child: icon,
         ),
       );
 }
