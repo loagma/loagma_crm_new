@@ -23,7 +23,13 @@ class ProductController extends Controller
             ->select(['product_id', 'name', 'hsn_code']);
 
         if ($q !== '') {
-            $query->where('name', 'like', "%{$q}%");
+            // `product.name` is collated utf8mb4_bin (case-sensitive) on this
+            // DB, so a plain LIKE only matches exact case — telecallers type
+            // lowercase/mixed case while most real product names are
+            // upper/mixed case, so this silently returned 0 results for the
+            // vast majority of genuine searches until forcing both sides
+            // through LOWER().
+            $query->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($q) . '%']);
         }
 
         $rows = $query->orderBy('name')->limit(20)->get();

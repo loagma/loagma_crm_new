@@ -637,10 +637,16 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
     return GestureDetector(
       onTap: orderId == null
           ? () => _toast('This is a local draft — no real order to open yet')
-          : () => Navigator.push(
+          : () async {
+              // Order Detail lets item add/edit/delete persist to the server —
+              // refresh here so this list/summary reflects any change made
+              // there instead of showing stale totals until a manual pull-to-refresh.
+              await Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => OrderDetailScreen(orderId: orderId)),
-              ),
+              );
+              if (mounted) await _loadOrders();
+            },
       child: Container(
       margin: const EdgeInsets.only(bottom: 9),
       padding: const EdgeInsets.all(11),

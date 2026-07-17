@@ -238,16 +238,19 @@ class _OrderListScreenState extends State<OrderListScreen> {
                         return _OrderCard(
                           order: _orders[i],
                           onLaunch: _launch,
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => OrderDetailScreen(
-                                orderId: (_orders[i]['order_id'] ?? '').toString(),
-                                orderIds: _orders.map((o) => (o['order_id'] ?? '').toString()).toList(),
-                                initialIndex: i,
+                          onTap: () async {
+                            await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => OrderDetailScreen(
+                                  orderId: (_orders[i]['order_id'] ?? '').toString(),
+                                  orderIds: _orders.map((o) => (o['order_id'] ?? '').toString()).toList(),
+                                  initialIndex: i,
+                                ),
                               ),
-                            ),
-                          ),
+                            );
+                            if (mounted) _refresh();
+                          },
                         );
                       },
                     ),

@@ -33,7 +33,11 @@ class OrderListController extends Controller
                 'orders.order_state',
                 'orders.payment_status',
                 'orders.payment_method',
-                'orders.items_count',
+                // orders.items_count is a denormalized counter that can go stale
+                // relative to the real orders_item rows (seen on legacy orders,
+                // e.g. #212226 claims 2 items but has 0 actual rows) — count the
+                // real rows instead so the list matches what the detail screen shows.
+                DB::raw('(SELECT COUNT(*) FROM orders_item WHERE orders_item.order_id = orders.order_id) as real_items_count'),
                 'orders.order_total',
                 'orders.area_name',
                 'orders.short_datetime',
@@ -76,6 +80,7 @@ class OrderListController extends Controller
 
         $data = $rows->map(function ($row) {
             $delivery = json_decode((string) $row->delivery_info, true) ?: [];
+            $realItemsCount = (int) $row->real_items_count;
 
             return [
                 'order_id'        => (string) $row->order_id,
@@ -83,8 +88,12 @@ class OrderListController extends Controller
                 'order_state'     => $row->order_state,
                 'payment_status'  => $row->payment_status,
                 'payment_method'  => $row->payment_method,
-                'items_count'     => (int) $row->items_count,
-                'order_total'     => (float) $row->order_total,
+                'items_count'     => $realItemsCount,
+                // orders.order_total has no meaning once the real orders_item
+                // rows are gone (see #212226/#212429 — stale legacy total with
+                // 0 matching item rows) — show it as having no derivable value
+                // rather than a number that can't be traced to any line item.
+                'order_total'     => $realItemsCount > 0 ? (float) $row->order_total : 0.0,
                 'area_name'       => trim((string) $row->area_name),
                 'admin_name'      => $row->admin_name,
                 'order_datetime'  => $row->short_datetime,
@@ -188,11 +197,14 @@ class OrderListController extends Controller
                 'order_state'      => $order->order_state,
                 'payment_status'   => $order->payment_status,
                 'payment_method'   => $order->payment_method,
-                'order_total'      => (float) $order->order_total,
-                'before_discount'  => (float) $order->before_discount,
+                // Same reasoning as index(): a stored total that can't be traced
+                // to any real orders_item row (legacy data gap) isn't shown as if
+                // it were a verified figure.
+                'order_total'      => $items->isNotEmpty() ? (float) $order->order_total : 0.0,
+                'before_discount'  => $items->isNotEmpty() ? (float) $order->before_discount : 0.0,
                 'discount'         => (float) $order->discount,
                 'delivery_charge'  => (float) $order->delivery_charge,
-                'items_count'      => (int) $order->items_count,
+                'items_count'      => $items->count(),
                 'order_datetime'   => $order->short_datetime,
                 'delivery_window'  => $order->time_slot,
                 'area_name'        => trim((string) $order->area_name),

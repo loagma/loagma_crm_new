@@ -144,6 +144,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         'This order is already "$orderState" — item changes here are preview only and are NOT saved to the server.',
         error: true,
       );
+      // The add/edit/delete that triggered this call already mutated
+      // _order['items'] locally before we got here — without reloading,
+      // the screen would keep showing that unsaved change as if it had
+      // gone through, contradicting the toast that just said it didn't save.
+      await _load();
       return;
     }
 
@@ -172,10 +177,40 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       _showSavedSnack('Saved — total ₹${(_toDouble(_order!['order_total']) ?? 0).toStringAsFixed(2)}');
     } else {
       _showSavedSnack((result['message'] ?? 'Could not save changes.').toString(), error: true);
+      // The server rejected the change (e.g. "at least one item is
+      // required" when removing the last item) — the local list was
+      // already optimistically mutated before this call, so without this
+      // reload the screen would keep showing the failed edit as if it had
+      // gone through. Re-fetch to resync with what's actually saved.
+      await _load();
     }
   }
 
+  // Shown up front, before opening any item form/confirm dialog, so a
+  // non-pending order never gets locally mutated in the first place — the
+  // earlier approach (mutate first, reject after) kept producing
+  // contradictory "not saved" states that lingered on screen.
+  Future<bool> _blockIfNotEditable() async {
+    final orderState = (_order?['order_state'] ?? '').toString();
+    if (orderState == 'pending') return false;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Order Completed'),
+        content: Text('This order is already "$orderState" — items cannot be added, edited, or deleted.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    return true;
+  }
+
   Future<void> _showEditItemDialog(int index, Map<String, dynamic> item) async {
+    if (await _blockIfNotEditable() || !mounted) return;
     final result = await showOrderItemFormSheet(context, initial: item, itemNumber: index + 1);
     if (result == null || _order == null) return;
     setState(() {
@@ -193,7 +228,36 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     await _persistItems();
   }
 
+  Future<void> _deleteItem(int index, Map<String, dynamic> item) async {
+    if (await _blockIfNotEditable() || !mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove Item'),
+        content: Text('Remove "${item['name'] ?? 'this item'}" from the order?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || _order == null) return;
+    setState(() {
+      (_order!['items'] as List).removeAt(index);
+      _recalcTotals();
+    });
+    await _persistItems();
+  }
+
   Future<void> _showAddItemDialog() async {
+    if (await _blockIfNotEditable() || !mounted) return;
     final items = (_order?['items'] as List?) ?? [];
     final result = await showOrderItemFormSheet(context, itemNumber: items.length + 1);
     if (result == null || _order == null) return;
@@ -279,7 +343,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final discount    = _toDouble(o['discount']) ?? 0;
     final deliveryChg = _toDouble(o['delivery_charge']) ?? 0;
     final items       = (o['items'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-    final itemsCount  = (o['items_count'] as int?) ?? items.length;
+    // Trust the actual items array over `orders.items_count` — some legacy
+    // orders (e.g. #212226) carry a stale count with zero matching
+    // orders_item rows, which showed a misleading "Items (2)" header above
+    // an empty list.
+    final itemsCount  = items.length;
     final orderDt     = (o['order_datetime'] ?? '').toString();
     final deliveryW   = (o['delivery_window'] ?? '').toString();
     final driver      = o['driver'] as Map<String, dynamic>?;
@@ -510,6 +578,17 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 ],
               ),
               const SizedBox(height: 10),
+              if (items.isEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text('No items found for this order.',
+                      style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600)),
+                ),
               ...items.asMap().entries.map((entry) {
                 final index = entry.key;
                 final item  = entry.value;
@@ -557,6 +636,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         const Icon(Icons.edit_rounded, size: 15, color: Color(0xFFD7BE69)),
                         _savingItems ? () {} : () => _showEditItemDialog(index, item),
                         bg: const Color(0xFFD7BE69).withValues(alpha: 0.12),
+                      ),
+                      const SizedBox(width: 6),
+                      _iconBtn(
+                        const Icon(Icons.delete_outline_rounded, size: 15, color: Color(0xFFE53935)),
+                        _savingItems ? () {} : () => _deleteItem(index, item),
+                        bg: const Color(0xFFE53935).withValues(alpha: 0.12),
                       ),
                     ],
                   ),

@@ -214,7 +214,10 @@ class SalesOrderController extends Controller
         $items = $data['items'] ?? [];
 
         if (!is_array($items) || count($items) === 0) {
-            return response()->json(['success' => false, 'message' => 'At least one item is required'], 422);
+            return response()->json([
+                'success' => false,
+                'message' => "An order can't be saved with zero items — it still needs at least one. Delete the whole order instead if you want to clear it out.",
+            ], 422);
         }
 
         $productIds = collect($items)->pluck('product_id')->filter()->unique()->values();
