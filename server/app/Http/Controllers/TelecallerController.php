@@ -228,11 +228,11 @@ class TelecallerController extends Controller
         [$areaIds, $pincodes] = $this->myAreaScope($mobile);
 
         $leads = $this->myLeadsQuery($areaIds, $pincodes)
-            ->get(['id', 'businessName', 'personName', 'contactNumber', 'area', 'city', 'pincode', 'customerStage']);
+            ->get(['id', 'businessName', 'personName', 'contactNumber', 'area', 'city', 'pincode', 'customerStage', 'latitude', 'longitude']);
 
         $customers = empty($pincodes)
             ? collect()
-            : DB::table('user')->whereIn('pincode', $pincodes)->get(['userid', 'name', 'shop_name', 'contactno', 'city', 'pincode']);
+            : DB::table('user')->whereIn('pincode', $pincodes)->get(['userid', 'name', 'shop_name', 'contactno', 'city', 'pincode', 'latitude', 'longitude']);
 
         $todayStr    = Carbon::today()->toDateString();
         $labels      = TelecallerLabel::where('employee_mobile', $mobile)->get()->keyBy('account_id');
@@ -283,6 +283,8 @@ class TelecallerController extends Controller
                 'label'          => $deriveLabel($id),
                 'last_contact'   => $lastOf($id),
                 'next_follow_up' => $nextOf($id),
+                'latitude'       => $l->latitude,
+                'longitude'      => $l->longitude,
             ];
         }
         foreach ($customers as $c) {
@@ -301,6 +303,8 @@ class TelecallerController extends Controller
                 'label'          => $deriveLabel($id),
                 'last_contact'   => $lastOf($id),
                 'next_follow_up' => $nextOf($id),
+                'latitude'       => $c->latitude,
+                'longitude'      => $c->longitude,
             ];
         }
 

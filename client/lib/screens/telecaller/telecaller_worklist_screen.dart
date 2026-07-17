@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
+import '../../widgets/account_map_screen.dart';
 import 'telecaller_mock_data.dart';
 
 /// Worklist — Customers-style list (mockup): search, filter chips, and rich
@@ -101,6 +104,8 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
             'label':          kLabelNotCalled,
             'last_contact':   null,
             'next_follow_up': null,
+            'latitude':       acc['latitude'],
+            'longitude':      acc['longitude'],
           };
           merged.add(item);
           byId[id] = item;
@@ -205,6 +210,8 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
             'label':          kLabelNotCalled,
             'last_contact':   null,
             'next_follow_up': null,
+            'latitude':       acc['latitude'],
+            'longitude':      acc['longitude'],
           };
           merged.add(item);
           byId[id] = item;
@@ -334,6 +341,25 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     return n;
   }
 
+  double? _toDouble(dynamic v) {
+    if (v == null) return null;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString());
+  }
+
+  Future<void> _launch(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) await launchUrl(uri);
+  }
+
+  Future<void> _call(String phone) async => _launch('tel:$phone');
+
+  Future<void> _whatsapp(String phone) async {
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    final number = digits.length == 10 ? '91$digits' : digits;
+    _launch('https://wa.me/$number');
+  }
+
   @override
   Widget build(BuildContext context) {
     final visible = _visible;
@@ -461,62 +487,103 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
   }
 
   // ── Card ────────────────────────────────────────────────────────────────────
+  // Ported from employee/todays_beat_plan_screen.dart's _CustomerCard layout
+  // (tag row → title/owner row → detail lines → footer of phone + quick
+  // actions) so both screens share the same card language. Beat Plan's
+  // account-code/frequency/address fields aren't present on a worklist item,
+  // so those slots are dropped; the stage/priority/follow-up pills and the
+  // Last contact / Next follow-up / Revenue footer are worklist-specific and
+  // kept since removing them would lose real CRM info Beat Plan doesn't have.
   Widget _card(Map<String, dynamic> w) {
     final name = '${w['name'] ?? 'Unknown'}';
     final business = '${w['business_name'] ?? ''}'.trim();
     final person = '${w['person_name'] ?? ''}'.trim();
     final city = '${w['city'] ?? w['area'] ?? ''}'.trim();
+    final area = '${w['area'] ?? ''}'.trim();
+    final pincode = '${w['pincode'] ?? ''}'.trim();
+    final phone = '${w['phone'] ?? ''}'.trim();
+    final lat = _toDouble(w['latitude']);
+    final lng = _toDouble(w['longitude']);
+    final accountType = '${w['account_type'] ?? 'lead'}';
     final stage = '${w['stage'] ?? ''}';
     final st = stageStyle(stage);
     final prio = priorityForStage(stage);
     final accountId    = '${w['account_id']}';
     final wasCalled    = _calledToday.contains(accountId);
     final isFollowUp   = _followUpIds.contains(accountId);
-    // Shop / business name on top (dark); owner name below (lighter).
+    // Shop / business name on top (dark); owner name goes beside it, like
+    // Beat Plan's name+person row, instead of stacked underneath.
     final title = business.isNotEmpty ? business : (person.isNotEmpty ? person : name);
     final owner = (person.isNotEmpty && person != title) ? person : '';
-    final sub = [if (owner.isNotEmpty) owner, if (city.isNotEmpty) city].join(' · ');
+
+    // Matches employee/todays_beat_plan_screen.dart's card treatment: a
+    // tinted background + full colored border instead of a plain white card
+    // with a thin left accent stripe — green once called today, soft
+    // pink/red while still needing a call, mirroring that screen's
+    // visited-vs-pending states.
+    final cardBg     = wasCalled ? const Color(0xFFF0FFF4) : const Color(0xFFFFF0EE);
+    final cardBorder = wasCalled ? const Color(0xFFC8E6C9) : const Color(0xFFFFD8D2);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 11),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border(left: BorderSide(color: st.color, width: 4)),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 3))],
+        color: cardBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cardBorder),
+        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
       ),
       child: InkWell(
         onTap: () => _openProfile(w),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(13, 13, 13, 11),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Top tag row — account type + called/follow-up status, same
+              // slot Beat Plan uses for account type + frequency/visited.
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700), maxLines: 1, overflow: TextOverflow.ellipsis),
-                        if (sub.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 1),
-                            child: Text(sub, style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500), maxLines: 2, overflow: TextOverflow.ellipsis),
-                          ),
-                        const SizedBox(height: 7),
-                        Wrap(spacing: 5, runSpacing: 5, children: [
-                          _stagePill(st),
-                          _pill(prio.text, prio.color),
-                          if (isFollowUp) _followUpPill(),
-                          if (wasCalled) _calledPill(),
-                        ]),
-                      ],
-                    ),
+                  const Spacer(),
+                  _tag(
+                    accountType.toUpperCase(),
+                    bg: accountType == 'customer' ? const Color(0xFFE3F2FD) : const Color(0xFFFFF3E0),
+                    fg: accountType == 'customer' ? const Color(0xFF1976D2) : const Color(0xFFF57C00),
                   ),
+                  const SizedBox(width: 6),
+                  if (wasCalled)
+                    _tag('✓ Called', bg: const Color(0xFFE8F5E9), fg: const Color(0xFF2E7D32))
+                  else if (isFollowUp)
+                    _tag('Follow-up due', bg: const Color(0xFFFFEBEE), fg: const Color(0xFFE53935)),
                 ],
               ),
+              const SizedBox(height: 6),
+              // Name + owner row — matches Beat Plan's name+person layout
+              // (business name expanded on the left, owner right-aligned)
+              // instead of stacking owner into a subtitle line underneath.
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(
+                  child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800), maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                if (owner.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Text(owner, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+                ],
+              ]),
+              const SizedBox(height: 7),
+              Wrap(spacing: 5, runSpacing: 5, children: [
+                _stagePill(st),
+                _pill(prio.text, prio.color),
+              ]),
+              if (city.isNotEmpty || area.isNotEmpty || pincode.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                if (city.isNotEmpty && city != area)
+                  Text('City : $city', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                if (area.isNotEmpty)
+                  Text('Main area : $area', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                if (pincode.isNotEmpty)
+                  Text('PIN : $pincode', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+              ],
               const Divider(height: 20, color: Color(0xFFF0F0F0)),
               Row(
                 children: [
@@ -526,12 +593,84 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
                   _foot('Revenue', '₹0', Colors.black87, end: true),
                 ],
               ),
+              const SizedBox(height: 10),
+              // Phone chip + quick actions — same footer pattern as Beat
+              // Plan's card, now including its view/map buttons too.
+              Row(
+                children: [
+                  if (phone.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.phone_rounded, size: 13, color: Colors.grey.shade600),
+                        const SizedBox(width: 5),
+                        Text(phone, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      ]),
+                    ),
+                  const Spacer(),
+                  _actionBtn(Icon(Icons.visibility_outlined, size: 18, color: Colors.grey.shade600), Colors.grey.shade600, () => _openProfile(w)),
+                  if (phone.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    _actionBtn(Icon(Icons.call_rounded, size: 18, color: Colors.grey.shade600), Colors.grey.shade600, () => _call(phone)),
+                    const SizedBox(width: 6),
+                    _actionBtn(const FaIcon(FontAwesomeIcons.whatsapp, size: 18, color: Color(0xFF25D366)), const Color(0xFF25D366), () => _whatsapp(phone)),
+                  ],
+                  if (lat != null && lng != null) ...[
+                    const SizedBox(width: 6),
+                    _actionBtn(
+                      const Icon(Icons.map_rounded, size: 18, color: Color(0xFF1565C0)),
+                      const Color(0xFF1565C0),
+                      () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AccountMapScreen(
+                            title: title,
+                            // AccountMapScreen reads businessName/personName/
+                            // contactNumber/address — remap from this item's
+                            // own key names rather than spreading `w` as-is.
+                            accounts: [{
+                              'businessName':  title,
+                              'personName':    owner,
+                              'contactNumber': phone,
+                              'address':       [area, pincode].where((s) => s.isNotEmpty).join(', '),
+                              'latitude':      lat,
+                              'longitude':     lng,
+                              '_type':         accountType,
+                            }],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ],
           ),
         ),
       ),
     );
   }
+
+  Widget _tag(String label, {required Color bg, required Color fg}) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+        child: Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: fg)),
+      );
+
+  Widget _actionBtn(Widget icon, Color color, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 36, height: 36,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
+          child: icon,
+        ),
+      );
 
   Widget _foot(String label, String value, Color color, {bool end = false}) => Expanded(
         child: Column(
@@ -563,39 +702,6 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
         child: Text(text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
       );
 
-  Widget _followUpPill() => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-        decoration: BoxDecoration(
-          color: const Color(0xFFE53935).withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFE53935).withValues(alpha: 0.4), width: 1),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.schedule_rounded, size: 10, color: Color(0xFFE53935)),
-            SizedBox(width: 4),
-            Text('Follow-up due', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFFE53935))),
-          ],
-        ),
-      );
-
-  Widget _calledPill() => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-        decoration: BoxDecoration(
-          color: const Color(0xFF2F9E57).withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFF2F9E57).withValues(alpha: 0.4), width: 1),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.check_circle_rounded, size: 10, color: Color(0xFF2F9E57)),
-            SizedBox(width: 4),
-            Text('Called', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF2F9E57))),
-          ],
-        ),
-      );
 
   String _fmtDate(String? iso) {
     if (iso == null || iso.isEmpty || iso == 'null') return '—';

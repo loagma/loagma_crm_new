@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -390,7 +391,6 @@ class _CustomerCard extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               _ActionBtn(
-                icon: Icons.chat_rounded,
                 color: const Color(0xFF25D366),
                 onTap: phone.isNotEmpty
                     ? () {
@@ -399,6 +399,7 @@ class _CustomerCard extends StatelessWidget {
                         _launch('https://wa.me/$n');
                       }
                     : null,
+                child: const FaIcon(FontAwesomeIcons.whatsapp, size: 18, color: Color(0xFF25D366)),
               ),
               const SizedBox(width: 6),
               _ActionBtn(
@@ -459,18 +460,21 @@ class _Chip extends StatelessWidget {
 }
 
 class _ActionBtn extends StatelessWidget {
-  final IconData      icon;
+  final IconData?      icon;
+  final Widget?        child;
   final Color         color;
   final VoidCallback? onTap;
-  const _ActionBtn({required this.icon, required this.color, this.onTap});
+  const _ActionBtn({this.icon, this.child, required this.color, this.onTap})
+      : assert(icon != null || child != null);
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
         child: Container(
           width: 36, height: 36,
+          alignment: Alignment.center,
           decoration: BoxDecoration(
               color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
-          child: Icon(icon, size: 18, color: color),
+          child: child ?? Icon(icon, size: 18, color: color),
         ),
       );
 }
