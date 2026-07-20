@@ -18,8 +18,7 @@ class DeliStaff extends Authenticatable implements JWTSubject
         'name',
         'mobile',
         'role',
-        'otp',
-        'otp_expires_at',
+        'password',
         'pincode',
         'city',
         'state',
@@ -32,10 +31,9 @@ class DeliStaff extends Authenticatable implements JWTSubject
         'approval_required',
     ];
 
-    protected $hidden = ['password', 'sess_id', 'otp', 'otp_expires_at'];
+    protected $hidden = ['password', 'sess_id'];
 
     protected $casts = [
-        'otp_expires_at'         => 'datetime',
         'location_last_updated'  => 'datetime',
         'lat'                    => 'float',
         'lng'                    => 'float',

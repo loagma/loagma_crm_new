@@ -12,9 +12,6 @@ use Tymon\JWTAuth\Exceptions\JWTException;
 
 class OtpAuthController extends Controller
 {
-    private const MASTER_OTP = '5555';
-    private const OTP_EXPIRY_MINUTES = 10;
-
     public function sendOtp(Request $request): JsonResponse
     {
         $request->validate(['mobile' => 'required|string|max:20']);
@@ -31,8 +28,7 @@ class OtpAuthController extends Controller
         $otp = str_pad((string) random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
 
         $staff->update([
-            'otp'            => $otp,
-            'otp_expires_at' => now()->addMinutes(self::OTP_EXPIRY_MINUTES),
+            'password' => $otp,
         ]);
 
         Log::info("OTP for {$request->mobile}: $otp");
@@ -59,19 +55,14 @@ class OtpAuthController extends Controller
             ], 404);
         }
 
-        $isMasterOtp = $request->otp === self::MASTER_OTP;
-        $isValidOtp  = $staff->otp === $request->otp
-            && $staff->otp_expires_at
-            && now()->lessThanOrEqualTo($staff->otp_expires_at);
+        $isValidOtp = $staff->password === $request->otp;
 
-        if (!$isMasterOtp && !$isValidOtp) {
+        if (!$isValidOtp) {
             return response()->json([
                 'success' => false,
-                'message' => 'Invalid or expired OTP.',
+                'message' => 'Invalid OTP.',
             ], 401);
         }
-
-        $staff->update(['otp' => null, 'otp_expires_at' => null]);
 
         try {
             $token = JWTAuth::fromUser($staff);

@@ -24,6 +24,10 @@ class ApiService {
         final response = await http
             .post(url, headers: _headers, body: jsonEncode({'mobile': mobile}))
             .timeout(const Duration(seconds: 30));
+        if (response.statusCode >= 400 && response.statusCode < 500) {
+          // Client error (e.g. mobile not registered) — not retryable.
+          return jsonDecode(response.body) as Map<String, dynamic>;
+        }
         if (response.statusCode >= 200 && response.statusCode < 300) {
           return jsonDecode(response.body) as Map<String, dynamic>;
         }
@@ -49,6 +53,10 @@ class ApiService {
                 headers: _headers,
                 body: jsonEncode({'mobile': mobile, 'otp': otp}))
             .timeout(const Duration(seconds: 30));
+        if (response.statusCode >= 400 && response.statusCode < 500) {
+          // Client error (e.g. invalid/expired OTP) — not retryable.
+          return jsonDecode(response.body) as Map<String, dynamic>;
+        }
         if (response.statusCode >= 200 && response.statusCode < 300) {
           return jsonDecode(response.body) as Map<String, dynamic>;
         }

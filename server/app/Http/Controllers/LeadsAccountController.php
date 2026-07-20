@@ -273,36 +273,65 @@ class LeadsAccountController extends Controller
         $pincodes = array_filter((array) request()->query('pincodes', []));
         $q = request()->query('q', '');
 
-        $query = UserCustomer::query();
+        // `user_addresses` is the customer's actual saved address book (one row
+        // per address, one marked is_default per user) — it's more current than
+        // the flat user.address/latitude/longitude columns, so it takes priority.
+        $query = UserCustomer::query()
+            ->leftJoin('user_addresses', function ($join) {
+                $join->on('user_addresses.user_id', '=', 'user.userid')
+                     ->where('user_addresses.is_default', '=', '1');
+            });
 
         if (!empty($pincodes)) {
-            $query->whereIn('pincode', $pincodes);
+            $query->whereIn('user.pincode', $pincodes);
         }
 
         if ($q) {
             $query->where(function ($x) use ($q) {
-                $x->where('name', 'like', "%$q%")
-                  ->orWhere('shop_name', 'like', "%$q%")
-                  ->orWhere('contactno', 'like', "%$q%");
+                $x->where('user.name', 'like', "%$q%")
+                  ->orWhere('user.shop_name', 'like', "%$q%")
+                  ->orWhere('user.contactno', 'like', "%$q%");
             });
         }
 
+        $rows = $query->get([
+            'user.userid',
+            'user.name',
+            'user.shop_name',
+            'user.contactno',
+            'user.address',
+            'user.shop_address',
+            'user.pincode',
+            'user.city',
+            'user.state',
+            'user.latitude',
+            'user.longitude',
+            'user.user_type',
+            'user_addresses.full_address as saved_address',
+            'user_addresses.lat as saved_lat',
+            'user_addresses.lng as saved_lng',
+        ]);
+
+        $data = $rows->map(function ($row) {
+            return [
+                'userid'       => $row->userid,
+                'name'         => $row->name,
+                'shop_name'    => $row->shop_name,
+                'contactno'    => $row->contactno,
+                'address'      => $row->saved_address ?: ($row->shop_address ?: $row->address),
+                'shop_address' => $row->shop_address,
+                'pincode'      => $row->pincode,
+                'city'         => $row->city,
+                'state'        => $row->state,
+                'latitude'     => $row->saved_lat ?? $row->latitude,
+                'longitude'    => $row->saved_lng ?? $row->longitude,
+                'user_type'    => $row->user_type,
+            ];
+        });
+
         return response()->json([
             'success' => true,
-            'data' => $query->get([
-                'userid',
-                'name',
-                'shop_name',
-                'contactno',
-                'address',
-                'shop_address',
-                'pincode',
-                'city',
-                'state',
-                'latitude',
-                'longitude',
-                'user_type',
-            ]),
+            'data' => $data,
         ]);
     }
 }

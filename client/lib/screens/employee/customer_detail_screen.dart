@@ -39,7 +39,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     final personName = (widget.customer['name'] ?? '').toString();
     final phone = (widget.customer['contactno'] ?? '').toString();
     final email = (widget.customer['email'] ?? '').toString();
-    final address = (widget.customer['shop_address'] ?? widget.customer['address'] ?? '').toString();
+    final address = (widget.customer['address'] ?? widget.customer['shop_address'] ?? '').toString();
     final city = (widget.customer['city'] ?? '').toString();
     final state = (widget.customer['state'] ?? '').toString();
     final pincode = (widget.customer['pincode'] ?? '').toString();

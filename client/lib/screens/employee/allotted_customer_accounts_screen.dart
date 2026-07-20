@@ -126,7 +126,7 @@ class _AllottedCustomerAccountsScreenState
             : (u['name'] ?? '').toString(),
         'personName':    (u['name'] ?? '').toString(),
         'contactNumber': (u['contactno'] ?? '').toString(),
-        'address':       (u['shop_address'] ?? u['address'] ?? '').toString(),
+        'address':       (u['address'] ?? u['shop_address'] ?? '').toString(),
         'pincode':       (u['pincode'] ?? '').toString(),
         'latitude':      u['latitude'],
         'longitude':     u['longitude'],

@@ -10,11 +10,13 @@ class OrderListController extends Controller
     /**
      * GET /api/orders
      *
-     * Paginated order list joined against the buyer's own profile (`user`)
-     * and the fulfilling admin/partner (`admin`). The actual delivery name/
-     * address/contact/coordinates live in `orders.delivery_info` (JSON) and
-     * take priority over the buyer's profile fields, since a delivery can be
-     * addressed to a different person/location than the account holder.
+     * Paginated order list joined against the buyer's own profile (`user`),
+     * their default saved address (`user_addresses`), and the fulfilling
+     * admin/partner (`admin`). Address/coordinates resolve in priority order:
+     * orders.delivery_info (JSON snapshot at order time, since a delivery can
+     * be addressed to a different person/location than the account holder) >
+     * user_addresses default row (current address book entry) > flat
+     * user.address/latitude/longitude columns (legacy fallback).
      */
     public function index(): JsonResponse
     {
@@ -27,6 +29,12 @@ class OrderListController extends Controller
         $query = DB::table('orders')
             ->leftJoin('user', 'orders.buyer_userid', '=', 'user.userid')
             ->leftJoin('admin', 'orders.admin_id', '=', 'admin.userid')
+            // Buyer's default saved address (user_addresses) — more current than
+            // the flat user.address/latitude/longitude columns.
+            ->leftJoin('user_addresses', function ($join) {
+                $join->on('user_addresses.user_id', '=', 'user.userid')
+                     ->where('user_addresses.is_default', '=', '1');
+            })
             ->select([
                 'orders.order_id',
                 'orders.buyer_userid',
@@ -52,6 +60,9 @@ class OrderListController extends Controller
                 'user.contactno as buyer_contactno',
                 'user.latitude as buyer_latitude',
                 'user.longitude as buyer_longitude',
+                'user_addresses.full_address as buyer_saved_address',
+                'user_addresses.lat as buyer_saved_lat',
+                'user_addresses.lng as buyer_saved_lng',
             ]);
 
         if ($status) {
@@ -101,10 +112,10 @@ class OrderListController extends Controller
                 'invoice_pdf_url' => $row->invoice_pdf_url,
                 'shop_name'       => $row->buyer_shop_name ?: ($delivery['name'] ?? ''),
                 'contact_name'    => $delivery['name'] ?? $row->buyer_name,
-                'address'         => $delivery['address'] ?? ($row->buyer_shop_address ?: $row->buyer_address),
+                'address'         => $delivery['address'] ?? ($row->buyer_saved_address ?: ($row->buyer_shop_address ?: $row->buyer_address)),
                 'contact_number'  => $delivery['contactno'] ?? $row->buyer_contactno,
-                'latitude'        => $delivery['latitude'] ?? $row->buyer_latitude,
-                'longitude'       => $delivery['longitude'] ?? $row->buyer_longitude,
+                'latitude'        => $delivery['latitude'] ?? ($row->buyer_saved_lat ?? $row->buyer_latitude),
+                'longitude'       => $delivery['longitude'] ?? ($row->buyer_saved_lng ?? $row->buyer_longitude),
             ];
         });
 
@@ -134,6 +145,10 @@ class OrderListController extends Controller
         $order = DB::table('orders')
             ->leftJoin('user', 'orders.buyer_userid', '=', 'user.userid')
             ->leftJoin('admin', 'orders.admin_id', '=', 'admin.userid')
+            ->leftJoin('user_addresses', function ($join) {
+                $join->on('user_addresses.user_id', '=', 'user.userid')
+                     ->where('user_addresses.is_default', '=', '1');
+            })
             ->where('orders.order_id', $orderId)
             ->select([
                 'orders.*',
@@ -145,6 +160,9 @@ class OrderListController extends Controller
                 'user.shop_address as owner_shop_address',
                 'user.latitude as owner_latitude',
                 'user.longitude as owner_longitude',
+                'user_addresses.full_address as owner_saved_address',
+                'user_addresses.lat as owner_saved_lat',
+                'user_addresses.lng as owner_saved_lng',
             ])
             ->first();
 
@@ -216,9 +234,9 @@ class OrderListController extends Controller
                 'shop_name'        => $order->owner_shop_name,
                 'owner_name'       => $order->owner_name ?: ($delivery['name'] ?? null),
                 'owner_contact'    => $order->owner_contact ?: ($delivery['contactno'] ?? null),
-                'delivery_address' => $delivery['address'] ?? ($order->owner_shop_address ?: $order->owner_address),
-                'latitude'         => $delivery['latitude'] ?? $order->owner_latitude,
-                'longitude'        => $delivery['longitude'] ?? $order->owner_longitude,
+                'delivery_address' => $delivery['address'] ?? ($order->owner_saved_address ?: ($order->owner_shop_address ?: $order->owner_address)),
+                'latitude'         => $delivery['latitude'] ?? ($order->owner_saved_lat ?? $order->owner_latitude),
+                'longitude'        => $delivery['longitude'] ?? ($order->owner_saved_lng ?? $order->owner_longitude),
                 'driver'           => $driver,
                 'items'            => $items,
             ],
