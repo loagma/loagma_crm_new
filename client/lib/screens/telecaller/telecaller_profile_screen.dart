@@ -57,6 +57,26 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
   int get _orderTotal => _orders.fold<int>(0, (a, o) => a + ((o['amt'] as num?)?.toInt() ?? 0));
   String get _id => '${widget.account['id'] ?? widget.account['account_id'] ?? ''}';
 
+  // Saved addresses (customers can have several, via user_addresses); falls
+  // back to the single flat `address` string (leads, or customers with no
+  // address book entries) so callers always get a uniform list to work with.
+  List<Map<String, dynamic>> get _addressOptions {
+    final raw = (_acc['addresses'] as List?) ?? [];
+    final list = raw.map((a) => Map<String, dynamic>.from(a as Map)).toList();
+    if (list.isEmpty) {
+      final addr = ('${_acc['address'] ?? ''}').trim();
+      if (addr.isNotEmpty) {
+        list.add({
+          'address': addr,
+          'type': null,
+          'latitude': _acc['latitude'],
+          'longitude': _acc['longitude'],
+        });
+      }
+    }
+    return list;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -773,7 +793,21 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
     launchEmail(_email, subject: _name);
   }
 
-  void _openOrderSheet() {
+  Future<void> _openOrderSheet() async {
+    // If the account has more than one saved address, ask which one this
+    // order should ship to before opening the order drawer at all.
+    final options = _addressOptions;
+    Map<String, dynamic>? selectedAddress = options.length == 1 ? options.first : null;
+
+    if (options.length > 1) {
+      selectedAddress = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (_) => _AddressPickerDialog(addresses: options),
+      );
+      if (selectedAddress == null) return; // cancelled — don't open the order drawer
+    }
+    if (!mounted) return;
+
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -782,6 +816,7 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
         name: _name,
         accountId: _id,
         accountType: widget.accountType,
+        deliveryAddress: selectedAddress,
         onSave: (items, amt, status, pay, realOrderId) async {
           if (realOrderId != null) {
             // Real order — refetch from the server so the list/summary
@@ -1342,15 +1377,83 @@ class _OrderAddon {
   void dispose() => amount.dispose();
 }
 
+// Shown before the order drawer opens when the account has more than one
+// saved address — picks which one this order should ship to.
+class _AddressPickerDialog extends StatefulWidget {
+  final List<Map<String, dynamic>> addresses;
+  const _AddressPickerDialog({required this.addresses});
+
+  @override
+  State<_AddressPickerDialog> createState() => _AddressPickerDialogState();
+}
+
+class _AddressPickerDialogState extends State<_AddressPickerDialog> {
+  late int _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    final defaultIndex = widget.addresses.indexWhere((a) => a['is_default'] == true);
+    _selected = defaultIndex >= 0 ? defaultIndex : 0;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      title: const Text('Select Delivery Address',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ListView.builder(
+          shrinkWrap: true,
+          itemCount: widget.addresses.length,
+          itemBuilder: (_, i) {
+            final a = widget.addresses[i];
+            final type = ('${a['type'] ?? ''}').trim();
+            final label = type.isNotEmpty ? 'Address ${i + 1} ($type)' : 'Address ${i + 1}';
+            return RadioListTile<int>(
+              value: i,
+              groupValue: _selected,
+              activeColor: kGold,
+              contentPadding: EdgeInsets.zero,
+              title: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              subtitle: Text('${a['address'] ?? ''}', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+              onChanged: (v) => setState(() => _selected = v ?? 0),
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: kGold,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          onPressed: () => Navigator.pop(context, widget.addresses[_selected]),
+          child: const Text('OK'),
+        ),
+      ],
+    );
+  }
+}
+
 class _OrderSheet extends StatefulWidget {
   final String name;
   final String accountId;
   final String accountType; // 'lead' | 'customer'
+  final Map<String, dynamic>? deliveryAddress;
   final void Function(String items, int amount, String status, String pay, String? realOrderId) onSave;
   const _OrderSheet({
     required this.name,
     required this.accountId,
     required this.accountType,
+    this.deliveryAddress,
     required this.onSave,
   });
 
@@ -1543,6 +1646,12 @@ class _OrderSheetState extends State<_OrderSheet> {
       areaName: null,
       timeSlot: _fmtDate(_expectedDate),
       documentDate: _isoDate(_documentDate),
+      deliveryInfo: widget.deliveryAddress != null ? {
+        'name':      widget.name,
+        'address':   widget.deliveryAddress!['address'],
+        'latitude':  widget.deliveryAddress!['latitude'],
+        'longitude': widget.deliveryAddress!['longitude'],
+      } : null,
     );
     if (!mounted) return;
     setState(() => _saving = false);
@@ -1674,6 +1783,16 @@ class _OrderSheetState extends State<_OrderSheet> {
                     decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
                     child: Text(widget.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
                   ),
+                  if (widget.deliveryAddress != null) ...[
+                    const SizedBox(height: 14),
+                    _label('Delivery Address'),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
+                      child: Text('${widget.deliveryAddress!['address'] ?? ''}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   _label('Narration'),
                   TextField(controller: _narration, maxLines: 2, decoration: _decor('', hint: 'Notes for this order…')),
