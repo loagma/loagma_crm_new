@@ -60,7 +60,7 @@ class OrderListController extends Controller
                 'user.contactno as buyer_contactno',
                 'user.latitude as buyer_latitude',
                 'user.longitude as buyer_longitude',
-                'user_addresses.full_address as buyer_saved_address',
+                'user_addresses.address as buyer_saved_address',
                 'user_addresses.lat as buyer_saved_lat',
                 'user_addresses.lng as buyer_saved_lng',
             ]);
@@ -160,7 +160,7 @@ class OrderListController extends Controller
                 'user.shop_address as owner_shop_address',
                 'user.latitude as owner_latitude',
                 'user.longitude as owner_longitude',
-                'user_addresses.full_address as owner_saved_address',
+                'user_addresses.address as owner_saved_address',
                 'user_addresses.lat as owner_saved_lat',
                 'user_addresses.lng as owner_saved_lng',
             ])

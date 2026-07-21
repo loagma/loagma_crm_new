@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Models\DeliStaff;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
 
@@ -24,14 +23,6 @@ class OtpAuthController extends Controller
                 'message' => 'Mobile number not registered.',
             ], 404);
         }
-
-        $otp = str_pad((string) random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
-
-        $staff->update([
-            'password' => $otp,
-        ]);
-
-        Log::info("OTP for {$request->mobile}: $otp");
 
         return response()->json([
             'success' => true,
@@ -55,7 +46,7 @@ class OtpAuthController extends Controller
             ], 404);
         }
 
-        $isValidOtp = $staff->password === $request->otp;
+        $isValidOtp = $staff->password !== null && $staff->password === $request->otp;
 
         if (!$isValidOtp) {
             return response()->json([

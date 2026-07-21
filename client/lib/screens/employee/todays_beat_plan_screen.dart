@@ -234,6 +234,10 @@ class _CustomerCard extends StatelessWidget {
     final person     = acc['personName']    as String? ?? '';
     final phone      = acc['contactNumber'] as String? ?? '';
     final address    = acc['address']       as String? ?? '';
+    final addresses  = ((acc['addresses'] as List?) ?? [])
+        .map((a) => (a is Map ? a['address'] : a)?.toString() ?? '')
+        .where((a) => a.isNotEmpty)
+        .toList();
     final area       = acc['area']          as String? ?? '';
     final pin        = acc['pincode']       as String? ?? '';
     final freq       = item['frequency']    as String? ?? 'weekly';
@@ -339,7 +343,12 @@ class _CustomerCard extends StatelessWidget {
               ]),
             ]),
             const SizedBox(height: 4),
-            if (address.isNotEmpty)
+            if (addresses.length > 1)
+              ...addresses.asMap().entries.map((e) => Text(
+                    'Address ${e.key + 1} : ${e.value}',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ))
+            else if (address.isNotEmpty)
               Text('Address : $address',
                   style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
             if (area.isNotEmpty)

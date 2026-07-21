@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\LeadsAccount;
 use App\Models\UserCustomer;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class LeadsAccountController extends Controller
@@ -273,59 +274,80 @@ class LeadsAccountController extends Controller
         $pincodes = array_filter((array) request()->query('pincodes', []));
         $q = request()->query('q', '');
 
-        // `user_addresses` is the customer's actual saved address book (one row
-        // per address, one marked is_default per user) — it's more current than
-        // the flat user.address/latitude/longitude columns, so it takes priority.
-        $query = UserCustomer::query()
-            ->leftJoin('user_addresses', function ($join) {
-                $join->on('user_addresses.user_id', '=', 'user.userid')
-                     ->where('user_addresses.is_default', '=', '1');
-            });
+        $query = UserCustomer::query();
 
         if (!empty($pincodes)) {
-            $query->whereIn('user.pincode', $pincodes);
+            $query->whereIn('pincode', $pincodes);
         }
 
         if ($q) {
             $query->where(function ($x) use ($q) {
-                $x->where('user.name', 'like', "%$q%")
-                  ->orWhere('user.shop_name', 'like', "%$q%")
-                  ->orWhere('user.contactno', 'like', "%$q%");
+                $x->where('name', 'like', "%$q%")
+                  ->orWhere('shop_name', 'like', "%$q%")
+                  ->orWhere('contactno', 'like', "%$q%");
             });
         }
 
-        $rows = $query->get([
-            'user.userid',
-            'user.name',
-            'user.shop_name',
-            'user.contactno',
-            'user.address',
-            'user.shop_address',
-            'user.pincode',
-            'user.city',
-            'user.state',
-            'user.latitude',
-            'user.longitude',
-            'user.user_type',
-            'user_addresses.full_address as saved_address',
-            'user_addresses.lat as saved_lat',
-            'user_addresses.lng as saved_lng',
+        $customers = $query->get([
+            'userid', 'name', 'shop_name', 'contactno', 'email', 'address', 'shop_address',
+            'pincode', 'city', 'state', 'latitude', 'longitude', 'user_type',
         ]);
 
-        $data = $rows->map(function ($row) {
+        // `user_addresses` is the customer's actual saved address book — a
+        // customer can have several (Home/Office/etc). Batch-fetch every
+        // address for the customers on this page, grouped by user, instead of
+        // the flat single user.address/latitude/longitude columns.
+        $addressesByUser = DB::table('user_addresses')
+            ->whereIn('user_id', $customers->pluck('userid'))
+            ->orderByDesc('is_default')
+            ->orderBy('id')
+            ->get(['user_id', 'address', 'type', 'is_default', 'lat', 'lng'])
+            ->groupBy('user_id');
+
+        $data = $customers->map(function ($c) use ($addressesByUser) {
+            $savedAddresses = $addressesByUser->get($c->userid, collect());
+
+            // Address 1 is the account's own `user.address` column; Address
+            // 2+ are the saved entries in `user_addresses` (default first).
+            $addressList = collect();
+            if (trim((string) $c->address) !== '') {
+                $addressList->push([
+                    'address'    => $c->address,
+                    'type'       => 'Account',
+                    'is_default' => $savedAddresses->isEmpty(),
+                    'latitude'   => $c->latitude,
+                    'longitude'  => $c->longitude,
+                ]);
+            }
+            $addressList = $addressList->concat($savedAddresses->map(fn ($a) => [
+                'address'    => $a->address,
+                'type'       => $a->type,
+                'is_default' => $a->is_default === '1',
+                'latitude'   => $a->lat,
+                'longitude'  => $a->lng,
+            ]));
+
+            // Drop duplicates (e.g. `user.address` matching a saved entry
+            // verbatim) so the same text isn't listed twice.
+            $addressList = $addressList->unique(fn ($a) => strtolower(trim((string) $a['address'])))->values();
+
+            $primary = $addressList->first();
+
             return [
-                'userid'       => $row->userid,
-                'name'         => $row->name,
-                'shop_name'    => $row->shop_name,
-                'contactno'    => $row->contactno,
-                'address'      => $row->saved_address ?: ($row->shop_address ?: $row->address),
-                'shop_address' => $row->shop_address,
-                'pincode'      => $row->pincode,
-                'city'         => $row->city,
-                'state'        => $row->state,
-                'latitude'     => $row->saved_lat ?? $row->latitude,
-                'longitude'    => $row->saved_lng ?? $row->longitude,
-                'user_type'    => $row->user_type,
+                'userid'       => $c->userid,
+                'name'         => $c->name,
+                'shop_name'    => $c->shop_name,
+                'contactno'    => $c->contactno,
+                'email'        => $c->email,
+                'address'      => $primary['address'] ?? ($c->shop_address ?: ''),
+                'shop_address' => $c->shop_address,
+                'pincode'      => $c->pincode,
+                'city'         => $c->city,
+                'state'        => $c->state,
+                'latitude'     => $primary['latitude'] ?? $c->latitude,
+                'longitude'    => $primary['longitude'] ?? $c->longitude,
+                'user_type'    => $c->user_type,
+                'addresses'    => $addressList->values(),
             ];
         });
 

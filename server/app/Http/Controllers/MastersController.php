@@ -111,9 +111,7 @@ class MastersController extends Controller
             'password'  => 'nullable|string|min:6|max:100',
         ])->validate();
 
-        if (!empty($validated['password'])) {
-            $validated['password'] = bcrypt($validated['password']);
-        } else {
+        if (empty($validated['password'])) {
             unset($validated['password']);
         }
 
@@ -147,9 +145,7 @@ class MastersController extends Controller
             'password'  => 'nullable|string|min:6|max:100',
         ])->validate();
 
-        if (!empty($validated['password'])) {
-            $validated['password'] = bcrypt($validated['password']);
-        } else {
+        if (empty($validated['password'])) {
             unset($validated['password']);
         }
 

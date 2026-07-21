@@ -286,6 +286,10 @@ class _AccountMapScreenState extends State<AccountMapScreen> {
     final person  = (account['personName']   as String?) ?? '';
     final phone   = (account['contactNumber'] as String?) ?? '';
     final address = (account['address']      as String?) ?? '';
+    final addresses = ((account['addresses'] as List?) ?? [])
+        .map((a) => a.toString())
+        .where((a) => a.isNotEmpty)
+        .toList();
 
     showModalBottomSheet(
       context: context,
@@ -318,7 +322,14 @@ class _AccountMapScreenState extends State<AccountMapScreen> {
             Text(name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
             if (person.isNotEmpty && person != name)
               Text(person, style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
-            if (address.isNotEmpty) ...[
+            if (addresses.length > 1) ...[
+              const SizedBox(height: 6),
+              ...addresses.asMap().entries.map((e) => Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Text('Address ${e.key + 1}: ${e.value}',
+                        style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600)),
+                  )),
+            ] else if (address.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(address, style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600)),
             ],

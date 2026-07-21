@@ -127,10 +127,27 @@ class _AllottedCustomerAccountsScreenState
         'personName':    (u['name'] ?? '').toString(),
         'contactNumber': (u['contactno'] ?? '').toString(),
         'address':       (u['address'] ?? u['shop_address'] ?? '').toString(),
+        'addresses':     ((u['addresses'] as List?) ?? [])
+            .map((a) => (a as Map)['address']?.toString() ?? '')
+            .where((a) => a.isNotEmpty)
+            .toList(),
         'pincode':       (u['pincode'] ?? '').toString(),
         'latitude':      u['latitude'],
         'longitude':     u['longitude'],
         '_type':         'customer',
+        // Raw user-table field names — kept alongside the normalised keys
+        // above so CustomerDetailScreen (which reads userid/shop_name/name/
+        // contactno/email/city/state/user_type) shows real values instead
+        // of blanks.
+        'userid':        u['userid'],
+        'shop_name':     (u['shop_name'] ?? '').toString(),
+        'name':          (u['name'] ?? '').toString(),
+        'contactno':     (u['contactno'] ?? '').toString(),
+        'email':         (u['email'] ?? '').toString(),
+        'shop_address':  (u['shop_address'] ?? '').toString(),
+        'city':          (u['city'] ?? '').toString(),
+        'state':         (u['state'] ?? '').toString(),
+        'user_type':     (u['user_type'] ?? '').toString(),
       }).toList();
 
       // Merge leads + customers
@@ -1177,6 +1194,10 @@ class _AccountCard extends StatelessWidget {
     final person  = account['personName']    as String? ?? '';
     final phone   = account['contactNumber'] as String? ?? '';
     final address = account['address']       as String? ?? '';
+    final addresses = ((account['addresses'] as List?) ?? [])
+        .map((a) => a.toString())
+        .where((a) => a.isNotEmpty)
+        .toList();
     final area    = account['area']          as String? ?? '';
     final type    = (account['_type']        as String?) ?? 'lead';
     final isLead  = type == 'lead';
@@ -1237,7 +1258,13 @@ class _AccountCard extends StatelessWidget {
             Text(name,
                 style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
             const SizedBox(height: 2),
-            if (address.isNotEmpty)
+            if (addresses.length > 1)
+              ...addresses.asMap().entries.map((e) => Padding(
+                    padding: const EdgeInsets.only(bottom: 1),
+                    child: Text('Address ${e.key + 1} : ${e.value}',
+                        style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+                  ))
+            else if (address.isNotEmpty)
               Text('Address : $address',
                   style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
             if (area.isNotEmpty)

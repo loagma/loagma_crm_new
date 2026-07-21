@@ -501,6 +501,11 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     final city = '${w['city'] ?? w['area'] ?? ''}'.trim();
     final area = '${w['area'] ?? ''}'.trim();
     final pincode = '${w['pincode'] ?? ''}'.trim();
+    final address = '${w['address'] ?? ''}'.trim();
+    final addresses = ((w['addresses'] as List?) ?? [])
+        .map((a) => (a is Map ? a['address'] : a)?.toString() ?? '')
+        .where((a) => a.isNotEmpty)
+        .toList();
     final phone = '${w['phone'] ?? ''}'.trim();
     final lat = _toDouble(w['latitude']);
     final lng = _toDouble(w['longitude']);
@@ -575,6 +580,16 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
                 _stagePill(st),
                 _pill(prio.text, prio.color),
               ]),
+              if (addresses.length > 1) ...[
+                const SizedBox(height: 6),
+                ...addresses.asMap().entries.map((e) => Text(
+                      'Address ${e.key + 1} : ${e.value}',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    )),
+              ] else if (address.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text('Address : $address', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+              ],
               if (city.isNotEmpty || area.isNotEmpty || pincode.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 if (city.isNotEmpty && city != area)
@@ -637,7 +652,10 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
                               'businessName':  title,
                               'personName':    owner,
                               'contactNumber': phone,
-                              'address':       [area, pincode].where((s) => s.isNotEmpty).join(', '),
+                              'address':       address.isNotEmpty
+                                  ? address
+                                  : [area, pincode].where((s) => s.isNotEmpty).join(', '),
+                              'addresses':     addresses,
                               'latitude':      lat,
                               'longitude':     lng,
                               '_type':         accountType,

@@ -40,6 +40,10 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     final phone = (widget.customer['contactno'] ?? '').toString();
     final email = (widget.customer['email'] ?? '').toString();
     final address = (widget.customer['address'] ?? widget.customer['shop_address'] ?? '').toString();
+    final addresses = ((widget.customer['addresses'] as List?) ?? [])
+        .map((a) => a.toString())
+        .where((a) => a.isNotEmpty)
+        .toList();
     final city = (widget.customer['city'] ?? '').toString();
     final state = (widget.customer['state'] ?? '').toString();
     final pincode = (widget.customer['pincode'] ?? '').toString();
@@ -116,7 +120,12 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                     _detailRow('Phone:', phone),
                     const SizedBox(height: 8),
                   ],
-                  if (address.isNotEmpty) ...[
+                  if (addresses.length > 1) ...[
+                    for (var i = 0; i < addresses.length; i++) ...[
+                      _detailRow('Address ${i + 1}:', addresses[i]),
+                      const SizedBox(height: 8),
+                    ],
+                  ] else if (address.isNotEmpty) ...[
                     _detailRow('Address:', address),
                     const SizedBox(height: 8),
                   ],

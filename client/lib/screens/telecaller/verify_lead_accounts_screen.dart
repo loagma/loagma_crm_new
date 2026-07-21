@@ -99,6 +99,10 @@ class _VerifyLeadAccountsScreenState extends State<VerifyLeadAccountsScreen> {
         'personName':    (u['name'] ?? '').toString(),
         'contactNumber': (u['contactno'] ?? '').toString(),
         'address':       (u['address'] ?? u['shop_address'] ?? '').toString(),
+        'addresses':     ((u['addresses'] as List?) ?? [])
+            .map((a) => (a as Map)['address']?.toString() ?? '')
+            .where((a) => a.isNotEmpty)
+            .toList(),
         'shopAddress':   (u['shop_address'] ?? '').toString(),
         'pincode':       (u['pincode'] ?? '').toString(),
         'city':          (u['city'] ?? '').toString(),

@@ -228,11 +228,23 @@ class TelecallerController extends Controller
         [$areaIds, $pincodes] = $this->myAreaScope($mobile);
 
         $leads = $this->myLeadsQuery($areaIds, $pincodes)
-            ->get(['id', 'businessName', 'personName', 'contactNumber', 'area', 'city', 'pincode', 'customerStage', 'latitude', 'longitude']);
+            ->get(['id', 'businessName', 'personName', 'contactNumber', 'area', 'city', 'pincode', 'customerStage', 'address', 'latitude', 'longitude']);
 
         $customers = empty($pincodes)
             ? collect()
-            : DB::table('user')->whereIn('pincode', $pincodes)->get(['userid', 'name', 'shop_name', 'contactno', 'city', 'pincode', 'latitude', 'longitude']);
+            : DB::table('user')->whereIn('pincode', $pincodes)->get(['userid', 'name', 'shop_name', 'contactno', 'city', 'pincode', 'address', 'shop_address', 'latitude', 'longitude']);
+
+        // `user_addresses` is the customer's saved address book (one row per
+        // address, one marked is_default per user) — batch-fetched so a
+        // customer's worklist card can list every saved address.
+        $addressesByUser = $customers->isEmpty()
+            ? collect()
+            : DB::table('user_addresses')
+                ->whereIn('user_id', $customers->pluck('userid'))
+                ->orderByDesc('is_default')
+                ->orderBy('id')
+                ->get(['user_id', 'address', 'type', 'is_default', 'lat', 'lng'])
+                ->groupBy('user_id');
 
         $todayStr    = Carbon::today()->toDateString();
         $labels      = TelecallerLabel::where('employee_mobile', $mobile)->get()->keyBy('account_id');
@@ -283,12 +295,40 @@ class TelecallerController extends Controller
                 'label'          => $deriveLabel($id),
                 'last_contact'   => $lastOf($id),
                 'next_follow_up' => $nextOf($id),
+                'address'        => $l->address,
+                'addresses'      => [],
                 'latitude'       => $l->latitude,
                 'longitude'      => $l->longitude,
             ];
         }
         foreach ($customers as $c) {
             $id = (string) $c->userid;
+
+            // Address 1 is the account's own `user.address` column; Address
+            // 2+ are the saved entries in `user_addresses` (default first).
+            $savedAddresses = $addressesByUser->get($c->userid, collect());
+            $addrs = collect();
+            if (trim((string) $c->address) !== '') {
+                $addrs->push([
+                    'address'    => $c->address,
+                    'type'       => 'Account',
+                    'is_default' => $savedAddresses->isEmpty(),
+                    'latitude'   => $c->latitude,
+                    'longitude'  => $c->longitude,
+                ]);
+            }
+            $addrs = $addrs->concat($savedAddresses->map(fn ($a) => [
+                'address'    => $a->address,
+                'type'       => $a->type,
+                'is_default' => $a->is_default === '1',
+                'latitude'   => $a->lat,
+                'longitude'  => $a->lng,
+            ]));
+            // Drop duplicates (e.g. `user.address` matching a saved entry
+            // verbatim) so the same text isn't listed twice.
+            $addrs = $addrs->unique(fn ($a) => strtolower(trim((string) $a['address'])))->values();
+            $primary = $addrs->first();
+
             $rows[] = [
                 'account_id'     => $id,
                 'account_type'   => 'customer',
@@ -303,8 +343,10 @@ class TelecallerController extends Controller
                 'label'          => $deriveLabel($id),
                 'last_contact'   => $lastOf($id),
                 'next_follow_up' => $nextOf($id),
-                'latitude'       => $c->latitude,
-                'longitude'      => $c->longitude,
+                'address'        => $primary['address'] ?? ($c->shop_address ?: ''),
+                'addresses'      => $addrs,
+                'latitude'       => $primary['latitude']  ?? $c->latitude,
+                'longitude'      => $primary['longitude'] ?? $c->longitude,
             ];
         }
 

@@ -24,6 +24,51 @@ class BeatPlanController extends Controller
         return (string) JWTAuth::parseToken()->authenticate()->mobile;
     }
 
+    // `user_addresses` is the customer's saved address book (one row per
+    // address, one marked is_default per user) — batch-fetched and grouped
+    // by user_id so a customer account can list every saved address.
+    private function addressesByUserIds(array $userIds): \Illuminate\Support\Collection
+    {
+        if (empty($userIds)) {
+            return collect();
+        }
+
+        return \DB::table('user_addresses')
+            ->whereIn('user_id', $userIds)
+            ->orderByDesc('is_default')
+            ->orderBy('id')
+            ->get(['user_id', 'address', 'type', 'is_default', 'lat', 'lng'])
+            ->groupBy('user_id');
+    }
+
+    // Address 1 is the account's own `user.address` column; Address 2+ are
+    // the saved entries in `user_addresses` (default first).
+    private function buildAddressList(object $user, \Illuminate\Support\Collection $savedAddresses): \Illuminate\Support\Collection
+    {
+        $list = collect();
+        if (trim((string) ($user->address ?? '')) !== '') {
+            $list->push([
+                'address'    => $user->address,
+                'type'       => 'Account',
+                'is_default' => $savedAddresses->isEmpty(),
+                'latitude'   => $user->latitude ?? null,
+                'longitude'  => $user->longitude ?? null,
+            ]);
+        }
+
+        $list = $list->concat($savedAddresses->map(fn ($a) => [
+            'address'    => $a->address,
+            'type'       => $a->type,
+            'is_default' => $a->is_default === '1',
+            'latitude'   => $a->lat,
+            'longitude'  => $a->lng,
+        ]));
+
+        // Drop duplicates (e.g. `user.address` matching a saved entry
+        // verbatim) so the same text isn't listed twice.
+        return $list->unique(fn ($a) => strtolower(trim((string) $a['address'])))->values();
+    }
+
     private function dayFiringQuery(\Illuminate\Database\Eloquent\Builder $q, Carbon $date): void
     {
         $dayName    = $date->shortDayName; // 'Mon', 'Tue', ...
@@ -160,6 +205,7 @@ class BeatPlanController extends Controller
         $customers = !empty($customerIds)
             ? \DB::table('user')->whereIn('userid', $customerIds)->get()->keyBy('userid')
             : collect();
+        $addressesByUser = $this->addressesByUserIds($customerIds);
 
         // Build response with visit status for today
         $visitedIds = BeatPlanVisit::where('salesman_id', $salesman)
@@ -167,21 +213,24 @@ class BeatPlanController extends Controller
             ->pluck('beat_plan_id')
             ->flip();
 
-        $data = $plans->map(function (BeatPlan $plan) use ($visitedIds, $leads, $customers) {
+        $data = $plans->map(function (BeatPlan $plan) use ($visitedIds, $leads, $customers, $addressesByUser) {
             $account = null;
             if ($plan->account_type === 'customer') {
                 $user = $customers->get($plan->account_id);
+                $addrs = $user ? $this->buildAddressList($user, $addressesByUser->get($plan->account_id, collect())) : collect();
+                $primary = $addrs->first();
                 $account = $user ? [
                     'id'            => $user->userid,
                     'accountCode'   => '',
                     'businessName'  => $user->shop_name ?? '',
                     'personName'    => $user->name ?? '',
                     'contactNumber' => $user->contactno ?? '',
-                    'address'       => $user->shop_address ?? $user->address ?? '',
+                    'address'       => $primary['address'] ?? ($user->shop_address ?? ''),
+                    'addresses'     => $addrs,
                     'area'          => '',
                     'pincode'       => $user->pincode ?? '',
-                    'latitude'      => null,
-                    'longitude'     => null,
+                    'latitude'      => $primary['latitude']  ?? null,
+                    'longitude'     => $primary['longitude'] ?? null,
                 ] : null;
             } else {
                 $lead = $leads->get($plan->account_id);
@@ -254,25 +303,31 @@ class BeatPlanController extends Controller
                 $customers = !empty($customerIds)
                     ? \DB::table('user')->whereIn('userid', $customerIds)->get()->keyBy('userid')
                     : collect();
+                $addressesByUser = $this->addressesByUserIds($customerIds);
 
                 $visitedIds = BeatPlanVisit::where('salesman_id', $salesman)
                     ->where('visit_date', $date->toDateString())
                     ->pluck('beat_plan_id')
                     ->flip();
 
-                $data = $plans->map(function (BeatPlan $plan) use ($visitedIds, $leads, $customers) {
+                $data = $plans->map(function (BeatPlan $plan) use ($visitedIds, $leads, $customers, $addressesByUser) {
                     $account = null;
                     if ($plan->account_type === 'customer') {
                         $user = $customers->get($plan->account_id);
+                        $addrs = $user ? $this->buildAddressList($user, $addressesByUser->get($plan->account_id, collect())) : collect();
+                        $primary = $addrs->first();
                         $account = $user ? [
                             'id'            => $user->userid,
                             'accountCode'   => '',
                             'businessName'  => $user->shop_name ?? '',
                             'personName'    => $user->name ?? '',
                             'contactNumber' => $user->contactno ?? '',
-                            'address'       => $user->shop_address ?? $user->address ?? '',
+                            'address'       => $primary['address'] ?? ($user->shop_address ?? ''),
+                            'addresses'     => $addrs,
                             'area'          => '',
                             'pincode'       => $user->pincode ?? '',
+                            'latitude'      => $primary['latitude']  ?? null,
+                            'longitude'     => $primary['longitude'] ?? null,
                         ] : null;
                     } else {
                         $lead = $leads->get($plan->account_id);

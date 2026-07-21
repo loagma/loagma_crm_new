@@ -155,7 +155,13 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                               final name    = acc['businessName']  as String? ?? '—';
                               final code    = acc['accountCode']   as String? ?? '';
                               final phone   = acc['contactNumber'] as String? ?? '';
-                              final address = acc['address']       as String? ?? '';
+                              final addressList = ((acc['addresses'] as List?) ?? [])
+                                  .map((a) => (a is Map ? a['address'] : a)?.toString() ?? '')
+                                  .where((a) => a.isNotEmpty)
+                                  .toList();
+                              final address = addressList.length > 1
+                                  ? addressList.asMap().entries.map((e) => 'Address ${e.key + 1}: ${e.value}').join(' | ')
+                                  : (acc['address'] as String? ?? '');
                               final area    = acc['area']          as String? ?? '';
                               final pin     = acc['pincode']       as String? ?? '';
                               final visited    = item['visited_today'] == true;
