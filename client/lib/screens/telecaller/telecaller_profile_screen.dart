@@ -287,12 +287,12 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
           const SizedBox(height: 18),
           Row(
             children: [
-              _qa(const Icon(Icons.call_rounded, size: 22, color: Color(0xFF2F9E57)), 'Call', const Color(0xFF2F9E57), _callAndLog),
-              _qa(const Icon(Icons.ring_volume_rounded, size: 22, color: Color(0xFF8E24AA)), 'Cloud Call', const Color(0xFF8E24AA), _cloudCall),
-              _qa(const FaIcon(FontAwesomeIcons.whatsapp, size: 22, color: Color(0xFF25D366)), 'WhatsApp', const Color(0xFF25D366), () => launchWhatsApp(_phone)),
-              _qa(const Icon(Icons.mail_rounded, size: 22, color: Color(0xFF3B6FD4)), 'Email', const Color(0xFF3B6FD4), _emailAction),
-              _qa(Icon(Icons.shopping_bag_rounded, size: 22, color: kGoldDark), 'Order', kGoldDark, _openOrderSheet),
-              _qa(const Icon(Icons.event_rounded, size: 22, color: Color(0xFFD98A2B)), 'Follow-up', const Color(0xFFD98A2B), () => setState(() => _tab = 3)),
+              _qa(const Icon(Icons.call_rounded, size: 26, color: Color(0xFF2F9E57)), 'Call', const Color(0xFF2F9E57), _callAndLog),
+              _qa(const Icon(Icons.ring_volume_rounded, size: 26, color: Color(0xFF8E24AA)), 'Cloud Call', const Color(0xFF8E24AA), _cloudCall),
+              _qa(const FaIcon(FontAwesomeIcons.whatsapp, size: 26, color: Color(0xFF25D366)), 'WhatsApp', const Color(0xFF25D366), () => launchWhatsApp(_phone)),
+              _qa(const Icon(Icons.mail_rounded, size: 26, color: Color(0xFF3B6FD4)), 'Email', const Color(0xFF3B6FD4), _emailAction),
+              _qa(Icon(Icons.shopping_bag_rounded, size: 26, color: kGoldDark), 'Order', kGoldDark, _openOrderSheet),
+              _qa(const Icon(Icons.event_rounded, size: 26, color: Color(0xFFD98A2B)), 'Follow-up', const Color(0xFFD98A2B), () => setState(() => _tab = 3)),
             ],
           ),
         ],
@@ -309,14 +309,14 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
             child: Column(
               children: [
                 Container(
-                  height: 50,
-                  width: 50,
+                  height: 58,
+                  width: 58,
                   decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
                   alignment: Alignment.center,
                   child: iconWidget,
                 ),
-                const SizedBox(height: 5),
-                Text(label, style: TextStyle(fontSize: 10, color: Colors.grey.shade600, fontWeight: FontWeight.w600), textAlign: TextAlign.center),
+                const SizedBox(height: 6),
+                Text(label, style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600, fontWeight: FontWeight.w600), textAlign: TextAlign.center),
               ],
             ),
           ),
@@ -356,25 +356,53 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
   }
 
   // ── Overview tab ────────────────────────────────────────────────────────────
+  // Shows every real field the backend actually has for this account (not just
+  // the handful the worklist card needs) — the full lead record is merged into
+  // `_acc` by `_load()`, so most of this renders with no extra API calls.
+  String get _location => [
+        '${_acc['district'] ?? ''}'.trim(),
+        '${_acc['state'] ?? ''}'.trim(),
+        '${_acc['country'] ?? ''}'.trim(),
+      ].where((s) => s.isNotEmpty).join(', ');
+
+  String get _createdOn {
+    final d = DateTime.tryParse('${_acc['createdAt'] ?? ''}');
+    return d == null ? '—' : _dayLabel(d.toLocal());
+  }
+
   List<Widget> _overview() {
     final st = stageStyle(_stage);
+    final verificationNotes = '${_acc['verificationNotes'] ?? ''}'.trim();
+    final rejectionNotes    = '${_acc['rejectionNotes'] ?? ''}'.trim();
+
     return [
       _sectionCard('Basic information', [
         _info('Phone', _phone.isEmpty ? '—' : '+91 $_phone'),
         _info('Email', _email.isEmpty ? '—' : _email),
-        _info('Address', '${_acc['address'] ?? '—'}'),
+        _info('Address', '${_acc['address'] ?? '—'}', full: true),
         _info('City', '${_acc['city'] ?? _acc['area'] ?? '—'}'),
+        _info('Pincode', '${_acc['pincode'] ?? '—'}'),
+        _info('Location', _location.isEmpty ? '—' : _location),
         _info('GST', '${_acc['gstNumber'] ?? '—'}'),
+        _info('PAN', '${_acc['panCard'] ?? '—'}'),
         _info('Type', '${_acc['businessType'] ?? '—'}'),
+        _info('Business size', '${_acc['businessSize'] ?? '—'}'),
       ]),
       _sectionCard('Sales information', [
+        _info('Account code', _code.isEmpty ? '—' : _code),
         _info('Stage', st.text),
         _info('Funnel', '${_acc['funnelStage'] ?? '—'}'),
         _info('Lead score', '—'),
         _info('Priority', _activityBadge.text),
         _info('Assigned to', '${_acc['assignedToId'] ?? '—'}'),
         _info('Approved', _acc['isApproved'] == true ? 'Yes' : 'No'),
+        _info('Created on', _createdOn),
       ]),
+      if (verificationNotes.isNotEmpty || rejectionNotes.isNotEmpty)
+        _sectionCard('Verification', [
+          if (verificationNotes.isNotEmpty) _info('Notes', verificationNotes, full: true),
+          if (rejectionNotes.isNotEmpty) _info('Rejection reason', rejectionNotes, full: true),
+        ]),
       _kpiCard(),
     ];
   }
@@ -961,9 +989,9 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            FittedBox(child: Text(n, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: color))),
-            const SizedBox(height: 3),
-            Text(t, textAlign: TextAlign.center, style: TextStyle(fontSize: 9.5, color: Colors.grey.shade500)),
+            FittedBox(child: Text(n, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: color))),
+            const SizedBox(height: 5),
+            Text(t, textAlign: TextAlign.center, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500, color: Colors.grey.shade600)),
           ],
         ),
       );

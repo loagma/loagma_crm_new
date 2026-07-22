@@ -368,6 +368,7 @@ class _TelecallerDashboardScreenState extends State<TelecallerDashboardScreen> {
   Widget _quickActions() {
     final actions = <({String label, IconData icon, Color color, String route})>[
       (label: 'Today Worklist', icon: Icons.checklist_rounded, color: kGoldDark, route: '/telecaller/worklist'),
+      (label: 'All Worklist', icon: Icons.list_alt_rounded, color: const Color(0xFF5E35B1), route: '/telecaller/all-worklist'),
       (label: "Today's Callbacks", icon: Icons.event_repeat_rounded, color: const Color(0xFFD98A2B), route: '/telecaller/callbacks'),
       (label: 'Create Lead', icon: Icons.person_add_alt_1_rounded, color: const Color(0xFF3B6FD4), route: '/lead-account'),
       (label: 'Verify Accounts', icon: Icons.verified_user_rounded, color: const Color(0xFF2F9E57), route: '/verify-lead-accounts'),

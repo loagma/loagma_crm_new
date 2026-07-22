@@ -270,6 +270,12 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF8E24AA),
           },
           {
+            'title': 'All Worklist',
+            'icon': Icons.list_alt_rounded,
+            'route': '/telecaller/all-worklist',
+            'color': const Color(0xFF5E35B1),
+          },
+          {
             'title': 'Order List',
             'icon': Icons.shopping_bag_rounded,
             'route': '/orders-list',

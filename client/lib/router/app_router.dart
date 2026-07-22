@@ -46,6 +46,8 @@ import '../screens/telecaller/telecaller_callbacks_screen.dart';
 import '../screens/telecaller/telecaller_call_history_screen.dart';
 import '../screens/telecaller/order_list_screen.dart';
 import '../screens/telecaller/telecaller_worklist_screen.dart';
+import '../screens/telecaller/telecaller_all_worklist_screen.dart';
+import '../screens/telecaller/telecaller_worklist_day_screen.dart';
 import '../screens/telecaller/telecaller_profile_screen.dart';
 import '../screens/telecaller/telecaller_call_scripts_screen.dart';
 import '../services/user_service.dart';
@@ -305,6 +307,18 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/telecaller/worklist',
       builder: (context, state) => const TelecallerWorklistScreen(),
+    ),
+    GoRoute(
+      path: '/telecaller/all-worklist',
+      builder: (context, state) => const TelecallerAllWorklistScreen(),
+    ),
+    GoRoute(
+      path: '/telecaller/worklist/day',
+      builder: (context, state) {
+        final date  = state.uri.queryParameters['date']  ?? '';
+        final label = state.uri.queryParameters['label'] ?? '';
+        return TelecallerWorklistDayScreen(date: date, label: label);
+      },
     ),
     GoRoute(
       path: '/telecaller/profile',
