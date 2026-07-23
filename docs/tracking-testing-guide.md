@@ -135,3 +135,33 @@ Next upload attempt → app retries once → then stops tracking and shows the "
 - **Phase 5**: history — pick any past day, see the full route with start/end pins
 
 Until then, §2's queries are the only viewer.
+
+---
+
+## 7. Demo: simulated route (no walker needed)
+
+`server/tools/sim_route_demo.php` seeds a road-true mock route for the test
+salesman (real Jabalpur roads via OSRM) so the admin map screens can be
+demoed end-to-end: glide animation, pulse, accuracy circle, the dashed
+>5-min gap, ENDED state, and road-snapped history.
+
+The 4-command cycle (server running per §0, admin app open on Live Salesmen):
+
+```powershell
+cd server
+C:\Users\Dell\php82\php.exe tools\sim_route_demo.php seed      # past trail + 1 gap
+C:\Users\Dell\php82\php.exe tools\sim_route_demo.php feed      # live pings every 8s — watch the glide
+C:\Users\Dell\php82\php.exe tools\sim_route_demo.php close     # punch out → ENDED, history snappable
+C:\Users\Dell\php82\php.exe tools\sim_route_demo.php teardown  # ⚠️ ALWAYS — same session, no exceptions
+```
+
+Rules baked in:
+- Every ping is `is_mock=1`, and **teardown must run in the same session**
+  (the §Timezone box's sim-data rule). Teardown is idempotent — safe to run
+  twice or after a partial seed — and reports any stray `is_mock` rows left
+  in the DB for ANY account. That count must be 0 before you walk away.
+- The script **refuses to run when `APP_ENV=production`**.
+- `seed` aborts rather than touch a REAL attendance row for the test account.
+- Extras: `status` (counts), `token` (admin JWT for curl),
+  `feed 3 1` (only 3 pings, 1s apart). Road-snapped history needs `OSRM_URL`
+  (+ `OSRM_CA` on this Windows machine) in `server/.env`.
