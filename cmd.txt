@@ -22,8 +22,8 @@ flutter build web --release
 in emulator 
 flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000
 
-in lan
-flutter run --dart-define=API_BASE_URL=http://192.168.1.21:8000
+in lan (use this machine's CURRENT Wi-Fi IP — check with `ipconfig`; it changes on DHCP)
+flutter run --dart-define=API_BASE_URL=http://192.168.1.5:8000
 
 ----------
 server (Laravel)

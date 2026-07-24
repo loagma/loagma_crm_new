@@ -15,15 +15,23 @@ import 'user_service.dart';
 ///
 /// Runs a foreground service (persistent notification, NO background-location
 /// permission) whose background isolate:
-///  - captures positions on a ~20m distance filter,
+///  - captures positions on a ~5m distance filter plus an accuracy gate,
 ///  - queues them in a local sqflite table with capture-time timestamps,
-///  - flushes batches to /api/tracking/ping every ~30s,
+///  - flushes batches to /api/tracking/ping every ~9s,
 ///  - keeps the queue on failure, clears it on success.
 ///
 /// start() is called after punch-in success, stop() after punch-out success
 /// (see app_drawer.dart). Both no-op when already in the desired state.
 class TrackingService {
   TrackingService._();
+
+  // Upload cadence for the queued pings. Kept just under the 10s capture
+  // interval so a fresh fix reaches the server within ~1 cycle of being
+  // recorded — this is what lets the admin's live map reflect movement
+  // promptly (a turn shows in ~10-15s instead of up to ~45s). Cheap: _flush()
+  // makes NO network call when the queue is empty, so a short interval doesn't
+  // multiply data/battery — it only shortens how long a real point waits.
+  static const int _flushIntervalMs = 9000;
 
   static Future<void> start() async {
     if (await FlutterForegroundTask.isRunningService) return;
@@ -54,7 +62,7 @@ class TrackingService {
       ),
       iosNotificationOptions: const IOSNotificationOptions(),
       foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.repeat(30000), // flush ~30s
+        eventAction: ForegroundTaskEventAction.repeat(_flushIntervalMs), // flush ~9s
         allowWakeLock: true,
       ),
     );
@@ -82,10 +90,15 @@ class _TrackingTaskHandler extends TaskHandler {
   // Android suppresses displacement-only fused listeners once the screen is
   // off (verified on A069: 2 points per 23-min screen-off walk). So we ask for
   // scheduled delivery every [_intervalSeconds] and thin the stream ourselves:
-  // keep a point when it moved ≥[_minKeepMeters], or every [_heartbeat] as a
-  // liveness breadcrumb.
+  // keep a point when it moved ≥[_minKeepMeters] with an acceptable accuracy
+  // (≤[_maxAccuracyMeters]), or every [_heartbeat] as a liveness breadcrumb.
   static const int _intervalSeconds = 10;
-  static const double _minKeepMeters = 15;
+  static const double _minKeepMeters = 5;
+  // Drop fixes the GPS itself reports as low-quality (accuracy radius worse
+  // than this) — they're jitter and make the live track look LESS accurate.
+  // Looser than the server's 50m backstop (TrackingController::MAX_ACCURACY_
+  // METERS); this just tightens what actually gets plotted on the live map.
+  static const double _maxAccuracyMeters = 30;
   static const Duration _heartbeat = Duration(seconds: 60);
   static const int _flushBatchSize = 200;
   static const int _queueCapRows = 5000;
@@ -188,15 +201,29 @@ class _TrackingTaskHandler extends TaskHandler {
     final db = _db;
     if (db == null || _dead) return;
 
-    // Client-side thinning: keep on ≥15m displacement or 60s heartbeat.
+    // Client-side thinning. Two gates, both bypassed by the 60s heartbeat so a
+    // liveness breadcrumb (and the first fix after punch-in) is never starved:
+    //  1. Accuracy gate — a fix the GPS reports as low-quality (accuracy radius
+    //     > _maxAccuracyMeters) is jitter; plotting it makes the live track look
+    //     LESS accurate, so drop it.
+    //  2. Distance gate — keep only once we've moved ≥ _minKeepMeters, so a
+    //     stationary phone doesn't pile up near-duplicate points.
     final now = DateTime.now();
-    if (_lastKeptLat != null && _lastKeptAt != null) {
-      final moved =
-          _metersBetween(_lastKeptLat!, _lastKeptLng!, pos.latitude, pos.longitude);
-      if (moved < _minKeepMeters && now.difference(_lastKeptAt!) < _heartbeat) {
+    final heartbeatDue =
+        _lastKeptAt == null || now.difference(_lastKeptAt!) >= _heartbeat;
+
+    if (!heartbeatDue) {
+      final acc = pos.accuracy;
+      if (acc.isFinite && acc > _maxAccuracyMeters) {
+        return;
+      }
+      final moved = _metersBetween(
+          _lastKeptLat!, _lastKeptLng!, pos.latitude, pos.longitude);
+      if (moved < _minKeepMeters) {
         return;
       }
     }
+
     _lastKeptLat = pos.latitude;
     _lastKeptLng = pos.longitude;
     _lastKeptAt = now;

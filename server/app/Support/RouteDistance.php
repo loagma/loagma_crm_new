@@ -15,6 +15,11 @@ use Carbon\Carbon;
  *
  * Timezone: pings carry app-timezone Carbon instances (model cast) — see the
  * convention doc-comment atop TrackingController.
+ *
+ * Road-snapping note: RouteSnapper may cache a prettier OSRM-matched line
+ * for the history DISPLAY, but distance is DELIBERATELY still computed from
+ * the raw kept points — switching to snapped geometry would silently change
+ * stored total_distance_km values, and match confidence varies day to day.
  */
 class RouteDistance
 {
