@@ -6,6 +6,7 @@ use App\Models\Attendance;
 use App\Models\DeliStaff;
 use App\Models\LocationPing;
 use App\Support\RouteDistance;
+use App\Support\RouteSnapper;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -224,10 +225,12 @@ class TrackingController extends Controller
 
         // Full day's trail in one query: the distance total always spans the
         // whole day, while the returned points honor ?since= (delta polling).
+        // accuracy + speed feed the admin map polish: the accuracy circle and
+        // the moving/stationary rotation rule for the vehicle marker.
         $all = LocationPing::where('employee_mobile', $mobile)
             ->where('date', $today)
             ->orderBy('recorded_at')
-            ->get(['lat', 'lng', 'heading', 'battery', 'is_mock', 'recorded_at']);
+            ->get(['lat', 'lng', 'heading', 'speed', 'accuracy', 'battery', 'is_mock', 'recorded_at']);
 
         $stats = RouteDistance::stats($all);
 
@@ -286,6 +289,21 @@ class TrackingController extends Controller
             $attendance->update(['total_distance_km' => $stats['distance_km']]);
         }
 
+        // Road-snapping (display only, CLOSED days only — a live route keeps
+        // growing, so snapping it would freeze a partial). Successes are
+        // cached on the attendance row so each day is snapped at most once;
+        // failures fall back to raw and retry on a later view.
+        $snappedSegments = null;
+        if ($attendance && $isClosed && $points->isNotEmpty()) {
+            $snappedSegments = $attendance->route_snapped;
+            if ($snappedSegments === null && config('tracking.osrm_url')) {
+                $snappedSegments = RouteSnapper::snap($points);
+                if ($snappedSegments !== null) {
+                    $attendance->update(['route_snapped' => $snappedSegments]);
+                }
+            }
+        }
+
         return response()->json([
             'success' => true,
             'data'    => [
@@ -299,6 +317,8 @@ class TrackingController extends Controller
                 'total_distance_km' => $attendance?->total_distance_km ?? $stats['distance_km'],
                 'has_gaps'          => $stats['has_gaps'],
                 'is_active'         => (bool) ($attendance && $attendance->punch_in_time && !$attendance->punch_out_time),
+                'snapped'           => $snappedSegments !== null,
+                'snapped_segments'  => $snappedSegments,
             ],
         ]);
     }
