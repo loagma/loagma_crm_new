@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -11,8 +12,15 @@ import '../../utils/distance_format.dart';
 /// Admin: watch one salesman's route grow live on the map.
 ///
 /// First load draws the full trail for today; afterwards a delta poll every
-/// 8s (?since=<last recorded_at>) appends only new points. Polling stops when
+/// 5s (?since=<last recorded_at>) appends only new points. Polling stops when
 /// the salesman punches out (is_active false) or the screen is disposed.
+///
+/// Map polish: new points are not teleported — the vehicle marker glides
+/// through them (~1.5s per batch, split across points) with the polyline
+/// extending in sync, the icon rotating via shortest-arc to the ping heading.
+/// A halo pulses under the marker while LIVE, and a translucent circle shows
+/// GPS accuracy in meters. Interruption gaps (>5 min) are never glided
+/// across — the marker jumps, honestly, exactly like the distance rule.
 class LiveRouteScreen extends StatefulWidget {
   final String mobile;
   final String name;
@@ -23,9 +31,12 @@ class LiveRouteScreen extends StatefulWidget {
   State<LiveRouteScreen> createState() => _LiveRouteScreenState();
 }
 
-class _LiveRouteScreenState extends State<LiveRouteScreen> {
+class _LiveRouteScreenState extends State<LiveRouteScreen>
+    with TickerProviderStateMixin {
   static const _gold = Color(0xFFD7BE69);
   static const _routeColor = Color(0xFF2F6FED);
+  // Darker shade of the route blue, drawn as an outline under the main line.
+  static const _routeOutline = Color(0xFF1C4CB3);
 
   final MapController _mapController = MapController();
 
@@ -33,10 +44,37 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
   // interruption — the jump across it is not counted as walked distance.
   static const _gapRule = Duration(minutes: 5);
 
+  // Item 2: one delta batch animates over ~1.5s total, split across its
+  // points; a single segment never runs faster than _minSegmentMs. A huge
+  // backlog (offline flush) is committed instantly except the tail — gliding
+  // through 50 points in 1.5s would just look like a glitchy sprint.
+  static const _batchAnimMs = 1500;
+  static const _minSegmentMs = 120;
+  static const _maxAnimatedBacklog = 24;
+
+  // Below ~1 m/s the GPS heading is noise — keep the last known heading.
+  static const _movingSpeedMs = 1.0;
+  // Accuracy better than this needs no hedge circle on screen.
+  static const _accuracyHideBelowM = 15.0;
+
   Timer? _timer;
+
+  /// Points already drawn (committed). The animated tip extends past the
+  /// last committed point while a segment is in flight.
   final List<LatLng> _points = [];
+  final List<_IncomingPoint> _animQueue = [];
+  DateTime? _lastCommittedAt;
+
+  LatLng? _tip; // displayed marker position (interpolated mid-segment)
+  double _displayHeading = 0;
+  double? _tipAccuracy;
+
+  // Last RECEIVED point — distance accumulates on arrival, independent of
+  // how far the display animation has caught up.
+  LatLng? _lastReceived;
+  DateTime? _lastReceivedAt;
+
   String? _lastRecordedAt;
-  DateTime? _lastPointAt;
   double _distanceKm = 0;
   bool _hasGaps = false;
   LatLng? _start; // punch-in location (green pin)
@@ -45,17 +83,29 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
   String? _error;
   bool _followTip = true;
 
+  AnimationController? _moveCtrl;
+  AnimationController? _camCtrl;
+  late final AnimationController _pulseCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1600),
+  )..repeat();
+
+  bool get _animating => _moveCtrl?.isAnimating ?? false;
+
   @override
   void initState() {
     super.initState();
     _fetch(initial: true);
-    _timer = Timer.periodic(const Duration(seconds: 8), (_) => _fetch());
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _fetch());
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     _timer = null;
+    _moveCtrl?.dispose();
+    _camCtrl?.dispose();
+    _pulseCtrl.dispose();
     super.dispose();
   }
 
@@ -82,6 +132,8 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
     // distance covers exactly these points. Deltas extend the sum locally.
     final fullFetch = _lastRecordedAt == null;
 
+    final fresh = <_IncomingPoint>[];
+
     setState(() {
       _loading = false;
       _error = null;
@@ -101,33 +153,184 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
         );
         final at = DateTime.tryParse(p['recorded_at'] as String? ?? '');
 
-        if (!fullFetch && _points.isNotEmpty && at != null && _lastPointAt != null) {
-          if (at.difference(_lastPointAt!) > _gapRule) {
+        if (!fullFetch && _lastReceived != null && at != null && _lastReceivedAt != null) {
+          if (at.difference(_lastReceivedAt!) > _gapRule) {
             _hasGaps = true; // interrupted — do not count the jump
           } else {
             _distanceKm +=
-                const Distance().as(LengthUnit.Kilometer, _points.last, pt);
+                const Distance().as(LengthUnit.Kilometer, _lastReceived!, pt);
           }
         }
 
-        _points.add(pt);
-        if (at != null) _lastPointAt = at;
+        fresh.add(_IncomingPoint(
+          pt: pt,
+          at: at,
+          heading: (p['heading'] as num?)?.toDouble(),
+          speed: (p['speed'] as num?)?.toDouble(),
+          accuracy: (p['accuracy'] as num?)?.toDouble(),
+        ));
+
+        _lastReceived = pt;
+        if (at != null) _lastReceivedAt = at;
         _lastRecordedAt = p['recorded_at'] as String;
       }
 
       if (fullFetch) {
         _distanceKm = (data['distance_km'] as num?)?.toDouble() ?? 0;
         _hasGaps = data['has_gaps'] == true;
+        // Draw the whole existing trail instantly — only NEW points animate.
+        for (final f in fresh) {
+          _points.add(f.pt);
+          _lastCommittedAt = f.at ?? _lastCommittedAt;
+          _tipAccuracy = f.accuracy ?? _tipAccuracy;
+        }
+        if (_points.isNotEmpty) _tip = _points.last;
+        if (_points.length >= 2) {
+          _displayHeading = _bearing(
+            _points[_points.length - 2],
+            _points.last,
+          );
+        }
+        fresh.clear();
       }
 
       final wasActive = _isActive;
       _isActive = data['is_active'] == true;
-      if (wasActive && !_isActive) _timer?.cancel();
+      if (wasActive && !_isActive) {
+        _timer?.cancel();
+        _pulseCtrl.stop(); // ENDED: halo freezes (item 3)
+      }
     });
 
-    if (incoming.isNotEmpty && _followTip && _points.isNotEmpty) {
-      _mapController.move(_points.last, _mapController.camera.zoom);
+    if (fresh.isNotEmpty) {
+      _animQueue.addAll(fresh);
+      _pumpQueue();
+      // Everything was committed instantly (e.g. a gap teleport): the marker
+      // moved without animation ticks, so ease the camera over in one go.
+      if (!_animating && _followTip && _tip != null) {
+        _easeCameraTo(_tip!);
+      }
     }
+  }
+
+  // ─── Item 2: sequential segment animation ────────────────────────────────
+
+  void _pumpQueue() {
+    if (!mounted || _animating || _animQueue.isEmpty) return;
+
+    // Offline backlog: fast-forward all but the last few points.
+    while (_animQueue.length > _maxAnimatedBacklog) {
+      _commit(_animQueue.removeAt(0));
+    }
+
+    final next = _animQueue.removeAt(0);
+    final from = _tip ?? (_points.isNotEmpty ? _points.last : next.pt);
+
+    // Honesty rule: an interruption gap is a jump, not a glide.
+    final isGapJump = next.at != null &&
+        _lastCommittedAt != null &&
+        next.at!.difference(_lastCommittedAt!) > _gapRule;
+    if (isGapJump || _points.isEmpty) {
+      setState(() => _commit(next));
+      _pumpQueue();
+      return;
+    }
+
+    final segMs = math.max(
+      _minSegmentMs,
+      _batchAnimMs ~/ (_animQueue.length + 1),
+    );
+    _animateSegment(from, next, segMs);
+  }
+
+  void _animateSegment(LatLng from, _IncomingPoint target, int ms) {
+    _moveCtrl?.dispose();
+    final ctrl = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: ms),
+    );
+    _moveCtrl = ctrl;
+
+    final latTween =
+        Tween<double>(begin: from.latitude, end: target.pt.latitude);
+    final lngTween =
+        Tween<double>(begin: from.longitude, end: target.pt.longitude);
+    final headingFrom = _displayHeading;
+    // Shortest-arc so the icon never spins 350° the wrong way (item 2).
+    final headingDelta =
+        _shortestArc(headingFrom, _targetHeading(target, from));
+
+    ctrl.addListener(() {
+      if (!mounted) return;
+      final t = ctrl.value; // linear: chained segments stay seamless
+      setState(() {
+        _tip = LatLng(latTween.transform(t), lngTween.transform(t));
+        _displayHeading = (headingFrom + headingDelta * t + 360) % 360;
+      });
+      // Item 6: follow camera rides the same animation — smooth by nature.
+      if (_followTip && _tip != null) {
+        _mapController.move(_tip!, _mapController.camera.zoom);
+      }
+    });
+    ctrl.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        if (!mounted) return;
+        setState(() => _commit(target));
+        _pumpQueue();
+      }
+    });
+    ctrl.forward();
+  }
+
+  void _commit(_IncomingPoint p) {
+    _points.add(p.pt);
+    _tip = p.pt;
+    _lastCommittedAt = p.at ?? _lastCommittedAt;
+    if (p.accuracy != null) _tipAccuracy = p.accuracy;
+  }
+
+  // ─── Item 1: heading rules ───────────────────────────────────────────────
+
+  /// heading when moving (>~1 m/s); below that keep the LAST heading — GPS
+  /// heading is noise when stationary. Null heading → bearing from the last
+  /// two points, but only if they are far enough apart to carry a direction.
+  double _targetHeading(_IncomingPoint p, LatLng from) {
+    final distM = const Distance().as(LengthUnit.Meter, from, p.pt);
+    final moving =
+        p.speed != null ? p.speed! > _movingSpeedMs : distM > 5;
+    if (!moving) return _displayHeading;
+    if (p.heading != null) return p.heading!;
+    if (distM < 3) return _displayHeading;
+    return _bearing(from, p.pt);
+  }
+
+  static double _bearing(LatLng from, LatLng to) =>
+      (const Distance().bearing(from, to) + 360) % 360;
+
+  static double _shortestArc(double from, double to) =>
+      ((to - from + 540) % 360) - 180;
+
+  // ─── Item 6: eased camera ────────────────────────────────────────────────
+
+  void _easeCameraTo(LatLng dest) {
+    _camCtrl?.dispose();
+    final camera = _mapController.camera;
+    final latTween = Tween<double>(begin: camera.center.latitude, end: dest.latitude);
+    final lngTween = Tween<double>(begin: camera.center.longitude, end: dest.longitude);
+    final ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _camCtrl = ctrl;
+    final anim = CurvedAnimation(parent: ctrl, curve: Curves.easeInOut);
+    ctrl.addListener(() {
+      if (!mounted) return;
+      _mapController.move(
+        LatLng(latTween.evaluate(anim), lngTween.evaluate(anim)),
+        camera.zoom,
+      );
+    });
+    ctrl.forward();
   }
 
   @override
@@ -167,7 +370,11 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
           IconButton(
             tooltip: _followTip ? 'Following position' : 'Free camera',
             icon: Icon(_followTip ? Icons.gps_fixed : Icons.gps_not_fixed),
-            onPressed: () => setState(() => _followTip = !_followTip),
+            onPressed: () {
+              setState(() => _followTip = !_followTip);
+              // Re-enabling follow eases back to the tip instead of snapping.
+              if (_followTip && _tip != null) _easeCameraTo(_tip!);
+            },
           ),
         ],
       ),
@@ -244,7 +451,14 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
       );
     }
 
-    final center = _points.isNotEmpty ? _points.last : _start!;
+    final tip = _tip ?? (_points.isNotEmpty ? _points.last : null);
+    final center = tip ?? _start!;
+    // The trail plus the in-flight tip — the line extends WITH the marker,
+    // never ahead of it (item 2).
+    final trail = <LatLng>[
+      ..._points,
+      if (tip != null && (_points.isEmpty || tip != _points.last)) tip,
+    ];
 
     return FlutterMap(
       mapController: _mapController,
@@ -252,6 +466,8 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
         initialCenter: center,
         initialZoom: 16,
         onPositionChanged: (camera, hasGesture) {
+          // Manual pan hands the camera to the admin; the toolbar toggle
+          // re-enables following (item 6).
           if (hasGesture && _followTip) setState(() => _followTip = false);
         },
       ),
@@ -260,9 +476,34 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
           urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
           userAgentPackageName: 'com.example.client',
         ),
-        if (_points.length >= 2)
+        // Item 4: GPS accuracy as a real-meter circle; a good fix (<15m)
+        // needs no hedge on screen.
+        if (_isActive &&
+            tip != null &&
+            _tipAccuracy != null &&
+            _tipAccuracy! >= _accuracyHideBelowM)
+          CircleLayer(circles: [
+            CircleMarker(
+              point: tip,
+              radius: _tipAccuracy!,
+              useRadiusInMeter: true,
+              color: _routeColor.withValues(alpha: 0.10),
+              borderColor: _routeColor.withValues(alpha: 0.25),
+              borderStrokeWidth: 1,
+            ),
+          ]),
+        if (trail.length >= 2)
           PolylineLayer(polylines: [
-            Polyline(points: _points, strokeWidth: 4, color: _routeColor),
+            // Item 5: darker outline under the main line, rounded joins.
+            Polyline(
+              points: trail,
+              strokeWidth: 5,
+              color: _routeColor,
+              borderStrokeWidth: 2.5,
+              borderColor: _routeOutline,
+              strokeCap: StrokeCap.round,
+              strokeJoin: StrokeJoin.round,
+            ),
           ]),
         MarkerLayer(markers: [
           if (_start != null)
@@ -272,17 +513,97 @@ class _LiveRouteScreenState extends State<LiveRouteScreen> {
               height: 36,
               child: const Icon(Icons.trip_origin, color: Color(0xFF2F9E57), size: 28),
             ),
-          if (_points.isNotEmpty)
-            Marker(
-              point: _points.last,
-              width: 40,
-              height: 40,
-              child: _isActive
-                  ? const Icon(Icons.navigation_rounded, color: _routeColor, size: 32)
-                  : const Icon(Icons.location_on, color: Colors.redAccent, size: 34),
-            ),
+          if (tip != null)
+            _isActive
+                ? Marker(
+                    point: tip,
+                    width: 76,
+                    height: 76,
+                    child: _liveVehicleMarker(),
+                  )
+                : Marker(
+                    point: tip,
+                    width: 40,
+                    height: 40,
+                    child: const Icon(Icons.location_on,
+                        color: Colors.redAccent, size: 34),
+                  ),
         ]),
       ],
     );
   }
+
+  // ─── Items 1 + 3: vehicle marker with pulsing halo ───────────────────────
+
+  Widget _liveVehicleMarker() {
+    return AnimatedBuilder(
+      animation: _pulseCtrl,
+      builder: (context, child) {
+        final t = Curves.easeOut.transform(_pulseCtrl.value);
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            // Soft halo expanding out from under the icon while LIVE.
+            Container(
+              width: 44 + 32 * t,
+              height: 44 + 32 * t,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _routeColor.withValues(alpha: 0.25 * (1 - t)),
+              ),
+            ),
+            child!,
+          ],
+        );
+      },
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: _rotatedBike(),
+      ),
+    );
+  }
+
+  /// The two_wheeler glyph faces EAST natively. Rotate it to the display
+  /// heading, mirroring when travelling westish so the bike is never drawn
+  /// upside-down (the same trick delivery apps use for side-profile icons).
+  Widget _rotatedBike() {
+    final flip = _displayHeading > 180;
+    final angleDeg = flip ? _displayHeading + 90 : _displayHeading - 90;
+    return Transform.rotate(
+      angle: angleDeg * math.pi / 180,
+      child: Transform.flip(
+        flipX: flip,
+        child: const Icon(Icons.two_wheeler, color: _routeColor, size: 27),
+      ),
+    );
+  }
+}
+
+/// A freshly received route point queued for the tip animation.
+class _IncomingPoint {
+  final LatLng pt;
+  final DateTime? at;
+  final double? heading;
+  final double? speed;
+  final double? accuracy;
+
+  const _IncomingPoint({
+    required this.pt,
+    required this.at,
+    required this.heading,
+    required this.speed,
+    required this.accuracy,
+  });
 }

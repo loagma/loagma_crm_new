@@ -10,6 +10,12 @@ import '../../utils/distance_format.dart';
 /// One fetch on open, NO polling. Contiguous runs draw solid; a jump across
 /// a >5-min tracking gap draws DASHED — that stretch was not recorded and is
 /// excluded from the distance total (see RouteDistance server-side).
+///
+/// Road snapping: when the server cached an OSRM-matched geometry for a
+/// closed day (`snapped: true`), each solid run draws the snapped shape
+/// instead of the raw zig-zag. Dashes across gaps ALWAYS stay raw straight
+/// lines — an interruption is never beautified — and the distance figure is
+/// always computed from raw points, never the snapped line.
 class RouteViewScreen extends StatefulWidget {
   final String mobile;
   final String name;
@@ -29,13 +35,17 @@ class RouteViewScreen extends StatefulWidget {
 class _RouteViewScreenState extends State<RouteViewScreen> {
   static const _gold = Color(0xFFD7BE69);
   static const _routeColor = Color(0xFF2F6FED);
+  // Darker shade of the route blue, drawn as an outline under the main line.
+  static const _routeOutline = Color(0xFF1C4CB3);
   static const _gapRule = Duration(minutes: 5); // = RouteDistance::GAP_MINUTES
 
   bool _loading = true;
   String? _error;
 
-  final List<List<LatLng>> _segments = []; // contiguous recorded runs
-  final List<List<LatLng>> _gapJumps = []; // dashed connectors across gaps
+  final List<List<LatLng>> _segments = []; // contiguous recorded runs (raw)
+  // Per-raw-segment OSRM geometry (null entry = that run failed to snap).
+  final List<List<LatLng>?> _snappedSegs = [];
+  bool _snapped = false;
   LatLng? _startPin;
   LatLng? _endPin;
   int _pointCount = 0;
@@ -69,7 +79,6 @@ class _RouteViewScreenState extends State<RouteViewScreen> {
     final points = (data['points'] as List).cast<Map<String, dynamic>>();
 
     final segments = <List<LatLng>>[];
-    final gapJumps = <List<LatLng>>[];
     var current = <LatLng>[];
     DateTime? prevAt;
 
@@ -85,7 +94,6 @@ class _RouteViewScreenState extends State<RouteViewScreen> {
           at.difference(prevAt) > _gapRule &&
           current.isNotEmpty) {
         segments.add(current);
-        gapJumps.add([current.last, pt]);
         current = <LatLng>[pt];
       } else {
         current.add(pt);
@@ -93,6 +101,25 @@ class _RouteViewScreenState extends State<RouteViewScreen> {
       if (at != null) prevAt = at;
     }
     if (current.isNotEmpty) segments.add(current);
+
+    // Server-side OSRM geometry, one entry per contiguous run (same >5-min
+    // split rule on both sides). Length mismatch → distrust it entirely.
+    final snappedRaw = data['snapped_segments'];
+    var snappedSegs = <List<LatLng>?>[];
+    if (data['snapped'] == true &&
+        snappedRaw is List &&
+        snappedRaw.length == segments.length) {
+      snappedSegs = snappedRaw.map<List<LatLng>?>((seg) {
+        if (seg is! List) return null;
+        final pts = <LatLng>[];
+        for (final c in seg) {
+          if (c is List && c.length >= 2) {
+            pts.add(LatLng((c[0] as num).toDouble(), (c[1] as num).toDouble()));
+          }
+        }
+        return pts.length >= 2 ? pts : null;
+      }).toList();
+    }
 
     LatLng? pinOf(dynamic raw) => raw is Map && raw['lat'] != null
         ? LatLng((raw['lat'] as num).toDouble(), (raw['lng'] as num).toDouble())
@@ -104,9 +131,10 @@ class _RouteViewScreenState extends State<RouteViewScreen> {
       _segments
         ..clear()
         ..addAll(segments);
-      _gapJumps
+      _snappedSegs
         ..clear()
-        ..addAll(gapJumps);
+        ..addAll(snappedSegs);
+      _snapped = snappedSegs.any((s) => s != null);
       _pointCount = points.length;
       _startPin = pinOf(data['start']) ??
           (segments.isNotEmpty ? segments.first.first : null);
@@ -204,19 +232,7 @@ class _RouteViewScreenState extends State<RouteViewScreen> {
           urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
           userAgentPackageName: 'com.example.client',
         ),
-        PolylineLayer(polylines: [
-          // Dashed connectors first, solid runs on top.
-          for (final jump in _gapJumps)
-            Polyline(
-              points: jump,
-              strokeWidth: 3,
-              color: _routeColor.withValues(alpha: 0.6),
-              pattern: StrokePattern.dashed(segments: const [10, 8]),
-            ),
-          for (final seg in _segments)
-            if (seg.length >= 2)
-              Polyline(points: seg, strokeWidth: 4, color: _routeColor),
-        ]),
+        PolylineLayer(polylines: _routePolylines()),
         MarkerLayer(markers: [
           if (_startPin != null)
             Marker(
@@ -237,6 +253,38 @@ class _RouteViewScreenState extends State<RouteViewScreen> {
         ]),
       ],
     );
+  }
+
+  /// Dashed connectors first, solid runs on top. Each solid run prefers its
+  /// snapped geometry; dashes bridge the DISPLAYED segment ends so they stay
+  /// attached whether a run rendered raw or snapped. Dashed styling itself is
+  /// untouched — gaps stay visibly honest.
+  List<Polyline> _routePolylines() {
+    final displaySegs = <List<LatLng>>[
+      for (var i = 0; i < _segments.length; i++)
+        (i < _snappedSegs.length ? _snappedSegs[i] : null) ?? _segments[i],
+    ];
+
+    return [
+      for (var i = 0; i + 1 < displaySegs.length; i++)
+        Polyline(
+          points: [displaySegs[i].last, displaySegs[i + 1].first],
+          strokeWidth: 3,
+          color: _routeColor.withValues(alpha: 0.6),
+          pattern: StrokePattern.dashed(segments: const [10, 8]),
+        ),
+      for (final seg in displaySegs)
+        if (seg.length >= 2)
+          Polyline(
+            points: seg,
+            strokeWidth: 5,
+            color: _routeColor,
+            borderStrokeWidth: 2.5,
+            borderColor: _routeOutline,
+            strokeCap: StrokeCap.round,
+            strokeJoin: StrokeJoin.round,
+          ),
+    ];
   }
 
   Widget _summaryCard() {
@@ -291,6 +339,20 @@ class _RouteViewScreenState extends State<RouteViewScreen> {
                         style:
                             TextStyle(fontSize: 10, color: Colors.white)),
                   ),
+                if (_snapped) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text('road-snapped',
+                        style: TextStyle(
+                            fontSize: 10, color: Colors.blue.shade800)),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 6),

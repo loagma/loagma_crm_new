@@ -35,6 +35,7 @@ class Attendance extends Model
         'was_interrupted',
         'auto_closed',
         'total_distance_km',
+        'route_snapped',
     ];
 
     protected $casts = [
@@ -47,6 +48,7 @@ class Attendance extends Model
         'was_interrupted'    => 'boolean',
         'auto_closed'        => 'boolean',
         'total_distance_km'  => 'float',
+        'route_snapped'      => 'array',
         'punch_in_time'      => 'datetime',
         'punch_out_time'     => 'datetime',
         'approved_at'        => 'datetime',
