@@ -40582,7 +40582,7 @@ case 3:s=6
 return A.j(A.iS(p,B.jP),$async$agR)
 case 6:case 4:case 1:return A.o(q,r)}})
 return A.p($async$agR,r)},
-bC(){return"http://localhost:8000"},
+bC(){return"https://loagma-crm-new-1.onrender.com"},
 a02(){var s=0,r=A.q(t.H),q,p
 var $async$a02=A.l(function(a,b){if(a===1)return A.n(b,r)
 for(;;)switch(s){case 0:if($.a01){s=1
