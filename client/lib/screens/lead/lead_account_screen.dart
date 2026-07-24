@@ -180,8 +180,8 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
 
     _debounceTimer?.cancel();
 
-    if (number.length < 10) {
-      // Clear stale result as user edits back below 10 digits
+    if (!_mobileRegex.hasMatch(number)) {
+      // Clear stale result as user edits back to an incomplete/invalid number
       if (_contactExistsMsg != null || _existingAccount != null || _checkingContact) {
         setState(() {
           _contactExistsMsg = null;
@@ -198,7 +198,7 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
 
   Future<void> _checkContactExists() async {
     final number = _contactCtrl.text.trim();
-    if (number.length < 10) return;
+    if (!_mobileRegex.hasMatch(number)) return;
 
     setState(() {
       _checkingContact  = true;
@@ -214,14 +214,11 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
     if (!mounted) return;
 
     if (result != null && result['exists'] == true) {
-      final data    = result['data'] as Map<String, dynamic>?;
-      final bizName = data?['businessName']?.toString() ?? '';
-      final code    = data?['accountCode']?.toString() ?? '';
+      final data = result['data'] as Map<String, dynamic>?;
       setState(() {
         _checkingContact  = false;
         _existingAccount  = data;
-        _contactExistsMsg =
-            'Already registered${bizName.isNotEmpty ? ': $bizName' : ''}${code.isNotEmpty ? ' ($code)' : ''}';
+        _contactExistsMsg = 'Contact number is already registered';
       });
     } else {
       setState(() {
@@ -295,9 +292,13 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
 
   static final _panRegex = RegExp(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', caseSensitive: false);
 
+  static final _mobileRegex = RegExp(r'^[6-9][0-9]{9}$');
+
   String? _validateContact(String? v) {
-    if (v == null || v.trim().isEmpty) return 'Contact number is required';
-    if (v.trim().length < 10)          return 'Must be at least 10 digits';
+    final number = (v ?? '').trim();
+    if (number.isEmpty)               return 'Contact number is required';
+    if (number.length != 10)          return 'Must be exactly 10 digits';
+    if (!_mobileRegex.hasMatch(number)) return 'Enter a valid mobile number';
     if (_contactExistsMsg != null)     return _contactExistsMsg;
     return null;
   }
@@ -470,7 +471,8 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
 
     try {
       _showSnack('Uploading image...');
-      final uploadedPath = await ApiService.uploadLeadImage(picked.path);
+      final bytes = await picked.readAsBytes();
+      final uploadedPath = await ApiService.uploadLeadImage(bytes, picked.name);
       if (!mounted) return;
       if (uploadedPath == null || uploadedPath.trim().isEmpty) {
         _showSnack('Image upload failed. Check API URL/network and try again.');
@@ -498,7 +500,7 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
       _showSnack('Verifying contact number…');
       return;
     }
-    if (_contactCtrl.text.trim().length >= 10 && _existingAccount == null && _contactExistsMsg == null) {
+    if (_mobileRegex.hasMatch(_contactCtrl.text.trim()) && _existingAccount == null && _contactExistsMsg == null) {
       await _checkContactExists();
       if (!mounted) return;
     }
@@ -719,7 +721,7 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
       );
     }
     if (_contactExistsMsg != null) return const Icon(Icons.warning_amber_rounded, color: Colors.red);
-    if (_contactCtrl.text.trim().length >= 10) return const Icon(Icons.check_circle_rounded, color: Colors.green);
+    if (_mobileRegex.hasMatch(_contactCtrl.text.trim())) return const Icon(Icons.check_circle_rounded, color: Colors.green);
     return const SizedBox.shrink();
   }
 
@@ -752,7 +754,31 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
         if (acc != null) ...[
           const SizedBox(height: 10),
           const Divider(height: 1, color: Color(0xFFFFCDD2)),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
+
+          // Existing-account detail rows
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.red.shade100),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${acc['businessName'] ?? 'Unnamed business'}',
+                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Colors.black87)),
+              const SizedBox(height: 6),
+              _existingInfoRow(Icons.badge_rounded, 'Account code', acc['accountCode']?.toString()),
+              _existingInfoRow(Icons.person_outline_rounded, 'Person', acc['personName']?.toString()),
+              _existingInfoRow(Icons.store_rounded, 'Business type', acc['businessType']?.toString()),
+              _existingInfoRow(Icons.flag_rounded, 'Stage', acc['customerStage']?.toString()),
+              _existingInfoRow(Icons.location_on_rounded, 'Location',
+                  [acc['area'], acc['city']].where((s) => (s ?? '').toString().trim().isNotEmpty).join(', ')),
+            ]),
+          ),
+
+          const SizedBox(height: 10),
           // Action buttons row
           Row(mainAxisAlignment: MainAxisAlignment.end, children: [
             _bannerBtn(Icons.visibility_rounded, 'View', Colors.blue, _viewExisting),
@@ -762,6 +788,20 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
             _bannerBtn(Icons.delete_rounded, 'Delete', Colors.red, _deleteExisting),
           ]),
         ],
+      ]),
+    );
+  }
+
+  Widget _existingInfoRow(IconData icon, String label, String? value) {
+    final v = (value ?? '').trim();
+    if (v.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, size: 13, color: Colors.grey.shade500),
+        const SizedBox(width: 6),
+        Text('$label: ', style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
+        Expanded(child: Text(v, style: const TextStyle(fontSize: 11.5, color: Colors.black87))),
       ]),
     );
   }
@@ -893,7 +933,7 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
                 keyboardType: TextInputType.phone,
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(15),
+                  LengthLimitingTextInputFormatter(10),
                 ],
                 decoration: _dec('Contact Number *',
                   icon: Icons.phone_rounded,

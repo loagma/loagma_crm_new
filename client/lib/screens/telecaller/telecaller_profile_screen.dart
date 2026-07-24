@@ -1497,7 +1497,6 @@ class _OrderSheetState extends State<_OrderSheet> {
   DateTime _documentDate = DateTime.now();
   DateTime _expectedDate = DateTime.now().add(const Duration(days: 1));
   final _narration = TextEditingController();
-  bool _pricesIncludeTax = true;
 
   final List<_OrderLineItem> _lineItems = [_OrderLineItem()];
   final List<_OrderAddon> _addons = [];
@@ -1824,24 +1823,6 @@ class _OrderSheetState extends State<_OrderSheet> {
                   const SizedBox(height: 14),
                   _label('Narration'),
                   TextField(controller: _narration, maxLines: 2, decoration: _decor('', hint: 'Notes for this order…')),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
-                    child: Row(children: [
-                      Expanded(
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          const Text('Prices include tax', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
-                          Text('Line prices are entered tax-inclusive', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-                        ]),
-                      ),
-                      Switch.adaptive(
-                        value: _pricesIncludeTax,
-                        activeThumbColor: kGold,
-                        onChanged: (v) => setState(() => _pricesIncludeTax = v),
-                      ),
-                    ]),
-                  ),
                 ],
               ),
             ),

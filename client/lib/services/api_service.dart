@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'api_config.dart';
 import 'user_service.dart';
@@ -555,13 +554,15 @@ class ApiService {
   }
 
   /// Upload lead image and return stored relative URL path (e.g. /storage/leads/..)
-  static Future<String?> uploadLeadImage(String filePath) async {
+  /// Takes raw bytes (instead of a file path) so this works on web too, where
+  /// the picked file path is a blob URL that cannot be read via dart:io.
+  static Future<String?> uploadLeadImage(List<int> bytes, String filename) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/upload-image');
     try {
       final req = http.MultipartRequest('POST', url)
         ..headers['Accept'] = 'application/json'
         ..headers['Authorization'] = 'Bearer ${UserService.token}'
-        ..files.add(await http.MultipartFile.fromPath('image', filePath));
+        ..files.add(http.MultipartFile.fromBytes('image', bytes, filename: filename));
 
       final streamed = await req.send().timeout(const Duration(seconds: 30));
       final response = await http.Response.fromStream(streamed);
@@ -573,7 +574,7 @@ class ApiService {
       }
       print('uploadLeadImage unexpected status ${response.statusCode}: ${response.body}');
     } catch (e) {
-      print('uploadLeadImage failed for $url (${File(filePath).path}): $e');
+      print('uploadLeadImage failed for $url: $e');
     }
     return null;
   }

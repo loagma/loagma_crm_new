@@ -5,11 +5,24 @@ namespace App\Http\Controllers;
 use App\Models\LeadsAccount;
 use App\Models\UserCustomer;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class LeadsAccountController extends Controller
 {
+    // Uploaded lead images are kept outside the public web root and served
+    // through this controller (under /api/lead-accounts/...) rather than as
+    // static files, so requests always go through Laravel's HTTP kernel and
+    // pick up the CORS headers configured for 'api/*' — a plain static file
+    // (e.g. under public/storage or public/uploads) would bypass that: Apache
+    // serves it directly with no CORS header, and `php artisan serve`'s
+    // built-in router does the same for any file that already exists on
+    // disk, so neither environment could add the header after the fact.
+    private const UPLOAD_DIR = 'uploads/leads';
+
     public function uploadImage(): JsonResponse
     {
         $validated = request()->validate([
@@ -18,12 +31,25 @@ class LeadsAccountController extends Controller
 
         $file = $validated['image'];
         $name = 'lead_' . Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
-        $path = $file->storeAs('leads', $name, 'public');
+        $file->storeAs(self::UPLOAD_DIR, $name);
 
         return response()->json([
             'success' => true,
-            'path' => '/storage/' . $path,
+            'path' => '/api/lead-accounts/image/' . $name,
         ]);
+    }
+
+    public function showImage(string $filename): StreamedResponse|Response
+    {
+        // basename() strips any path segments so this can't escape UPLOAD_DIR.
+        $safeName = basename($filename);
+        $path     = self::UPLOAD_DIR . '/' . $safeName;
+
+        if (!Storage::exists($path)) {
+            return response('Not found', 404);
+        }
+
+        return Storage::response($path);
     }
 
     // ── Check contact number ───────────────────────────────────────────────────
