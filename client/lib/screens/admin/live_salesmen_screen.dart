@@ -182,7 +182,7 @@ class _LiveSalesmenScreenState extends State<LiveSalesmenScreen> {
         leading: Stack(
           children: [
             CircleAvatar(
-              backgroundColor: _gold.withOpacity(0.2),
+              backgroundColor: _gold.withValues(alpha: 0.2),
               child: Text(
                 (item['name'] as String? ?? '?').isNotEmpty
                     ? (item['name'] as String).substring(0, 1).toUpperCase()
