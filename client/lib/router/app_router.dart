@@ -19,6 +19,7 @@ import '../screens/admin/live_salesmen_screen.dart';
 import '../screens/admin/live_route_screen.dart';
 import '../screens/admin/route_history_screen.dart';
 import '../screens/admin/route_view_screen.dart';
+import '../screens/admin/history_roster_screen.dart';
 import '../screens/admin/admin_notifications_screen.dart';
 import '../screens/admin/admin_incharge_assign_screen.dart';
 import '../screens/admin/incharge_levels.dart';
@@ -191,6 +192,15 @@ final appRouter = GoRouter(
         return RouteViewScreen(
           mobile: extra['mobile'] as String? ?? '',
           name: extra['name'] as String? ?? '',
+          date: extra['date'] as String? ?? '',
+        );
+      },
+    ),
+    GoRoute(
+      path: '/history-roster',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? {};
+        return HistoryRosterScreen(
           date: extra['date'] as String? ?? '',
         );
       },
