@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../services/api_config.dart';
 import '../../services/api_service.dart';
+import '../../widgets/hover_image_preview.dart';
 
 class LeadAccountDetailScreen extends StatefulWidget {
   final String id;
@@ -221,8 +223,10 @@ class _LeadAccountDetailScreenState extends State<LeadAccountDetailScreen> {
     final vNotes     = d['verificationNotes'] as String?;
     final rNotes     = d['rejectionNotes']    as String?;
 
-    final hasShopImg  = shopImg != null && shopImg.startsWith('http');
-    final hasOwnerImg = ownerImg != null && ownerImg.startsWith('http');
+    final shopImgUrl  = _resolveImageUrl(shopImg);
+    final ownerImgUrl = _resolveImageUrl(ownerImg);
+    final hasShopImg  = shopImgUrl != null;
+    final hasOwnerImg = ownerImgUrl != null;
 
     return Stack(
       children: [
@@ -365,9 +369,9 @@ class _LeadAccountDetailScreenState extends State<LeadAccountDetailScreen> {
                       children: [
                         _sectionHeader(Icons.photo_library_rounded, 'Images'),
                         Row(children: [
-                          if (hasShopImg) _imageTile('Shop', shopImg),
+                          if (hasShopImg) _imageTile('Shop', shopImgUrl),
                           if (hasShopImg && hasOwnerImg) const SizedBox(width: 10),
-                          if (hasOwnerImg) _imageTile('Owner', ownerImg),
+                          if (hasOwnerImg) _imageTile('Owner', ownerImgUrl),
                         ]),
                       ],
                     ),
@@ -450,27 +454,40 @@ class _LeadAccountDetailScreenState extends State<LeadAccountDetailScreen> {
     );
   }
 
-  Widget _imageTile(String label, String? url) => Expanded(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: Image.network(
-            url ?? '',
-            height: 110,
-            width: double.infinity,
-            fit: BoxFit.cover,
-            errorBuilder: (_, _, _) => Container(
-              height: 110,
-              color: Colors.grey.shade100,
-              child: const Icon(Icons.broken_image_rounded, color: Colors.grey),
-            ),
-          ),
+  String? _resolveImageUrl(String? raw) {
+    final v = (raw ?? '').trim();
+    if (v.isEmpty) return null;
+    if (v.startsWith('http')) return v;
+    if (v.startsWith('/')) return '${ApiConfig.baseUrl}$v';
+    return null;
+  }
+
+  Widget _imageTile(String label, String? url) {
+    final resolvedUrl = url ?? '';
+    final tile = ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: Image.network(
+        resolvedUrl,
+        height: 110,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => Container(
+          height: 110,
+          color: Colors.grey.shade100,
+          child: const Icon(Icons.broken_image_rounded, color: Colors.grey),
         ),
-        const SizedBox(height: 4),
-        Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-      ],
-    ),
-  );
+      ),
+    );
+
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          resolvedUrl.isNotEmpty ? HoverImagePreview(imageUrl: resolvedUrl, previewSize: 280, child: tile) : tile,
+          const SizedBox(height: 4),
+          Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        ],
+      ),
+    );
+  }
 }

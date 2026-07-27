@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../services/api_config.dart';
 import '../../services/api_service.dart';
 import '../../widgets/account_map_screen.dart';
+import '../../widgets/hover_image_preview.dart';
 
 class LeadAccountListScreen extends StatefulWidget {
   const LeadAccountListScreen({super.key});
@@ -257,9 +259,13 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
     final funnel    = item['funnelStage']   as String?;
     final isActive  = item['isActive']      as bool? ?? true;
     final shopImg   = item['shopImage']     as String?;
+    final ownerImg  = item['ownerImage']    as String?;
     final id        = item['id']            as String? ?? '';
 
     final location = [city, area].where((s) => s.isNotEmpty).join(', ');
+
+    final shopImgUrl  = _resolveImageUrl(shopImg);
+    final ownerImgUrl = _resolveImageUrl(ownerImg);
 
     return Card(
       color: Colors.white,
@@ -276,29 +282,9 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Shop image / avatar
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF8EE),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFD7BE69).withValues(alpha: 0.4)),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: (shopImg != null && shopImg.startsWith('http'))
-                    ? Image.network(
-                        shopImg,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, e, stack) =>
-                            const Icon(Icons.store_rounded, color: gold, size: 26),
-                        loadingBuilder: (_, child, progress) => progress == null
-                            ? child
-                            : const Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: gold))),
-                      )
-                    : const Icon(Icons.store_rounded, color: gold, size: 26),
-              ),
-              const SizedBox(width: 12),
+              // Shop image + owner avatar badge
+              _leadThumb(shopImgUrl, ownerImgUrl),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -375,6 +361,55 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  String? _resolveImageUrl(String? raw) {
+    final v = (raw ?? '').trim();
+    if (v.isEmpty) return null;
+    if (v.startsWith('http')) return v;
+    if (v.startsWith('/')) return '${ApiConfig.baseUrl}$v';
+    return null;
+  }
+
+  static const double _thumbSize = 52;
+
+  Widget _imageSquare(String? imgUrl, IconData fallbackIcon) {
+    final tile = Container(
+      width: _thumbSize,
+      height: _thumbSize,
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8EE),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFD7BE69).withValues(alpha: 0.4)),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: imgUrl != null
+          ? Image.network(
+              imgUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (context, e, stack) => Icon(fallbackIcon, color: gold, size: 26),
+              loadingBuilder: (_, child, progress) => progress == null
+                  ? child
+                  : const Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: gold))),
+            )
+          : Icon(fallbackIcon, color: gold, size: 26),
+    );
+
+    return imgUrl != null ? HoverImagePreview(imageUrl: imgUrl, child: tile) : tile;
+  }
+
+  Widget _leadThumb(String? shopImgUrl, String? ownerImgUrl) {
+    final shop = _imageSquare(shopImgUrl, Icons.store_rounded);
+
+    if (ownerImgUrl == null) return shop;
+
+    final owner = _imageSquare(ownerImgUrl, Icons.person_rounded);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [shop, const SizedBox(width: 6), owner],
     );
   }
 

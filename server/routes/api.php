@@ -68,6 +68,7 @@ Route::prefix('lead-accounts')->group(function () {
     Route::get('/',                [LeadsAccountController::class, 'index']);
     Route::post('/',               [LeadsAccountController::class, 'store']);
     Route::post('/upload-image',   [LeadsAccountController::class, 'uploadImage']);
+    Route::get('/image/{filename}', [LeadsAccountController::class, 'showImage']);
     Route::get('/check-contact',   [LeadsAccountController::class, 'checkContact']); // must be before /{id}
     Route::get('/{id}',            [LeadsAccountController::class, 'show']);
     Route::put('/{id}',            [LeadsAccountController::class, 'update']);
