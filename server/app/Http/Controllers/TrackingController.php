@@ -208,6 +208,64 @@ class TrackingController extends Controller
         return response()->json(['success' => true, 'data' => $data]);
     }
 
+    // ─── Admin: Roster for a past date ────────────────────────────────────────
+    // Historical analog of live(): everyone who was on duty on a given date,
+    // with their on-duty window and distance. Feeds the date-first history
+    // browser (calendar button on the live-salesmen screen). One-shot — the
+    // client must NOT poll this.
+
+    public function roster(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'date' => 'required|date_format:Y-m-d',
+        ]);
+        $date = $validated['date'];
+
+        $records = Attendance::with('employee:mobile,name,role')
+            ->where('date', $date)
+            ->whereNotNull('punch_in_time')
+            ->get();
+
+        $data = $records->map(function (Attendance $a) use ($date) {
+            $isClosed = (bool) $a->punch_out_time;
+
+            // Prefer the frozen distance; otherwise compute from that day's
+            // pings and — like route() — freeze it once the shift is closed so
+            // later loads skip the ping query.
+            // TODO(scale): one pings query per not-yet-frozen salesman. Fine at
+            // the current fleet size; aggregate/cache when the list grows.
+            $distanceKm = $a->total_distance_km;
+            $hasGaps    = (bool) $a->was_interrupted;
+            if ($distanceKm === null) {
+                $pings = LocationPing::where('employee_mobile', $a->employee_mobile)
+                    ->where('date', $date)
+                    ->orderBy('recorded_at')
+                    ->get(['lat', 'lng', 'recorded_at']);
+                $stats      = RouteDistance::stats($pings);
+                $distanceKm = $stats['distance_km'];
+                $hasGaps    = $stats['has_gaps'] || $hasGaps;
+                if ($isClosed && $pings->isNotEmpty()) {
+                    $a->update(['total_distance_km' => $distanceKm]);
+                }
+            }
+
+            return [
+                'employee_mobile' => $a->employee_mobile,
+                'name'            => $a->employee->name ?? null,
+                'punch_in_time'   => $a->punch_in_time,
+                'punch_out_time'  => $a->punch_out_time,
+                'was_interrupted' => (bool) $a->was_interrupted,
+                'auto_closed'     => (bool) $a->auto_closed,
+                'distance_km'     => $distanceKm,
+                'has_gaps'        => $hasGaps,
+            ];
+        })
+        ->sortBy(fn ($r) => strtolower((string) ($r['name'] ?? '')))
+        ->values();
+
+        return response()->json(['success' => true, 'data' => $data]);
+    }
+
     // ─── Admin: Live route (delta polling) ───────────────────────────────────
     // First call (no ?since=) returns today's full trail for the salesman;
     // subsequent calls pass ?since=<last recorded_at> and get only new points,

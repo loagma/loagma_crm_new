@@ -1362,6 +1362,28 @@ class ApiService {
     return null;
   }
 
+  /// Admin: everyone who was on duty on [date] (yyyy-mm-dd) with their
+  /// on-duty window + distance — the date-first history roster.
+  /// One-shot — the roster screen must NOT poll this.
+  static Future<Map<String, dynamic>?> getRoster({
+    required String date, // yyyy-mm-dd
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/tracking/roster')
+        .replace(queryParameters: {'date': date});
+    try {
+      final response = await http
+          .get(url, headers: _authHeaders)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('getRoster failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getRoster error: $e');
+    }
+    return null;
+  }
+
   static Future<Map<String, dynamic>?> attendanceBreak({
     required String type,
     required String action,

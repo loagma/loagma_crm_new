@@ -42,6 +42,32 @@ class _LiveSalesmenScreenState extends State<LiveSalesmenScreen> {
     super.dispose();
   }
 
+  /// Calendar button: pick a past date, then open the date-first roster of
+  /// everyone who was on duty that day.
+  Future<void> _openHistory() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: today,
+      firstDate: DateTime(today.year - 1, 1, 1),
+      lastDate: today,
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: Theme.of(context)
+              .colorScheme
+              .copyWith(primary: _gold, onPrimary: Colors.white),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked == null) return;
+    if (!mounted) return;
+    final date =
+        '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+    context.push('/history-roster', extra: {'date': date});
+  }
+
   Future<void> _load() async {
     final res = await ApiService.getLiveSalesmen();
     if (!mounted) return;
@@ -84,6 +110,13 @@ class _LiveSalesmenScreenState extends State<LiveSalesmenScreen> {
         foregroundColor: Colors.white,
         title: const Text('Live Salesmen',
             style: TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(
+            tooltip: 'Route history by date',
+            icon: const Icon(Icons.calendar_month),
+            onPressed: _openHistory,
+          ),
+        ],
       ),
       body: RefreshIndicator(
         color: _gold,
@@ -149,7 +182,7 @@ class _LiveSalesmenScreenState extends State<LiveSalesmenScreen> {
         leading: Stack(
           children: [
             CircleAvatar(
-              backgroundColor: _gold.withOpacity(0.2),
+              backgroundColor: _gold.withValues(alpha: 0.2),
               child: Text(
                 (item['name'] as String? ?? '?').isNotEmpty
                     ? (item['name'] as String).substring(0, 1).toUpperCase()
