@@ -70,6 +70,11 @@ Route::prefix('lead-accounts')->group(function () {
     Route::post('/upload-image',   [LeadsAccountController::class, 'uploadImage']);
     Route::get('/image/{filename}', [LeadsAccountController::class, 'showImage']);
     Route::get('/check-contact',   [LeadsAccountController::class, 'checkContact']); // must be before /{id}
+    Route::get('/pending',         [LeadsAccountController::class, 'pendingList'])->middleware('role:admin,teleadmin'); // must be before /{id}
+    Route::get('/pending-count',   [LeadsAccountController::class, 'pendingCount'])->middleware('role:admin,teleadmin'); // must be before /{id}
+    Route::get('/pending-creators', [LeadsAccountController::class, 'pendingCreators'])->middleware('role:admin,teleadmin'); // must be before /{id}
+    Route::post('/{id}/approve',   [LeadsAccountController::class, 'approve'])->middleware('role:admin,teleadmin');
+    Route::post('/{id}/reject',    [LeadsAccountController::class, 'reject'])->middleware('role:admin,teleadmin');
     Route::get('/{id}',            [LeadsAccountController::class, 'show']);
     Route::put('/{id}',            [LeadsAccountController::class, 'update']);
     Route::delete('/{id}',         [LeadsAccountController::class, 'destroy']);

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/api_config.dart';
 import '../../services/api_service.dart';
+import '../../services/user_service.dart';
 import '../../widgets/account_map_screen.dart';
 import '../../widgets/hover_image_preview.dart';
 
@@ -23,6 +24,12 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
   int  _page    = 1;
   bool _loading = false;
   bool _hasMore = true;
+  String _statusFilter = 'all'; // all | pending | approved | rejected
+
+  bool get _isApprover {
+    final role = (UserService.currentRole ?? '').toLowerCase().trim();
+    return role == 'admin' || role == 'teleadmin';
+  }
 
   @override
   void initState() {
@@ -55,6 +62,9 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
       q:       q.isEmpty ? null : q,
       page:    _page,
       perPage: 20,
+      status:  _statusFilter == 'all' ? null : _statusFilter,
+      // Non-approvers (salesman/telecaller) only ever see their own leads.
+      createdBy: _isApprover ? null : UserService.currentMobile,
     );
 
     if (!mounted) return;
@@ -85,6 +95,15 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
   }
 
   void _onSearchChanged(String _) {
+    _page = 1;
+    _hasMore = true;
+    _items.clear();
+    _loadPage();
+  }
+
+  void _setStatusFilter(String status) {
+    if (_statusFilter == status) return;
+    setState(() => _statusFilter = status);
     _page = 1;
     _hasMore = true;
     _items.clear();
@@ -187,6 +206,26 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
             ),
           ),
 
+          // ── Status filter chips (admin/teleadmin only) ─────────────────
+          if (_isApprover)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _filterChip('all', 'All'),
+                    const SizedBox(width: 6),
+                    _filterChip('pending', 'Pending'),
+                    const SizedBox(width: 6),
+                    _filterChip('approved', 'Approved'),
+                    const SizedBox(width: 6),
+                    _filterChip('rejected', 'Rejected'),
+                  ],
+                ),
+              ),
+            ),
+
           // ── Count badge ──────────────────────────────────────────────
           if (_items.isNotEmpty)
             Padding(
@@ -261,11 +300,18 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
     final shopImg   = item['shopImage']     as String?;
     final ownerImg  = item['ownerImage']    as String?;
     final id        = item['id']            as String? ?? '';
+    final approvalStatus = item['approval_status'] as String? ?? 'pending';
+    final rejectionNotes = item['rejectionNotes'] as String?;
 
     final location = [city, area].where((s) => s.isNotEmpty).join(', ');
 
     final shopImgUrl  = _resolveImageUrl(shopImg);
     final ownerImgUrl = _resolveImageUrl(ownerImg);
+
+    // Non-approvers land straight on the edit form for a rejected lead of
+    // theirs, since fixing it is the only useful next action; everyone else
+    // (and every other status) opens the full detail/review screen.
+    final goToEdit = !_isApprover && approvalStatus == 'rejected';
 
     return Card(
       color: Colors.white,
@@ -274,7 +320,9 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () async {
-          final changed = await context.push('/lead-accounts/$id', extra: item);
+          final changed = goToEdit
+              ? await context.push('/lead-accounts/$id/edit', extra: item)
+              : await context.push('/lead-accounts/$id', extra: item);
           if (changed == true) _refresh();
         },
         child: Padding(
@@ -325,11 +373,24 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
-                    // Stage chips
+                    // Stage + approval-status chips
                     Row(children: [
                       if (stage != null) _chip(stage, _stageColor(stage)),
                       if (stage != null && funnel != null) const SizedBox(width: 4),
                       if (funnel != null) _chip(funnel, Colors.indigo.shade300),
+                      if (stage != null || funnel != null) const SizedBox(width: 4),
+                      _chip(
+                        switch (approvalStatus) {
+                          'approved' => 'Approved',
+                          'rejected' => 'Rejected',
+                          _ => 'Pending',
+                        },
+                        switch (approvalStatus) {
+                          'approved' => Colors.green,
+                          'rejected' => Colors.red,
+                          _ => Colors.orange,
+                        },
+                      ),
                     ]),
                     if (location.isNotEmpty || code.isNotEmpty) ...[
                       const SizedBox(height: 4),
@@ -352,6 +413,31 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
                             style: const TextStyle(fontSize: 10, color: Colors.grey),
                           ),
                       ]),
+                    ],
+                    if (approvalStatus == 'rejected' && (rejectionNotes ?? '').trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red.shade100),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.info_outline_rounded, size: 13, color: Colors.red),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                rejectionNotes!,
+                                style: const TextStyle(fontSize: 11, color: Colors.red),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -410,6 +496,23 @@ class _LeadAccountListScreenState extends State<LeadAccountListScreen> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [shop, const SizedBox(width: 6), owner],
+    );
+  }
+
+  Widget _filterChip(String value, String label) {
+    final selected = _statusFilter == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => _setStatusFilter(value),
+      selectedColor: gold.withValues(alpha: 0.25),
+      backgroundColor: Colors.white,
+      labelStyle: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+        color: selected ? const Color(0xFFC09E3E) : Colors.black87,
+      ),
+      side: BorderSide(color: selected ? gold : Colors.grey.shade300),
     );
   }
 

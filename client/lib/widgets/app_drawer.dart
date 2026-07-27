@@ -48,6 +48,13 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF42A5F5),
           },
           {
+            'title': 'Pending Leads',
+            'icon': Icons.fact_check_rounded,
+            'route': '/pending-leads',
+            'color': const Color(0xFFF59E0B),
+            'subtitle': 'Review & approve',
+          },
+          {
             'title': 'Marketing Area',
             'icon': Icons.location_on_rounded,
             'route': '/marketing-area',
@@ -161,6 +168,19 @@ class AppDrawer extends StatelessWidget {
         ];
       case 'teleadmin':
         return [
+          {
+            'title': 'Pending Leads',
+            'icon': Icons.fact_check_rounded,
+            'route': '/pending-leads',
+            'color': const Color(0xFFF59E0B),
+            'subtitle': 'Review & approve',
+          },
+          {
+            'title': 'Lead Account',
+            'icon': Icons.account_balance_wallet_rounded,
+            'route': '/lead-accounts',
+            'color': const Color(0xFF42A5F5),
+          },
           {
             'title': 'My Team',
             'icon': Icons.supervisor_account_rounded,

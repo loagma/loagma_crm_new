@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../services/api_config.dart';
 import '../../services/api_service.dart';
+import '../../services/user_service.dart';
 
 class LeadAccountScreen extends StatefulWidget {
   final Map<String, dynamic>? initialData;
@@ -536,6 +537,8 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
       if (_longitude != null) 'longitude': _longitude,
       if (_shopImage  != null) 'shopImage':  _shopImage,
       if (_ownerImage != null) 'ownerImage': _ownerImage,
+      if (!_isEditMode && (UserService.currentMobile ?? '').isNotEmpty)
+        'createdById': UserService.currentMobile,
     };
 
     try {

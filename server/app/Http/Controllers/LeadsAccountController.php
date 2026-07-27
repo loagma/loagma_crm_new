@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\DeliStaff;
 use App\Models\LeadsAccount;
 use App\Models\UserCustomer;
 use Illuminate\Http\JsonResponse;
@@ -10,9 +11,39 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 class LeadsAccountController extends Controller
 {
+    // ── Auth helpers (same pattern as AttendanceController) ─────────────────────
+
+    private function authMobile(): string
+    {
+        return JWTAuth::parseToken()->authenticate()->mobile;
+    }
+
+    private function approverStaff(): ?DeliStaff
+    {
+        return DeliStaff::where('mobile', $this->authMobile())->first();
+    }
+
+    private function isApprover(?DeliStaff $staff = null): bool
+    {
+        $staff ??= $this->approverStaff();
+        $role = strtolower($staff->role ?? '');
+        return \in_array($role, ['admin', 'teleadmin'], true);
+    }
+
+    // `user.user_type` is a strict enum('B2C','B2B'), but the lead form's
+    // businessType field is free-choice (Retail, Wholesale, Manufacturer,
+    // Service, Distributor, Other) — map it down on approval instead of
+    // letting MySQL silently truncate an unrecognised value into the column.
+    private function mapBusinessTypeToUserType(?string $businessType): string
+    {
+        $b2b = ['wholesale', 'manufacturer', 'distributor'];
+        return \in_array(strtolower(trim($businessType ?? '')), $b2b, true) ? 'B2B' : 'B2C';
+    }
+
     // Uploaded lead images are kept outside the public web root and served
     // through this controller (under /api/lead-accounts/...) rather than as
     // static files, so requests always go through Laravel's HTTP kernel and
@@ -137,6 +168,19 @@ class LeadsAccountController extends Controller
             }
         }
 
+        // "My leads" — a salesman/telecaller viewing only what they created.
+        if (request()->filled('created_by')) {
+            $query->where('createdById', request()->query('created_by'));
+        }
+
+        // Approval status filter: pending | approved | rejected
+        if (request()->filled('status')) {
+            $status = request()->query('status');
+            if (\in_array($status, ['pending', 'approved', 'rejected'], true)) {
+                $query->where('approval_status', $status);
+            }
+        }
+
         if (request()->has('page')) {
             $page = (int) request()->query('page', 1);
             $p    = $query->paginate($perPage, ['*'], 'page', $page);
@@ -170,6 +214,167 @@ class LeadsAccountController extends Controller
         }
 
         return response()->json(['success' => true, 'data' => $account]);
+    }
+
+    // ── Pending approval queue (admin / teleadmin) ───────────────────────────────
+    // Scope is global by design: no per-team hierarchy exists linking a
+    // salesman/telecaller to a specific teleadmin, unlike the incharge chain
+    // AttendanceController walks — any admin/teleadmin can act on any lead.
+
+    public function pendingCount(): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'count'   => LeadsAccount::where('approval_status', 'pending')->count(),
+        ]);
+    }
+
+    public function pendingList(): JsonResponse
+    {
+        $perPage = (int) request()->query('per_page', 20);
+        $page    = (int) request()->query('page', 1);
+        $q       = request()->query('q');
+
+        $query = LeadsAccount::with('creator:mobile,name,role')
+            ->where('approval_status', 'pending');
+
+        if ($q) {
+            $query->where(function ($sub) use ($q) {
+                $sub->where('businessName',  'like', "%{$q}%")
+                    ->orWhere('personName',   'like', "%{$q}%")
+                    ->orWhere('contactNumber','like', "%{$q}%");
+            });
+        }
+
+        if (request()->filled('created_by')) {
+            $query->where('createdById', request()->query('created_by'));
+        }
+
+        $p = $query->orderBy('createdAt')->paginate($perPage, ['*'], 'page', $page);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $p->items(),
+            'meta'    => [
+                'current_page' => $p->currentPage(),
+                'last_page'    => $p->lastPage(),
+                'per_page'     => $p->perPage(),
+                'total'        => $p->total(),
+            ],
+        ]);
+    }
+
+    // Distinct creators with at least one pending lead — powers the
+    // "assigned by" filter dropdown on the pending-leads screen.
+    public function pendingCreators(): JsonResponse
+    {
+        $ids = LeadsAccount::where('approval_status', 'pending')
+            ->whereNotNull('createdById')
+            ->distinct()
+            ->pluck('createdById');
+
+        $creators = DeliStaff::whereIn('mobile', $ids)
+            ->get(['mobile', 'name', 'role']);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $creators,
+        ]);
+    }
+
+    // ── Approve: converts the lead into a real customer (`user` table) ──────────
+
+    public function approve(string $id): JsonResponse
+    {
+        $account = LeadsAccount::find($id);
+        if (!$account) {
+            return response()->json(['success' => false, 'message' => 'Lead account not found'], 404);
+        }
+        if ($account->approval_status !== 'pending') {
+            return response()->json(['success' => false, 'message' => 'This lead has already been reviewed'], 422);
+        }
+
+        // Avoid creating a second customer for a contact number already on file.
+        if (UserCustomer::where('contactno', $account->contactNumber)->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'A customer with this contact number already exists',
+            ], 422);
+        }
+
+        $customer = \DB::transaction(function () use ($account) {
+            // `user.userid` has no auto-increment or default on this shared,
+            // legacy-managed table — every other write path in this app only
+            // ever reads it, so we have to mint the next id ourselves. Lock
+            // the max() read to keep two concurrent approvals from colliding.
+            $nextId = (int) (\DB::table('user')->lockForUpdate()->max('userid') ?? 0) + 1;
+
+            $customer = UserCustomer::create([
+                'userid'        => $nextId,
+                'name'          => $account->personName,
+                'shop_name'     => $account->businessName,
+                'contactno'     => $account->contactNumber,
+                // `address` is a NOT NULL TEXT column (no real DEFAULT) and
+                // latitude/longitude are NOT NULL FLOAT — a lead approved
+                // without a full address/geo pin still has to satisfy those
+                // constraints, so an explicit NULL from the lead has to be
+                // coalesced rather than passed straight through.
+                'address'       => $account->address ?? '',
+                'shop_address'  => $account->address ?? '',
+                'pincode'       => $account->pincode,
+                'city'          => $account->city,
+                'state'         => $account->state,
+                'latitude'      => $account->latitude ?? 0,
+                'longitude'     => $account->longitude ?? 0,
+                'user_type'     => $this->mapBusinessTypeToUserType($account->businessType),
+                'is_approved'   => 'YES',
+                'account_state' => 'active',
+                'lead_account_id' => $account->id,
+                // These `text` columns have no real DEFAULT in MySQL/TiDB
+                // (TEXT/BLOB can't take one) despite SHOW COLUMNS implying
+                // otherwise — omitting them fails the insert outright.
+                'session_id'    => '',
+                'push_notif_id' => '',
+            ]);
+
+            $account->update([
+                'approval_status'   => 'approved',
+                'isApproved'        => true,
+                'approvedById'      => $this->authMobile(),
+                'approvedAt'        => now(),
+                'verificationNotes' => request()->input('verification_notes'),
+                'rejectionNotes'    => null,
+            ]);
+
+            return $customer;
+        });
+
+        return response()->json(['success' => true, 'data' => $account->fresh(), 'customer' => $customer]);
+    }
+
+    // ── Reject: sends the lead back to its creator with a required reason ───────
+
+    public function reject(string $id): JsonResponse
+    {
+        $account = LeadsAccount::find($id);
+        if (!$account) {
+            return response()->json(['success' => false, 'message' => 'Lead account not found'], 404);
+        }
+        if ($account->approval_status !== 'pending') {
+            return response()->json(['success' => false, 'message' => 'This lead has already been reviewed'], 422);
+        }
+
+        $validated = validator(request()->only('rejection_notes'), [
+            'rejection_notes' => 'required|string|max:1000',
+        ])->validate();
+
+        $account->update([
+            'approval_status' => 'rejected',
+            'isApproved'      => false,
+            'rejectionNotes'  => $validated['rejection_notes'],
+        ]);
+
+        return response()->json(['success' => true, 'data' => $account->fresh()]);
     }
 
     // ── Create ─────────────────────────────────────────────────────────────────
@@ -272,6 +477,21 @@ class LeadsAccountController extends Controller
             'verificationNotes' => 'nullable|string|max:191',
             'rejectionNotes'    => 'nullable|string|max:191',
         ])->validate();
+
+        // A creator fixing a rejected lead and saving again re-enters the
+        // review queue automatically — regardless of what the client sends —
+        // so a resubmission can never get silently stuck as "rejected".
+        $wasRejected = $account->approval_status === 'rejected';
+        $editorIsApprover = false;
+        try {
+            $editorIsApprover = $this->isApprover();
+        } catch (\Throwable $e) {
+            // No/invalid token — treat as a non-approver (safe default).
+        }
+        if ($wasRejected && !$editorIsApprover && !\array_key_exists('approval_status', $validated)) {
+            $validated['approval_status'] = 'pending';
+            $validated['rejectionNotes']  = null;
+        }
 
         $account->fill($validated)->save();
 

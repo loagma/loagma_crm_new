@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -47,6 +48,7 @@ class LeadsAccount extends Model
         'approvedById',
         'approvedAt',
         'isApproved',
+        'approval_status',
         'verificationNotes',
         'rejectionNotes',
     ];
@@ -82,9 +84,16 @@ class LeadsAccount extends Model
             if (!isset($model->isActive)) {
                 $model->isActive = true;
             }
-            if (!isset($model->isApproved)) {
-                $model->isApproved = false;
-            }
+            // approval_status defaults to 'pending' via the column default;
+            // isApproved is left unset until a real approve/reject decision
+            // is made, so it no longer falsely reads as "rejected" from birth.
         });
+    }
+
+    // Staff member who created this lead (createdById stores their mobile,
+    // matching every other staff-attribution field in this app).
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(DeliStaff::class, 'createdById', 'mobile');
     }
 }

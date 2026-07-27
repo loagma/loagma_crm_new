@@ -3,7 +3,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/api_config.dart';
 import '../../services/api_service.dart';
+import '../../services/user_service.dart';
 import '../../widgets/hover_image_preview.dart';
+import 'lead_approval_actions.dart';
 
 class LeadAccountDetailScreen extends StatefulWidget {
   final String id;
@@ -22,6 +24,12 @@ class _LeadAccountDetailScreenState extends State<LeadAccountDetailScreen> {
   Map<String, dynamic>? _data;
   bool _loadingData    = false;
   bool _deletingRecord = false;
+  bool _acting         = false;
+
+  bool get _canReview {
+    final role = (UserService.currentRole ?? '').toLowerCase().trim();
+    return role == 'admin' || role == 'teleadmin';
+  }
 
   @override
   void initState() {
@@ -77,6 +85,24 @@ class _LeadAccountDetailScreenState extends State<LeadAccountDetailScreen> {
         const SnackBar(content: Text('Failed to delete — please try again')),
       );
     }
+  }
+
+  Future<void> _approve() async {
+    if (_data == null || _acting) return;
+    setState(() => _acting = true);
+    final ok = await confirmApproveLead(context, widget.id, businessName: _data?['businessName']?.toString() ?? '');
+    if (!mounted) return;
+    setState(() => _acting = false);
+    if (ok) _fetchDetail();
+  }
+
+  Future<void> _reject() async {
+    if (_data == null || _acting) return;
+    setState(() => _acting = true);
+    final ok = await confirmRejectLead(context, widget.id, businessName: _data?['businessName']?.toString() ?? '');
+    if (!mounted) return;
+    setState(() => _acting = false);
+    if (ok) _fetchDetail();
   }
 
   Future<void> _openEdit() async {
@@ -209,6 +235,7 @@ class _LeadAccountDetailScreenState extends State<LeadAccountDetailScreen> {
     final pan        = d['panCard']       as String?;
     final isActive   = d['isActive']      as bool? ?? true;
     final isApproved = d['isApproved']    as bool? ?? false;
+    final approvalStatus = d['approval_status'] as String? ?? (isApproved ? 'approved' : 'pending');
     final pincode    = d['pincode']       as String?;
     final country    = d['country']       as String?;
     final state      = d['state']         as String?;
@@ -295,8 +322,16 @@ class _LeadAccountDetailScreenState extends State<LeadAccountDetailScreen> {
                         if (custStage != null) _chip(custStage, _stageColor(custStage)),
                         if (funnelStage != null) _chip(funnelStage, Colors.indigo.shade300),
                         _chip(
-                          isApproved ? 'Approved' : 'Pending Approval',
-                          isApproved ? Colors.green : Colors.orange,
+                          switch (approvalStatus) {
+                            'approved' => 'Approved',
+                            'rejected' => 'Rejected',
+                            _ => 'Pending Approval',
+                          },
+                          switch (approvalStatus) {
+                            'approved' => Colors.green,
+                            'rejected' => Colors.red,
+                            _ => Colors.orange,
+                          },
                         ),
                       ]),
                     ],
@@ -401,6 +436,46 @@ class _LeadAccountDetailScreenState extends State<LeadAccountDetailScreen> {
               ],
 
               const SizedBox(height: 20),
+
+              // ── Review buttons (admin/teleadmin, pending leads only) ───
+              if (_canReview && approvalStatus == 'pending') ...[
+                Row(children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        onPressed: _acting ? null : _reject,
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        label: const Text('Reject'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: kApprovalRed,
+                          side: const BorderSide(color: kApprovalRed),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: ElevatedButton.icon(
+                        onPressed: _acting ? null : _approve,
+                        icon: const Icon(Icons.check_rounded, size: 18),
+                        label: const Text('Approve'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kApprovalGreen,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 10),
+              ],
 
               // ── Action buttons ────────────────────────────────────────
               Row(children: [

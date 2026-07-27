@@ -229,12 +229,16 @@ class ApiService {
     String? pincode,
     List<String>? pincodes,
     List<int>? areaIds,
+    String? createdBy,
+    String? status,
   }) async {
     final params = <String, dynamic>{
       if (q != null && q.isNotEmpty) 'q': q,
       if (page != null) 'page': page.toString(),
       if (perPage != null) 'per_page': perPage.toString(),
       if (pincode != null && pincode.isNotEmpty) 'pincode': pincode,
+      if (createdBy != null && createdBy.isNotEmpty) 'created_by': createdBy,
+      if (status != null && status.isNotEmpty) 'status': status,
     };
     // Uri.replace doesn't support repeated keys — build manually for list params
     var uri = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts').replace(queryParameters: params);
@@ -551,6 +555,103 @@ class ApiService {
       print('deleteLeadAccount failed for $url: $e');
       return false;
     }
+  }
+
+  /// Pending-approval queue for admin/teleadmin (mirrors adminPendingList).
+  static Future<Map<String, dynamic>> getPendingLeadAccounts({
+    int page = 1,
+    String? q,
+    String? createdBy,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/pending').replace(queryParameters: {
+      'page': page.toString(),
+      if (q != null && q.isNotEmpty) 'q': q,
+      if (createdBy != null && createdBy.isNotEmpty) 'created_by': createdBy,
+    });
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('getPendingLeadAccounts error: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  /// Distinct creators with at least one pending lead — populates the
+  /// "assigned by" filter dropdown on the pending-leads screen.
+  static Future<List<Map<String, dynamic>>> getPendingLeadCreators() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/pending-creators');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = (decoded['data'] as List? ?? []);
+        return data.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      }
+    } catch (e) {
+      print('getPendingLeadCreators error: $e');
+    }
+    return <Map<String, dynamic>>[];
+  }
+
+  /// Count of leads awaiting review (for badge/summary use).
+  static Future<int> getPendingLeadAccountsCount() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/pending-count');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        return (decoded['count'] as int?) ?? 0;
+      }
+    } catch (e) {
+      print('getPendingLeadAccountsCount error: $e');
+    }
+    return 0;
+  }
+
+  /// Approve a pending lead — converts it into a real customer server-side.
+  static Future<Map<String, dynamic>?> approveLeadAccount(String id, {String? notes}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/$id/approve');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'verification_notes': notes ?? ''}))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      return {'success': false, 'message': _errorMessage(response)};
+    } catch (e) {
+      print('approveLeadAccount error: $e');
+      return null;
+    }
+  }
+
+  /// Reject a pending lead — rejection notes are required (the message the
+  /// creator sees telling them what to fix before resubmitting).
+  static Future<Map<String, dynamic>?> rejectLeadAccount(String id, {required String notes}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/$id/reject');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'rejection_notes': notes}))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      return {'success': false, 'message': _errorMessage(response)};
+    } catch (e) {
+      print('rejectLeadAccount error: $e');
+      return null;
+    }
+  }
+
+  static String _errorMessage(http.Response response) {
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map && decoded['message'] != null) return decoded['message'].toString();
+    } catch (_) {}
+    return 'Request failed';
   }
 
   /// Upload lead image and return stored relative URL path (e.g. /storage/leads/..)

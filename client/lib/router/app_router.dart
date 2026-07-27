@@ -20,6 +20,7 @@ import '../screens/admin/live_route_screen.dart';
 import '../screens/admin/route_history_screen.dart';
 import '../screens/admin/route_view_screen.dart';
 import '../screens/admin/admin_notifications_screen.dart';
+import '../screens/lead/pending_leads_screen.dart';
 import '../screens/admin/admin_incharge_assign_screen.dart';
 import '../screens/admin/incharge_levels.dart';
 import '../screens/admin/incharge_parent_list_screen.dart';
@@ -214,6 +215,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/admin-notifications',
       builder: (context, state) => const AdminNotificationsScreen(),
+    ),
+    GoRoute(
+      path: '/pending-leads',
+      builder: (context, state) => const PendingLeadsScreen(),
     ),
     GoRoute(
       path: '/incharge-assign',
