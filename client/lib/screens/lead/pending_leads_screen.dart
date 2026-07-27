@@ -61,7 +61,12 @@ class _PendingLeadsScreenState extends State<PendingLeadsScreen> {
   }
 
   Future<void> _load({bool refresh = false}) async {
-    if (_loading && _records.isNotEmpty && !refresh) return;
+    // Must block on `_loading` alone (not also require _records.isNotEmpty) —
+    // otherwise a second call racing in during the very first load (e.g. the
+    // scroll listener firing spuriously on a short list, where maxScrollExtent
+    // is 0 and the "near bottom" check is trivially true) isn't blocked, and
+    // both in-flight calls fetch + append the same page, duplicating every row.
+    if (_loading && !refresh) return;
     if (refresh) {
       _page = 1;
       _hasMore = true;
