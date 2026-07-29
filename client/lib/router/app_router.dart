@@ -22,6 +22,7 @@ import '../screens/admin/route_view_screen.dart';
 import '../screens/admin/history_roster_screen.dart';
 import '../screens/admin/admin_notifications_screen.dart';
 import '../screens/lead/pending_leads_screen.dart';
+import '../screens/complaints/complaints_screen.dart';
 import '../screens/admin/admin_incharge_assign_screen.dart';
 import '../screens/admin/incharge_levels.dart';
 import '../screens/admin/incharge_parent_list_screen.dart';
@@ -229,6 +230,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/pending-leads',
       builder: (context, state) => const PendingLeadsScreen(),
+    ),
+    GoRoute(
+      path: '/complaints',
+      builder: (context, state) => const ComplaintsScreen(),
     ),
     GoRoute(
       path: '/incharge-assign',

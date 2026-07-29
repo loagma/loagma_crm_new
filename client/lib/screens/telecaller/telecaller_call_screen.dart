@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
+import 'telecaller_mock_data.dart' show kComplaintCategories;
 
 class TelecallerCallScreen extends StatefulWidget {
   final Map<String, dynamic> account;
@@ -47,7 +48,12 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
     ('switch_off', 'Switched Off',    Icons.power_off_rounded),
     ('invalid',    'Invalid Number',  Icons.cancel_outlined),
     ('callback',   'Will Callback',   Icons.schedule_rounded),
+    ('complaint',  'Complaint',       Icons.report_problem_rounded),
   ];
+
+  String? _complaintCategory;
+
+  bool get _isComplaint => _callOutcome == 'complaint';
 
   static const _stageOptions = [
     'lead', 'prospect', 'qualified', 'opportunity', 'customer', 'churned',
@@ -147,19 +153,28 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
       );
       return;
     }
+    if (_isComplaint && (_complaintCategory == null || _notesCtrl.text.trim().isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a category and describe the complaint'), backgroundColor: Colors.red),
+      );
+      return;
+    }
 
     setState(() => _saving = true);
 
     try {
       final accountId = (widget.account['id'] ?? '').toString();
 
-      // 1 — Save call log
+      // 1 — Save call log (creates a linked complaint_crm row server-side, in
+      // the same transaction, when the outcome is 'complaint')
       await ApiService.createCallLog({
         'account_id':    accountId,
         'account_type':  widget.accountType,
         'call_outcome':  _callOutcome,
         'notes':         _notesCtrl.text.trim(),
         if (_followUpCtrl.text.isNotEmpty) 'follow_up_date': _followUpCtrl.text,
+        if (_isComplaint) 'category': _complaintCategory,
+        if (_isComplaint) 'description': _notesCtrl.text.trim(),
       });
 
       // 2 — Update lead if applicable
@@ -413,13 +428,33 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
 
                   const SizedBox(height: 16),
 
+                  // ── Complaint category (only when outcome is Complaint) ───
+                  if (_isComplaint) ...[
+                    _fieldLabel('Complaint Category *'),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      value: _complaintCategory,
+                      isExpanded: true,
+                      decoration: _inputDecor(hint: 'Select category'),
+                      items: kComplaintCategories
+                          .map((c) => DropdownMenuItem(value: c, child: Text(c, overflow: TextOverflow.ellipsis)))
+                          .toList(),
+                      onChanged: (v) => setState(() => _complaintCategory = v),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+
                   // ── Notes ────────────────────────────────────────────────
-                  _fieldLabel('Notes'),
+                  _fieldLabel(_isComplaint ? 'Complaint Description *' : 'Notes'),
                   const SizedBox(height: 6),
                   TextFormField(
                     controller: _notesCtrl,
                     maxLines: 3,
-                    decoration: _inputDecor(hint: 'What was discussed? Any key observations…'),
+                    decoration: _inputDecor(
+                      hint: _isComplaint
+                          ? 'What went wrong? Describe the issue…'
+                          : 'What was discussed? Any key observations…',
+                    ),
                   ),
 
                   const SizedBox(height: 14),

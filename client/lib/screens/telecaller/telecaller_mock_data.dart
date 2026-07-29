@@ -19,6 +19,7 @@ const kOutcomeColors = <String, Color>{
   'switch_off': Color(0xFF757575),
   'invalid': Color(0xFFE53935),
   'callback': Color(0xFF1E88E5),
+  'complaint': Color(0xFFD32F2F),
 };
 
 const kOutcomeLabels = <String, String>{
@@ -28,7 +29,22 @@ const kOutcomeLabels = <String, String>{
   'switch_off': 'Switched Off',
   'invalid': 'Invalid',
   'callback': 'Callback',
+  'complaint': 'Complaint',
 };
+
+// ── Complaint categories (v1 — plain labels, no auto-routing) ────────────────
+const kComplaintCategories = <String>[
+  'Product Quality / Damaged Goods',
+  'Short Supply / Quantity Mismatch',
+  'Wrong Item Delivered',
+  'Late / Missed Delivery',
+  'Billing / Payment Discrepancy',
+  'Scheme / Discount Not Applied',
+  'Salesman / Delivery Staff Behavior',
+  'Order App / Technical Issue',
+  'Return / Replacement Request',
+  'Other / General Feedback',
+];
 
 // ── Worklist labels (match server-derived / custom label keys) ───────────────
 const kLabelNotCalled = 'not_called';

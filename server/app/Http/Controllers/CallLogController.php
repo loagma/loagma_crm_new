@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\CallLog;
+use App\Models\Complaint;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 class CallLogController extends Controller
@@ -37,21 +39,47 @@ class CallLogController extends Controller
 
         $data = request()->only([
             'account_id', 'account_type', 'call_outcome',
-            'notes', 'follow_up_date',
+            'notes', 'follow_up_date', 'category', 'description',
         ]);
 
         $validated = validator($data, [
-            'account_id'    => 'nullable|string|max:191',
+            // account_id is required when logging a complaint — complaint_crm
+            // has no way to represent a ticket with no account attached.
+            'account_id'    => 'required_if:call_outcome,complaint|nullable|string|max:191',
             'account_type'  => 'required|in:lead,customer',
-            'call_outcome'  => 'required|in:answered,busy,no_answer,switch_off,invalid,callback',
+            'call_outcome'  => 'required|in:answered,busy,no_answer,switch_off,invalid,callback,pending,complaint',
             'notes'         => 'nullable|string',
             'follow_up_date'=> 'nullable|date',
+            // Only required when call_outcome is 'complaint' — this is what
+            // creates the linked complaint_crm ticket below.
+            'category'      => 'required_if:call_outcome,complaint|string|max:191',
+            'description'   => 'required_if:call_outcome,complaint|string',
         ])->validate();
 
-        $log = CallLog::create(array_merge($validated, [
-            'employee_mobile' => $mobile,
-            'called_at'       => now(),
-        ]));
+        $category    = $validated['category']    ?? null;
+        $description = $validated['description'] ?? null;
+        unset($validated['category'], $validated['description']);
+
+        $log = DB::transaction(function () use ($validated, $mobile, $category, $description) {
+            $log = CallLog::create(array_merge($validated, [
+                'employee_mobile' => $mobile,
+                'called_at'       => now(),
+            ]));
+
+            if ($validated['call_outcome'] === 'complaint') {
+                Complaint::create([
+                    'account_id'      => $log->account_id,
+                    'account_type'    => $log->account_type,
+                    'source_channel'  => 'telecaller_call',
+                    'raised_by'       => $mobile,
+                    'call_log_id'     => $log->id,
+                    'category'        => $category,
+                    'description'     => $description,
+                ]);
+            }
+
+            return $log;
+        });
 
         // Close every open follow-up for this account so notifications clear.
         // The new log itself may open a fresh follow-up if follow_up_date is set.

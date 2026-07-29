@@ -24,7 +24,13 @@ return new class extends Migration
         // were created with fixed ENUM/NOT NULL definitions Doctrine DBAL can't alter.
         DB::statement("ALTER TABLE call_log_crm MODIFY employee_mobile VARCHAR(255) NULL");
         DB::statement("ALTER TABLE call_log_crm MODIFY account_type ENUM('lead','customer','unknown') NOT NULL DEFAULT 'unknown'");
-        DB::statement("ALTER TABLE call_log_crm MODIFY call_outcome ENUM('answered','busy','no_answer','switch_off','invalid','callback','pending') NULL");
+        // Includes 'complaint' even though this migration doesn't use it: a later
+        // migration (2026_07_28_000002_add_complaint_to_call_log_crm_outcome) already
+        // ran against this DB and set call_outcome to include both 'pending' and
+        // 'complaint' - this statement must stay a superset of that or running this
+        // migration now (out of chronological order relative to the already-applied
+        // one) would silently drop 'complaint' from the live enum.
+        DB::statement("ALTER TABLE call_log_crm MODIFY call_outcome ENUM('answered','busy','no_answer','switch_off','invalid','callback','pending','complaint') NULL");
     }
 
     public function down(): void
@@ -35,6 +41,8 @@ return new class extends Migration
 
         DB::statement("ALTER TABLE call_log_crm MODIFY employee_mobile VARCHAR(255) NOT NULL");
         DB::statement("ALTER TABLE call_log_crm MODIFY account_type ENUM('lead','customer') NOT NULL");
-        DB::statement("ALTER TABLE call_log_crm MODIFY call_outcome ENUM('answered','busy','no_answer','switch_off','invalid','callback') NOT NULL");
+        // Undo only what this migration added ('pending') - 'complaint' is owned by
+        // 2026_07_28_000002 and must survive this migration being rolled back alone.
+        DB::statement("ALTER TABLE call_log_crm MODIFY call_outcome ENUM('answered','busy','no_answer','switch_off','invalid','callback','complaint') NOT NULL");
     }
 };

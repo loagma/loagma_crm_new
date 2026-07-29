@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_config.dart';
 import '../../services/api_service.dart';
 import '../../widgets/account_map_screen.dart';
+import '../telecaller/telecaller_mock_data.dart' show kComplaintCategories;
 
 class OrderFunnelScreen extends StatefulWidget {
   final String accountId;
@@ -256,6 +258,106 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     _launch('https://wa.me/$n');
   }
 
+  Future<void> _raiseComplaint() async {
+    if (!_visitedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please Visit In before raising a complaint')),
+      );
+      return;
+    }
+
+    String? category;
+    final descCtrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    final submitted = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.fromLTRB(18, 18, 18, 18 + MediaQuery.of(ctx).viewInsets.bottom),
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Raise Complaint', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 14),
+                    const Text('Category *', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      value: category,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        hintText: 'Select category',
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+                      ),
+                      items: kComplaintCategories
+                          .map((c) => DropdownMenuItem(value: c, child: Text(c, overflow: TextOverflow.ellipsis)))
+                          .toList(),
+                      onChanged: (v) => setSheetState(() => category = v),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text('Description *', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    TextFormField(
+                      controller: descCtrl,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        hintText: 'What went wrong?',
+                        contentPadding: const EdgeInsets.all(12),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+                      ),
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Please describe the issue' : null,
+                    ),
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 46,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade600, foregroundColor: Colors.white),
+                        onPressed: () {
+                          if (category == null) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('Please select a category')));
+                            return;
+                          }
+                          if (formKey.currentState?.validate() != true) return;
+                          Navigator.pop(ctx, true);
+                        },
+                        child: const Text('Submit Complaint', style: TextStyle(fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (submitted != true || !mounted) return;
+
+    final res = await ApiService.createComplaint(
+      accountId: widget.accountId,
+      accountType: (_acc['account_type'] as String?) ?? 'lead',
+      category: category!,
+      description: descCtrl.text.trim(),
+      beatPlanId: _acc['beat_plan_id'] is int ? _acc['beat_plan_id'] as int : null,
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(res != null ? 'Complaint raised successfully' : 'Failed to raise complaint — please try again')),
+    );
+  }
+
   String _fmt(Duration d) {
     final h = d.inHours.toString().padLeft(2, '0');
     final m = (d.inMinutes % 60).toString().padLeft(2, '0');
@@ -386,7 +488,7 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                       ),
                       const SizedBox(width: 10),
                       _ActionBtn(
-                        icon: Icons.chat_rounded,
+                        faIcon: FontAwesomeIcons.whatsapp,
                         color: const Color(0xFF25D366),
                         onTap: phone.isNotEmpty ? () => _whatsapp(phone) : null,
                       ),
@@ -409,19 +511,42 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                               )
                             : null,
                       ),
-                      const Spacer(),
-                      ElevatedButton.icon(
-                        onPressed: () {},
-                        icon: const Icon(Icons.shopping_cart_rounded, size: 16),
-                        label: const Text('Take Order',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _gold,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10)),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 10),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  // Complaint + Take Order — separated from the contact icons
+                  // above since these are full actions, not quick-dial links.
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _raiseComplaint,
+                          icon: const Icon(Icons.report_problem_rounded, size: 16),
+                          label: const Text('Raise Complaint',
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red.shade600,
+                            side: BorderSide(color: Colors.red.shade300),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {},
+                          icon: const Icon(Icons.shopping_cart_rounded, size: 16),
+                          label: const Text('Take Order',
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _gold,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
                         ),
                       ),
                     ],
@@ -860,10 +985,11 @@ class _VisitBtn extends StatelessWidget {
 }
 
 class _ActionBtn extends StatelessWidget {
-  final IconData      icon;
+  final IconData?     icon;
+  final IconData?     faIcon;
   final Color         color;
   final VoidCallback? onTap;
-  const _ActionBtn({required this.icon, required this.color, this.onTap});
+  const _ActionBtn({this.icon, this.faIcon, required this.color, this.onTap});
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
@@ -871,7 +997,11 @@ class _ActionBtn extends StatelessWidget {
           width: 38, height: 38,
           decoration: BoxDecoration(
               color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
-          child: Icon(icon, size: 19, color: color),
+          child: Center(
+            child: faIcon != null
+                ? FaIcon(faIcon, size: 17, color: color)
+                : Icon(icon, size: 19, color: color),
+          ),
         ),
       );
 }

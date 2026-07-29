@@ -44,6 +44,11 @@ class _AllottedCustomerAccountsScreenState
   // {accountId: beatPlan} — from beat-plan/my-plans API
   Map<String, Map<String, dynamic>> _beatPlans = {};
 
+  // Count of assigned areas whose pincodes couldn't be fetched this load —
+  // those pincodes are silently missing from _groups, so this drives a
+  // warning banner instead of failing the whole screen.
+  int _failedAreaCount = 0;
+
   final Set<String> _expanded = {};
   final Set<String> _selected = {}; // selected accountCode values
 
@@ -92,10 +97,28 @@ class _AllottedCustomerAccountsScreenState
       }
 
       // Step 2 — get pincodes from those areas (parallel), may be empty — that's ok
-      final areaResults = await Future.wait(areaIds.map(ApiService.getArea));
+      var areaResults = await Future.wait(areaIds.map(ApiService.getArea));
+
+      // A single failed request (timeout/network blip) here used to silently
+      // drop that area's pincodes from the list with no indication to the
+      // user — retry the failures once before giving up on them.
+      final failedIds = <int>[
+        for (var i = 0; i < areaIds.length; i++)
+          if (areaResults[i] == null) areaIds[i],
+      ];
+      if (failedIds.isNotEmpty) {
+        final retried = await Future.wait(failedIds.map(ApiService.getArea));
+        var r = 0;
+        areaResults = [
+          for (var i = 0; i < areaIds.length; i++)
+            areaResults[i] ?? retried[r++],
+        ];
+      }
+
       final pincodes = <String>[];
+      var failedCount = 0;
       for (final area in areaResults) {
-        if (area == null) continue;
+        if (area == null) { failedCount++; continue; }
         final raw = area['pincodes'];
         if (raw is List) pincodes.addAll(raw.map((p) => p.toString()));
       }
@@ -207,10 +230,11 @@ class _AllottedCustomerAccountsScreenState
       }
 
       setState(() {
-        _groups    = groups;
-        _stats     = stats;
-        _beatPlans = beatPlans;
-        _loading   = false;
+        _groups           = groups;
+        _stats            = stats;
+        _beatPlans        = beatPlans;
+        _failedAreaCount  = failedCount;
+        _loading          = false;
       });
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = 'Failed to load data. Tap refresh to retry.'; });
@@ -621,6 +645,33 @@ class _AllottedCustomerAccountsScreenState
         const Text('Pincode-wise allotted customers',
             style: TextStyle(fontSize: 12, color: Colors.black54)),
         const SizedBox(height: 8),
+
+        // Some assigned areas failed to load even after a retry — their
+        // pincodes are missing from the list below, so surface that instead
+        // of leaving the user to wonder why a pincode they expect isn't here.
+        if (_failedAreaCount > 0) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.orange.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.orange.shade200),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.warning_amber_rounded, size: 16, color: Colors.orange.shade800),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '$_failedAreaCount assigned area(s) failed to load — some pincodes may be missing. Tap refresh to retry.',
+                    style: TextStyle(fontSize: 11.5, color: Colors.orange.shade900),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
 
         // Search bar
         TextField(

@@ -734,6 +734,88 @@ class ApiService {
     return false;
   }
 
+  // ── Complaints ───────────────────────────────────────────────────────────────
+
+  /// Raise a complaint from the salesman-visit channel. (The telecaller-call
+  /// channel raises one implicitly via [createCallLog] with
+  /// `call_outcome: 'complaint'` instead — one request creates both rows.)
+  static Future<Map<String, dynamic>?> createComplaint({
+    required String accountId,
+    required String accountType,
+    required String category,
+    required String description,
+    int? beatPlanId,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/complaints');
+    try {
+      final response = await http
+          .post(
+            url,
+            headers: _authHeaders,
+            body: jsonEncode({
+              'account_id': accountId,
+              'account_type': accountType,
+              'category': category,
+              'description': description,
+              if (beatPlanId != null) 'beat_plan_id': beatPlanId,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 201) return decoded['data'] as Map<String, dynamic>?;
+      print('createComplaint unexpected status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('createComplaint failed: $e');
+    }
+    return null;
+  }
+
+  /// Hierarchy-scoped complaint list. Pass [raisedBy] for a "my complaints"
+  /// view (always allowed for one's own mobile); omit it to see everything
+  /// visible to the caller's role (admin = all, incharge-type = descendants).
+  static Future<Map<String, dynamic>> getComplaints({
+    int page = 1,
+    String? raisedBy,
+    String? status,
+  }) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/complaints').replace(queryParameters: {
+      'page': page.toString(),
+      if (raisedBy != null && raisedBy.isNotEmpty) 'raised_by': raisedBy,
+      if (status != null && status.isNotEmpty) 'status': status,
+    });
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('getComplaints failed: $e');
+    }
+    return {'success': false, 'data': <dynamic>[]};
+  }
+
+  /// Update a complaint's status (open/in_progress/resolved/closed), with
+  /// optional resolution notes captured when moving to resolved/closed.
+  static Future<bool> updateComplaintStatus(int id, {required String status, String? resolutionNotes}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/complaints/$id/status');
+    try {
+      final response = await http
+          .put(
+            url,
+            headers: _authHeaders,
+            body: jsonEncode({
+              'status': status,
+              if (resolutionNotes != null) 'resolution_notes': resolutionNotes,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('updateComplaintStatus failed: $e');
+    }
+    return false;
+  }
+
   /// Trigger a Knowlarity bridge call: rings the telecaller's own number,
   /// then the customer's, and connects them. Returns the created call-log
   /// record (outcome starts as 'pending' until Knowlarity's webhook lands).

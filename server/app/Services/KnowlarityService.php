@@ -8,7 +8,6 @@ use Illuminate\Support\Facades\Log;
 class KnowlarityService
 {
     protected string $baseUrl;
-    protected string $username;
     protected string $srApiKey;
     protected string $appAccessKey;
     protected string $srNumber;
@@ -16,7 +15,6 @@ class KnowlarityService
     public function __construct()
     {
         $this->baseUrl      = config('knowlarity.base_url');
-        $this->username     = config('knowlarity.username');
         $this->srApiKey     = config('knowlarity.sr_api_key');
         $this->appAccessKey = config('knowlarity.app_access_key');
         $this->srNumber     = config('knowlarity.sr_number');
@@ -40,8 +38,8 @@ class KnowlarityService
     {
         $body = [
             'k_number'        => $this->srNumber,
-            'agent_number'    => $agentNumber,
-            'customer_number' => $customerNumber,
+            'agent_number'    => $this->toE164($agentNumber),
+            'customer_number' => $this->toE164($customerNumber),
         ];
 
         if ($uniqueId !== null) {
@@ -61,6 +59,29 @@ class KnowlarityService
         }
 
         return $response->json() ?? [];
+    }
+
+    /**
+     * Every phone number stored in this CRM (DeliStaff.mobile, LeadsAccount.contactNumber,
+     * legacy user.contactno) is a bare 10-digit Indian number with no country code, but
+     * Knowlarity's API requires full international format (+91XXXXXXXXXX) or it rejects
+     * the call outright ("Please enter a valid Agent number in international format").
+     */
+    protected function toE164(string $number): string
+    {
+        $digits = preg_replace('/\D/', '', $number);
+
+        if (str_starts_with($number, '+')) {
+            return '+' . $digits;
+        }
+        if (strlen($digits) === 10) {
+            return '+91' . $digits;
+        }
+        if (strlen($digits) === 12 && str_starts_with($digits, '91')) {
+            return '+' . $digits;
+        }
+
+        return '+' . $digits; // best effort for any other shape
     }
 
     /**

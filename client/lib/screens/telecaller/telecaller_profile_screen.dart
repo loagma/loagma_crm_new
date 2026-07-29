@@ -919,12 +919,14 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
       builder: (_) => _OutcomeSheet(
         name: _name,
         onFollowUp: () => setState(() => _tab = 3),
-        onSave: (outcome, note) async {
+        onSave: (outcome, note, [category]) async {
           final res = await ApiService.createCallLog({
             'account_id': _id,
             'account_type': widget.accountType,
             'call_outcome': outcome,
             if (note.isNotEmpty) 'notes': note,
+            if (outcome == 'complaint') 'category': category,
+            if (outcome == 'complaint') 'description': note,
           });
           if (!mounted) return false;
           if (res != null) {
@@ -1043,7 +1045,7 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
 // ── Log-outcome bottom sheet ───────────────────────────────────────────────────
 class _OutcomeSheet extends StatefulWidget {
   final String name;
-  final Future<bool> Function(String outcome, String note) onSave;
+  final Future<bool> Function(String outcome, String note, [String? category]) onSave;
   final VoidCallback onFollowUp;
   const _OutcomeSheet({required this.name, required this.onSave, required this.onFollowUp});
 
@@ -1059,10 +1061,14 @@ class _OutcomeSheetState extends State<_OutcomeSheet> {
     ('switch_off', 'Switched Off', Color(0xFF5A6472)),
     ('invalid', 'Invalid Number', Color(0xFFC0584C)),
     ('callback', 'Will Callback', Color(0xFF3B6FD4)),
+    ('complaint', 'Complaint', Color(0xFFD32F2F)),
   ];
   String? _sel;
+  String? _category;
   final _note = TextEditingController();
   bool _saving = false;
+
+  bool get _isComplaint => _sel == 'complaint';
 
   @override
   void dispose() {
@@ -1114,12 +1120,33 @@ class _OutcomeSheetState extends State<_OutcomeSheet> {
               );
             }).toList(),
           ),
+          if (_isComplaint) ...[
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: _category,
+              isExpanded: true,
+              decoration: InputDecoration(
+                hintText: 'Complaint category',
+                hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                filled: true,
+                fillColor: const Color(0xFFFAFAFA),
+                contentPadding: const EdgeInsets.all(12),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE7E7E7))),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE7E7E7))),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: kGold)),
+              ),
+              items: kComplaintCategories
+                  .map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontSize: 12.5), overflow: TextOverflow.ellipsis)))
+                  .toList(),
+              onChanged: (v) => setState(() => _category = v),
+            ),
+          ],
           const SizedBox(height: 12),
           TextField(
             controller: _note,
             maxLines: 2,
             decoration: InputDecoration(
-              hintText: 'Add a note for this call (optional)…',
+              hintText: _isComplaint ? 'Describe the complaint…' : 'Add a note for this call (optional)…',
               hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
               filled: true,
               fillColor: const Color(0xFFFAFAFA),
@@ -1156,9 +1183,13 @@ class _OutcomeSheetState extends State<_OutcomeSheet> {
                         Fluttertoast.showToast(msg: 'Pick an outcome first', backgroundColor: Colors.red, textColor: Colors.white);
                         return;
                       }
+                      if (_isComplaint && (_category == null || _note.text.trim().isEmpty)) {
+                        Fluttertoast.showToast(msg: 'Pick a category and describe the complaint', backgroundColor: Colors.red, textColor: Colors.white);
+                        return;
+                      }
                       final nav = Navigator.of(context);
                       setState(() => _saving = true);
-                      final ok = await widget.onSave(_sel!, _note.text.trim());
+                      final ok = await widget.onSave(_sel!, _note.text.trim(), _category);
                       if (!mounted) return;
                       setState(() => _saving = false);
                       if (ok) nav.pop();

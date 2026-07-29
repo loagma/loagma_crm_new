@@ -11,6 +11,7 @@ use App\Http\Controllers\InchargeAssignController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\BeatPlanController;
 use App\Http\Controllers\CallLogController;
+use App\Http\Controllers\ComplaintController;
 use App\Http\Controllers\KnowlarityCallController;
 use App\Http\Controllers\KnowlarityWebhookController;
 use App\Http\Controllers\OrderFunnelController;
@@ -174,6 +175,15 @@ Route::prefix('beat-plan')->group(function () {
 Route::get('/call-logs',  [CallLogController::class, 'index']);
 Route::post('/call-logs', [CallLogController::class, 'store']);
 Route::put('/call-logs/{id}', [CallLogController::class, 'update']); // reschedule / mark done
+
+// ---------------------------------------------------------------------------
+// Complaints (hierarchy-scoped ticket tracking — see ComplaintController)
+// ---------------------------------------------------------------------------
+Route::middleware('jwtauth')->group(function () {
+    Route::post('/complaints',            [ComplaintController::class, 'store']); // salesman-visit channel; telecaller channel goes via /call-logs
+    Route::get('/complaints',              [ComplaintController::class, 'index']);
+    Route::put('/complaints/{id}/status',  [ComplaintController::class, 'updateStatus']);
+});
 
 // ---------------------------------------------------------------------------
 // Telecaller dashboard + agent modules (live data, scoped to JWT mobile)

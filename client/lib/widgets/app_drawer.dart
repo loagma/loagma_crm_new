@@ -76,6 +76,12 @@ class AppDrawer extends StatelessWidget {
             'subtitle': 'Head / Zonal / Area Incharge',
           },
           {
+            'title': 'Complaints',
+            'icon': Icons.report_problem_rounded,
+            'route': '/complaints',
+            'color': const Color(0xFFE53935),
+          },
+          {
             'title': 'Attendance',
             'icon': Icons.fact_check_outlined,
             'route': '/attendance-manage',
@@ -127,6 +133,12 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFFAB47BC),
           },
           {
+            'title': 'Complaints',
+            'icon': Icons.report_problem_rounded,
+            'route': '/complaints',
+            'color': const Color(0xFFE53935),
+          },
+          {
             'title': 'Live Salesmen',
             'icon': Icons.location_searching_rounded,
             'route': '/live-salesmen',
@@ -143,6 +155,12 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFFAB47BC),
           },
           {
+            'title': 'Complaints',
+            'icon': Icons.report_problem_rounded,
+            'route': '/complaints',
+            'color': const Color(0xFFE53935),
+          },
+          {
             'title': 'Live Salesmen',
             'icon': Icons.location_searching_rounded,
             'route': '/live-salesmen',
@@ -157,6 +175,12 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.supervisor_account_rounded,
             'route': '/my-incharges',
             'color': const Color(0xFFAB47BC),
+          },
+          {
+            'title': 'Complaints',
+            'icon': Icons.report_problem_rounded,
+            'route': '/complaints',
+            'color': const Color(0xFFE53935),
           },
           {
             'title': 'Live Salesmen',
@@ -180,6 +204,12 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.account_balance_wallet_rounded,
             'route': '/lead-accounts',
             'color': const Color(0xFF42A5F5),
+          },
+          {
+            'title': 'Complaints',
+            'icon': Icons.report_problem_rounded,
+            'route': '/complaints',
+            'color': const Color(0xFFE53935),
           },
           {
             'title': 'My Team',
@@ -228,6 +258,12 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.calendar_month_rounded,
             'route': '/all-beat-plan',
             'color': const Color(0xFF5C6BC0),
+          },
+          {
+            'title': 'My Complaints',
+            'icon': Icons.report_problem_rounded,
+            'route': '/complaints',
+            'color': const Color(0xFFE53935),
           },
           // {'title': 'Apply  Leave',      'icon': Icons.beach_access_rounded,          'route': '/apply-leave',              'color': const Color(0xFFFF7043)},
         ];
@@ -300,6 +336,12 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.shopping_bag_rounded,
             'route': '/orders-list',
             'color': const Color(0xFF3F51B5),
+          },
+          {
+            'title': 'My Complaints',
+            'icon': Icons.report_problem_rounded,
+            'route': '/complaints',
+            'color': const Color(0xFFE53935),
           },
         ];
       default:
