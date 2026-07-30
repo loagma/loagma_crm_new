@@ -85,15 +85,25 @@ class KnowlarityService
     }
 
     /**
-     * Pull call logs for a date range - useful for a reconciliation job
-     * that catches anything the webhook might have missed.
+     * Pull call logs for a date range - the reconciliation path for calls the
+     * webhook missed (confirmed unreliable for C2C calls in this account).
+     * start_time/end_time are query params, NOT headers - sending them as
+     * headers (the original bug here) gets a silent 500 from Knowlarity.
      */
     public function getCallLogs(string $startTime, string $endTime): array
     {
-        $response = Http::withHeaders($this->headers([
-            'start_time' => $startTime, // format: 2026-07-01 00:00:00+05:30
-            'end_time'   => $endTime,
-        ]))->get("{$this->baseUrl}/calllog");
+        $response = Http::withHeaders($this->headers())
+            ->get("{$this->baseUrl}/calllog", [
+                'start_time' => $startTime, // format: 2026-07-01 00:00:00+05:30
+                'end_time'   => $endTime,
+            ]);
+
+        if ($response->failed()) {
+            Log::error('Knowlarity getCallLogs failed', [
+                'status' => $response->status(),
+                'body'   => $response->body(),
+            ]);
+        }
 
         return $response->json() ?? [];
     }

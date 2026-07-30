@@ -206,15 +206,25 @@ class TelecallerController extends Controller
 
         $data = $logs->map(function (CallLog $l) use ($enriched) {
             $acc = $enriched[$l->account_id] ?? [];
+            $raw = $l->raw_payload ?? [];
             return [
-                'id'           => $l->id,
-                'account_id'   => $l->account_id,
-                'account_type' => $l->account_type,
-                'name'         => $acc['name'] ?? 'Unknown',
-                'phone'        => $acc['phone'] ?? '',
-                'outcome'      => $l->call_outcome,
-                'notes'        => $l->notes,
-                'called_at'    => optional($l->called_at)->toIso8601String(),
+                'id'               => $l->id,
+                'account_id'       => $l->account_id,
+                'account_type'     => $l->account_type,
+                'name'             => $acc['name'] ?? 'Unknown',
+                'phone'            => $acc['phone'] ?? '',
+                'outcome'          => $l->call_outcome,
+                'notes'            => $l->notes,
+                'called_at'        => optional($l->called_at)->toIso8601String(),
+                // Knowlarity-specific fields (null for manually-logged calls) - the
+                // full provider call log content, not just the derived outcome.
+                'source'           => $l->source,
+                'direction'        => $l->direction,
+                'duration_seconds' => $l->duration_seconds,
+                'recording_url'    => $l->recording_url,
+                'call_uuid'        => $l->knowlarity_call_id,
+                'sr_number'        => $raw['knowlarity_number'] ?? null,
+                'customer_number'  => $raw['customer_number'] ?? null,
             ];
         })->values();
 

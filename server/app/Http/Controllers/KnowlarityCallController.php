@@ -48,8 +48,15 @@ class KnowlarityCallController extends Controller
         );
 
         // makecall nests the id as {"success": {"call_id": ...}}; keep flat fallbacks.
+        $callId = $result['success']['call_id'] ?? $result['call_id'] ?? $result['id'] ?? null;
+
+        // No call_id means Knowlarity rejected the call outright (bad number,
+        // unverified agent, expired SR number, etc.) - there will never be a
+        // provider call log entry to reconcile this against later, so resolve
+        // it now instead of leaving it stuck on 'pending' forever.
         $log->update([
-            'knowlarity_call_id' => $result['success']['call_id'] ?? $result['call_id'] ?? $result['id'] ?? null,
+            'knowlarity_call_id' => $callId,
+            'call_outcome'       => $callId ? 'pending' : 'invalid',
             'raw_payload'        => $result,
         ]);
 

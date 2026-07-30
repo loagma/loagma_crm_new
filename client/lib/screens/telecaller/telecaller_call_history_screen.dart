@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/api_service.dart';
+import '../../widgets/call_recording_player.dart';
 import 'telecaller_actions.dart';
 import 'telecaller_mock_data.dart';
 
@@ -33,6 +34,8 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
   _DateFilter _dateFilter = _DateFilter.all;
   DateTimeRange? _customRange;
   String? _outcomeFilter;
+  /// null = all, 'knowlarity' = cloud calls, 'manual' = manually-logged calls.
+  String? _sourceFilter;
 
   @override
   void initState() {
@@ -63,7 +66,7 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
     return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}';
   }
 
-  bool get _hasActiveFilter => _dateFilter != _DateFilter.all || _outcomeFilter != null;
+  bool get _hasActiveFilter => _dateFilter != _DateFilter.all || _outcomeFilter != null || _sourceFilter != null;
 
   bool _matchesDate(String? iso) {
     if (_dateFilter == _DateFilter.all) return true;
@@ -224,8 +227,12 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
           '${h['phone'] ?? ''}'.contains(q);
       final matchesOutcome = _outcomeFilter == null || '${h['outcome'] ?? ''}' == _outcomeFilter;
       final matchesDate = _matchesDate('${h['called_at'] ?? ''}');
-      return matchesQuery && matchesOutcome && matchesDate;
+      final source = '${h['source'] ?? 'manual'}';
+      final matchesSource = _sourceFilter == null || source == _sourceFilter;
+      return matchesQuery && matchesOutcome && matchesDate && matchesSource;
     }).toList();
+    final cloudCount = _items.where((h) => h['source'] == 'knowlarity').length;
+    final manualCount = _items.length - cloudCount;
 
     return Scaffold(
       backgroundColor: kBg,
@@ -269,6 +276,18 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                     onPressed: _openFilterSheet,
                   ),
                 ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Row(
+              children: [
+                Expanded(child: _typeChip('All', null, _items.length)),
+                const SizedBox(width: 8),
+                Expanded(child: _typeChip('Call', 'manual', manualCount, icon: Icons.call_rounded)),
+                const SizedBox(width: 8),
+                Expanded(child: _typeChip('Cloud Call', 'knowlarity', cloudCount, icon: Icons.cloud_queue_rounded)),
               ],
             ),
           ),
@@ -328,6 +347,43 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
 
   String _fmtDate(DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
+  /// Quick call-type filter: All / Call (manual) / Cloud Call (Knowlarity).
+  Widget _typeChip(String label, String? value, int count, {IconData? icon}) {
+    final selected = _sourceFilter == value;
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => setState(() => _sourceFilter = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? kGold.withValues(alpha: 0.16) : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: selected ? kGold : Colors.grey.shade200),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 13, color: selected ? kGoldDark : Colors.grey.shade600),
+                  const SizedBox(width: 4),
+                ],
+                Text(label,
+                    style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: selected ? kGoldDark : Colors.black87)),
+              ],
+            ),
+            Text('$count', style: TextStyle(fontSize: 10, color: selected ? kGoldDark : Colors.grey.shade500)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _activeFilterChip(String label, VoidCallback onClear) {
     return Container(
       padding: const EdgeInsets.only(left: 10, right: 4, top: 3, bottom: 3),
@@ -356,6 +412,10 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
     final outcome = '${h['outcome'] ?? ''}';
     final color = kOutcomeColors[outcome] ?? Colors.grey;
     final phone = '${h['phone'] ?? ''}';
+    final isCloud = h['source'] == 'knowlarity';
+    final duration = (h['duration_seconds'] as num?)?.toInt() ?? 0;
+    final hasRecording = '${h['recording_url'] ?? ''}'.isNotEmpty;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -364,52 +424,140 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
         border: Border.all(color: const Color(0xFFEEEEEE)),
         boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 3))],
       ),
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _showDetails(h),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                height: 40, width: 40,
+                decoration: BoxDecoration(color: color.withValues(alpha: 0.14), shape: BoxShape.circle),
+                child: Icon(isCloud ? Icons.cloud_queue_rounded : Icons.history_rounded, color: color, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(child: Text('${h['name'] ?? 'Unknown'}', style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700))),
+                        Text(_relative('${h['called_at'] ?? ''}'), style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500)),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
+                          child: Text(kOutcomeLabels[outcome] ?? outcome,
+                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(phone, style: TextStyle(fontSize: 11, color: Colors.grey.shade500))),
+                        if (duration > 0) ...[
+                          Icon(Icons.schedule_rounded, size: 11, color: Colors.grey.shade400),
+                          const SizedBox(width: 2),
+                          Text(formatCallDuration(duration), style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500)),
+                        ],
+                        if (hasRecording) ...[
+                          const SizedBox(width: 6),
+                          Icon(Icons.play_circle_outline_rounded, size: 14, color: kGoldDark),
+                        ],
+                      ],
+                    ),
+                    if ((h['notes'] ?? '').toString().isNotEmpty) ...[
+                      const SizedBox(height: 5),
+                      Text('${h['notes']}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                    ],
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.call_rounded, color: Color(0xFF43A047)),
+                tooltip: 'Call again',
+                onPressed: () => launchPhoneCall(phone),
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Full call details bottom sheet - everything Knowlarity's own call log
+  /// reports for this call (source, direction, duration, SR number, call
+  /// UUID, recording), not just the outcome shown in the row.
+  void _showDetails(Map<String, dynamic> h) {
+    final outcome = '${h['outcome'] ?? ''}';
+    final color = kOutcomeColors[outcome] ?? Colors.grey;
+    final duration = (h['duration_seconds'] as num?)?.toInt() ?? 0;
+    final recordingUrl = '${h['recording_url'] ?? ''}';
+    final isCloud = h['source'] == 'knowlarity';
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('${h['name'] ?? 'Unknown'}',
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
+                    child: Text(kOutcomeLabels[outcome] ?? outcome,
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              _detailRow('Phone', '${h['phone'] ?? '-'}'),
+              _detailRow('Called at', '${h['called_at'] ?? '-'}'),
+              _detailRow('Duration', duration > 0 ? formatCallDuration(duration) : '-'),
+              _detailRow('Source', isCloud ? 'Cloud call (Knowlarity)' : 'Manual'),
+              if (isCloud) ...[
+                _detailRow('Direction', '${h['direction'] ?? '-'}'),
+                _detailRow('SR Number', '${h['sr_number'] ?? '-'}'),
+                _detailRow('Call UUID', '${h['call_uuid'] ?? '-'}'),
+              ],
+              if ((h['notes'] ?? '').toString().isNotEmpty) _detailRow('Notes', '${h['notes']}'),
+              if (recordingUrl.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                CallRecordingPlayer(url: recordingUrl, accentColor: kGoldDark),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            height: 40, width: 40,
-            decoration: BoxDecoration(color: color.withValues(alpha: 0.14), shape: BoxShape.circle),
-            child: Icon(Icons.history_rounded, color: color, size: 20),
+          SizedBox(
+            width: 90,
+            child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.w600)),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(child: Text('${h['name'] ?? 'Unknown'}', style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700))),
-                    Text(_relative('${h['called_at'] ?? ''}'), style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500)),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                      decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
-                      child: Text(kOutcomeLabels[outcome] ?? outcome,
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(phone, style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-                  ],
-                ),
-                if ((h['notes'] ?? '').toString().isNotEmpty) ...[
-                  const SizedBox(height: 5),
-                  Text('${h['notes']}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                ],
-              ],
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.call_rounded, color: Color(0xFF43A047)),
-            tooltip: 'Call again',
-            onPressed: () => launchPhoneCall(phone),
-            visualDensity: VisualDensity.compact,
-          ),
+          Expanded(child: Text(value, style: const TextStyle(fontSize: 12.5, color: Colors.black87))),
         ],
       ),
     );

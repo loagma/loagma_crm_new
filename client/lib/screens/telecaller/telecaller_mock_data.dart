@@ -20,6 +20,7 @@ const kOutcomeColors = <String, Color>{
   'invalid': Color(0xFFE53935),
   'callback': Color(0xFF1E88E5),
   'complaint': Color(0xFFD32F2F),
+  'pending': Color(0xFFBDBDBD),
 };
 
 const kOutcomeLabels = <String, String>{
@@ -30,6 +31,7 @@ const kOutcomeLabels = <String, String>{
   'invalid': 'Invalid',
   'callback': 'Callback',
   'complaint': 'Complaint',
+  'pending': 'In Progress',
 };
 
 // ── Complaint categories (v1 — plain labels, no auto-routing) ────────────────

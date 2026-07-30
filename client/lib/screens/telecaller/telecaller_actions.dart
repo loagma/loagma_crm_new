@@ -32,3 +32,12 @@ Future<void> launchEmail(String email, {String subject = ''}) async {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 }
+
+/// "95s" -> "1m 35s"; plain seconds under a minute pass through as-is.
+String formatCallDuration(int seconds) {
+  if (seconds <= 0) return '0s';
+  if (seconds < 60) return '${seconds}s';
+  final m = seconds ~/ 60;
+  final s = seconds % 60;
+  return s == 0 ? '${m}m' : '${m}m ${s}s';
+}
