@@ -905,6 +905,19 @@ class ApiService {
     return null;
   }
 
+  /// Direct URL for saving/downloading a call recording (opened via the OS/
+  /// browser, e.g. through url_launcher) - carries the JWT as a query param
+  /// since a plain URL open can't attach an Authorization header the way an
+  /// authenticated fetch (fetchCallRecordingBytes) can. `download=1` tells the
+  /// backend to send Content-Disposition: attachment so it saves as a file
+  /// instead of trying to play inline.
+  static String callRecordingDownloadUrl(int callLogId) {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/call-recording/$callLogId').replace(
+      queryParameters: {'download': '1', 'token': UserService.token},
+    );
+    return uri.toString();
+  }
+
   /// Worklist (leads + customers in my areas) with derived/custom labels.
   static Future<List<Map<String, dynamic>>> getTelecallerWorklist() => _tcGetList('worklist');
 

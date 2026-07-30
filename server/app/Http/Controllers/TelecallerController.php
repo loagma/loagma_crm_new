@@ -238,6 +238,15 @@ class TelecallerController extends Controller
      * Knowlarity's credentials server-side), since the raw recording URL 401s
      * for any client that can't attach the authorization/x-api-key headers -
      * which no browser <audio> element or mobile media player can do.
+     *
+     * Auth here also accepts a `?token=` query param (JWTAuth's default parser
+     * chain already supports it, on top of the Authorization header) because
+     * the "download" case opens this URL directly via the OS/browser, which
+     * can't attach a custom header the way an authenticated fetch() can.
+     *
+     * `?download=1` switches Content-Disposition to attachment so the browser/
+     * OS saves it as a file instead of the default inline (streamed, played
+     * in place, never saved) behaviour.
      */
     public function callRecording(string $id, KnowlarityService $knowlarity): Response
     {
@@ -260,11 +269,14 @@ class TelecallerController extends Controller
             $contentType = 'audio/mpeg';
         }
 
+        $disposition = request()->boolean('download')
+            ? "attachment; filename=\"call-recording-{$id}.mp3\""
+            : 'inline';
+
         return response($bytes, 200, [
-            'Content-Type'   => $contentType,
-            'Content-Length' => (string) strlen($bytes),
-            // Inline, not an attachment - the client streams/plays it, never downloads a file.
-            'Content-Disposition' => 'inline',
+            'Content-Type'        => $contentType,
+            'Content-Length'      => (string) strlen($bytes),
+            'Content-Disposition' => $disposition,
         ]);
     }
 

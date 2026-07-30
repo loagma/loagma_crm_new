@@ -2,15 +2,19 @@ import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_service.dart';
 
-/// Inline call-recording player. The raw Knowlarity recording URL 401s for
-/// any client that can't attach the provider's API credentials (no browser
-/// <audio> element or mobile player can), so this fetches the bytes through
-/// the CRM's authenticated proxy (ApiService.fetchCallRecordingBytes) and
-/// plays them directly via BytesSource - streamed into memory and played,
-/// never written to disk or downloaded.
+/// Inline call-recording player + download. The raw Knowlarity recording URL
+/// 401s for any client that can't attach the provider's API credentials (no
+/// browser <audio> element or mobile player can), so:
+/// - Listen: fetches bytes through the CRM's authenticated proxy
+///   (ApiService.fetchCallRecordingBytes) and plays them via BytesSource -
+///   streamed into memory and played, never written to disk.
+/// - Download: opens ApiService.callRecordingDownloadUrl (auth via a token
+///   query param, since a plain URL open can't carry a header) with
+///   Content-Disposition: attachment, so the OS/browser saves an actual file.
 class CallRecordingPlayer extends StatefulWidget {
   final int callLogId;
   final Color accentColor;
@@ -51,6 +55,22 @@ class _CallRecordingPlayerState extends State<CallRecordingPlayer> {
   void dispose() {
     _player.dispose();
     super.dispose();
+  }
+
+  bool _downloading = false;
+
+  Future<void> _download() async {
+    setState(() => _downloading = true);
+    try {
+      final uri = Uri.parse(ApiService.callRecordingDownloadUrl(widget.callLogId));
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else if (mounted) {
+        setState(() => _error = 'Could not start download');
+      }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
   }
 
   Future<void> _toggle() async {
@@ -136,6 +156,22 @@ class _CallRecordingPlayerState extends State<CallRecordingPlayer> {
             _duration.inMilliseconds > 0 ? '${_fmt(_position)} / ${_fmt(_duration)}' : 'Recording',
             style: TextStyle(fontSize: 10.5, color: widget.accentColor),
           ),
+          _downloading
+              ? SizedBox(
+                  width: 32, height: 32,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: CircularProgressIndicator(strokeWidth: 2, color: widget.accentColor),
+                  ),
+                )
+              : IconButton(
+                  icon: const Icon(Icons.download_rounded),
+                  color: widget.accentColor,
+                  iconSize: 20,
+                  tooltip: 'Download recording',
+                  padding: EdgeInsets.zero,
+                  onPressed: _download,
+                ),
         ],
       ),
     );
