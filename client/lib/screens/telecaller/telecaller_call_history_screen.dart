@@ -538,7 +538,7 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
               if ((h['notes'] ?? '').toString().isNotEmpty) _detailRow('Notes', '${h['notes']}'),
               if (recordingUrl.isNotEmpty) ...[
                 const SizedBox(height: 14),
-                CallRecordingPlayer(url: recordingUrl, accentColor: kGoldDark),
+                CallRecordingPlayer(callLogId: (h['id'] as num).toInt(), accentColor: kGoldDark),
               ],
             ],
           ),

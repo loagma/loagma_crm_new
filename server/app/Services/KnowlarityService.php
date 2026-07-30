@@ -107,4 +107,30 @@ class KnowlarityService
 
         return $response->json() ?? [];
     }
+
+    /**
+     * Recording URLs (kservices.knowlarity.com/kstorage/read?...) require the
+     * same authorization/x-api-key headers as every other API call - a plain
+     * browser <audio> element or a mobile player pointed straight at the URL
+     * gets a 401, since neither can attach custom headers to a media request.
+     * The CRM backend fetches the bytes itself (it holds the credentials) and
+     * hands them to the client, instead of exposing a directly-playable URL.
+     *
+     * @return array{0: string, 1: string} [raw bytes, content-type]
+     */
+    public function fetchRecording(string $url): array
+    {
+        $response = Http::withHeaders($this->headers())->get($url);
+
+        if ($response->failed()) {
+            Log::error('Knowlarity fetchRecording failed', [
+                'status' => $response->status(),
+                'url'    => $url,
+            ]);
+
+            return ['', ''];
+        }
+
+        return [$response->body(), $response->header('Content-Type') ?: 'audio/mpeg'];
+    }
 }

@@ -1,14 +1,21 @@
+import 'dart:typed_data';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
-/// Inline call-recording player - streams and plays the recording URL directly
-/// (AudioPlayer.play(UrlSource(...)) streams, it does not save a file to disk),
-/// so listening never triggers a device download or leaves the app.
+import '../services/api_service.dart';
+
+/// Inline call-recording player. The raw Knowlarity recording URL 401s for
+/// any client that can't attach the provider's API credentials (no browser
+/// <audio> element or mobile player can), so this fetches the bytes through
+/// the CRM's authenticated proxy (ApiService.fetchCallRecordingBytes) and
+/// plays them directly via BytesSource - streamed into memory and played,
+/// never written to disk or downloaded.
 class CallRecordingPlayer extends StatefulWidget {
-  final String url;
+  final int callLogId;
   final Color accentColor;
 
-  const CallRecordingPlayer({super.key, required this.url, this.accentColor = const Color(0xFFC09E3E)});
+  const CallRecordingPlayer({super.key, required this.callLogId, this.accentColor = const Color(0xFFC09E3E)});
 
   @override
   State<CallRecordingPlayer> createState() => _CallRecordingPlayerState();
@@ -21,6 +28,7 @@ class _CallRecordingPlayerState extends State<CallRecordingPlayer> {
   Duration _position = Duration.zero;
   bool _loading = false;
   String? _error;
+  Uint8List? _bytes; // cached after first fetch so replay doesn't re-download
 
   @override
   void initState() {
@@ -55,7 +63,14 @@ class _CallRecordingPlayerState extends State<CallRecordingPlayer> {
       _error = null;
     });
     try {
-      await _player.play(UrlSource(widget.url));
+      var bytes = _bytes;
+      bytes ??= await ApiService.fetchCallRecordingBytes(widget.callLogId);
+      if (bytes == null) {
+        if (mounted) setState(() => _error = 'Could not load recording');
+        return;
+      }
+      _bytes = bytes;
+      await _player.play(BytesSource(bytes, mimeType: 'audio/mpeg'));
     } catch (e) {
       if (mounted) setState(() => _error = 'Could not play recording');
     } finally {

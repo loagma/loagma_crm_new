@@ -7,7 +7,9 @@ use App\Models\AreaAssign;
 use App\Models\CallLog;
 use App\Models\LeadsAccount;
 use App\Models\TelecallerLabel;
+use App\Services\KnowlarityService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -229,6 +231,41 @@ class TelecallerController extends Controller
         })->values();
 
         return response()->json(['success' => true, 'data' => $data]);
+    }
+
+    /**
+     * Streams a call recording's bytes through the CRM (authenticated with
+     * Knowlarity's credentials server-side), since the raw recording URL 401s
+     * for any client that can't attach the authorization/x-api-key headers -
+     * which no browser <audio> element or mobile media player can do.
+     */
+    public function callRecording(string $id, KnowlarityService $knowlarity): Response
+    {
+        $mobile = $this->mobile();
+
+        $log = CallLog::where('id', $id)->where('employee_mobile', $mobile)->first();
+        if (!$log || !$log->recording_url) {
+            abort(404, 'Recording not found');
+        }
+
+        [$bytes, $contentType] = $knowlarity->fetchRecording($log->recording_url);
+        if ($bytes === '') {
+            abort(502, 'Could not fetch recording');
+        }
+
+        // Knowlarity serves recordings as generic binary/octet-stream; every
+        // sample fetched so far is actually MP3, so normalise for players that
+        // rely on the content type to pick a decoder.
+        if (!$contentType || str_contains($contentType, 'octet-stream')) {
+            $contentType = 'audio/mpeg';
+        }
+
+        return response($bytes, 200, [
+            'Content-Type'   => $contentType,
+            'Content-Length' => (string) strlen($bytes),
+            // Inline, not an attachment - the client streams/plays it, never downloads a file.
+            'Content-Disposition' => 'inline',
+        ]);
     }
 
     // ── Worklist (leads + customers with derived/custom labels) ──────────────────

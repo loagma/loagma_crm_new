@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'api_config.dart';
 import 'user_service.dart';
@@ -886,6 +887,23 @@ class ApiService {
 
   /// Recent enriched call history for the current telecaller.
   static Future<List<Map<String, dynamic>>> getTelecallerCallHistory() => _tcGetList('call-history');
+
+  /// Fetches a call recording's raw audio bytes through the authenticated
+  /// backend proxy - the underlying Knowlarity URL 401s without the server's
+  /// own API credentials, which no player/browser can attach directly.
+  static Future<Uint8List?> fetchCallRecordingBytes(int callLogId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/call-recording/$callLogId');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 30));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return response.bodyBytes;
+      }
+      print('fetchCallRecordingBytes unexpected status ${response.statusCode}');
+    } catch (e) {
+      print('fetchCallRecordingBytes failed: $e');
+    }
+    return null;
+  }
 
   /// Worklist (leads + customers in my areas) with derived/custom labels.
   static Future<List<Map<String, dynamic>>> getTelecallerWorklist() => _tcGetList('worklist');
