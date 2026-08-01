@@ -6,6 +6,7 @@ use App\Models\DeliStaff;
 use App\Models\RoleCrm;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class MastersController extends Controller
 {
@@ -115,10 +116,20 @@ class MastersController extends Controller
             unset($validated['password']);
         }
 
-        $staff = DeliStaff::updateOrCreate(
-            ['mobile' => $validated['mobile']],
-            collect($validated)->except('mobile')->toArray()
-        );
+        // deli_id has no default / auto-increment on the live table — allocate manually
+        // (see DeliStaffSeeder). Lock the table while reading max() to avoid duplicate
+        // ids from concurrent requests.
+        $staff = DB::transaction(function () use ($validated) {
+            $staff = DeliStaff::lockForUpdate()->firstOrNew(['mobile' => $validated['mobile']]);
+
+            if (! $staff->exists) {
+                $staff->deli_id = (int) DeliStaff::lockForUpdate()->max('deli_id') + 1;
+            }
+
+            $staff->fill(collect($validated)->except('mobile')->toArray())->save();
+
+            return $staff;
+        });
 
         return response()->json(['success' => true, 'data' => $staff]);
     }
