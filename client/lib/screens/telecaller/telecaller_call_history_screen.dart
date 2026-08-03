@@ -347,6 +347,20 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
 
   String _fmtDate(DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  String _fmtDateTime(String iso) {
+    if (iso.isEmpty) return '-';
+    final dt = DateTime.tryParse(iso)?.toLocal();
+    if (dt == null) return '-';
+    final hour12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final ampm = dt.hour < 12 ? 'AM' : 'PM';
+    final minute = dt.minute.toString().padLeft(2, '0');
+    return '${dt.day.toString().padLeft(2, '0')} ${_months[dt.month - 1]} ${dt.year}, $hour12:$minute $ampm';
+  }
+
   /// Quick call-type filter: All / Call (manual) / Cloud Call (Knowlarity).
   Widget _typeChip(String label, String? value, int count, {IconData? icon}) {
     final selected = _sourceFilter == value;
@@ -527,7 +541,7 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
               ),
               const SizedBox(height: 14),
               _detailRow('Phone', '${h['phone'] ?? '-'}'),
-              _detailRow('Called at', '${h['called_at'] ?? '-'}'),
+              _detailRow('Called at', _fmtDateTime('${h['called_at'] ?? ''}')),
               _detailRow('Duration', duration > 0 ? formatCallDuration(duration) : '-'),
               _detailRow('Source', isCloud ? 'Cloud call (Knowlarity)' : 'Manual'),
               if (isCloud) ...[

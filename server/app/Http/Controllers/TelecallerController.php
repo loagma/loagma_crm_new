@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessKnowlarityCallCompleted;
 use App\Models\Area;
 use App\Models\AreaAssign;
 use App\Models\CallLog;
@@ -234,6 +235,68 @@ class TelecallerController extends Controller
     }
 
     /**
+     * Polled right after a cloud (Knowlarity) call is triggered, so the app
+     * can show live SR/call-log data and detect the moment the completed
+     * webhook lands (call_outcome flips from 'pending' to a real outcome).
+     */
+    public function callStatus(string $id, KnowlarityService $knowlarity): JsonResponse
+    {
+        $mobile = $this->mobile();
+
+        $log = CallLog::where('employee_mobile', $mobile)->where('id', $id)->first();
+        if (!$log) {
+            return response()->json(['success' => false, 'message' => 'Not found'], 404);
+        }
+
+        // The completed-call webhook has never actually fired for C2C calls on
+        // this Knowlarity account (see KnowlarityService::getCallLogs) - the
+        // only other reconciliation path is the hourly `knowlarity:reconcile`
+        // cron, which leaves the live call screen stuck on 'pending' for up to
+        // an hour after a call already finished. Once a few seconds have
+        // passed, pull the provider's live call log directly on every poll so
+        // the app resolves within seconds instead of waiting on the cron.
+        if ($log->call_outcome === 'pending' && $log->called_at && $log->called_at->diffInSeconds(now()) >= 8) {
+            $window = $log->called_at->copy()->subMinute();
+            $logs = $knowlarity->getCallLogs(
+                $window->format('Y-m-d H:i:sP'),
+                now()->format('Y-m-d H:i:sP'),
+            );
+            $entries = $logs['objects'] ?? $logs['data'] ?? [];
+            foreach ($entries as $entry) {
+                if (is_array($entry)) {
+                    ProcessKnowlarityCallCompleted::apply($entry);
+                }
+            }
+            $log->refresh();
+        }
+
+        $enriched = $this->enrich(collect([$log]));
+        $acc = $enriched[$log->account_id] ?? [];
+        $raw = $log->raw_payload ?? [];
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'id'               => $log->id,
+                'account_id'       => $log->account_id,
+                'account_type'     => $log->account_type,
+                'name'             => $acc['name'] ?? 'Unknown',
+                'phone'            => $acc['phone'] ?? '',
+                'outcome'          => $log->call_outcome,
+                'notes'            => $log->notes,
+                'called_at'        => optional($log->called_at)->toIso8601String(),
+                'source'           => $log->source,
+                'direction'        => $log->direction,
+                'duration_seconds' => $log->duration_seconds,
+                'recording_url'    => $log->recording_url,
+                'call_uuid'        => $log->knowlarity_call_id,
+                'sr_number'        => $raw['knowlarity_number'] ?? null,
+                'customer_number'  => $raw['customer_number'] ?? null,
+            ],
+        ]);
+    }
+
+    /**
      * Streams a call recording's bytes through the CRM (authenticated with
      * Knowlarity's credentials server-side), since the raw recording URL 401s
      * for any client that can't attach the authorization/x-api-key headers -
@@ -308,16 +371,16 @@ class TelecallerController extends Controller
         $todayStr    = Carbon::today()->toDateString();
         $labels      = TelecallerLabel::where('employee_mobile', $mobile)->get()->keyBy('account_id');
         $calledToday = CallLog::where('employee_mobile', $mobile)
-            ->whereDate('called_at', $todayStr)->pluck('account_id')->flip();
+            ->whereDate('called_at', $todayStr)->whereNotNull('account_id')->pluck('account_id')->flip();
         $openFollow  = CallLog::where('employee_mobile', $mobile)
-            ->whereNotNull('follow_up_date')->where('callback_done', false)->pluck('account_id')->flip();
+            ->whereNotNull('follow_up_date')->where('callback_done', false)->whereNotNull('account_id')->pluck('account_id')->flip();
 
         // Last contact (max called_at) and next open follow-up (min follow_up_date) per account.
-        $lastContact = CallLog::where('employee_mobile', $mobile)
+        $lastContact = CallLog::where('employee_mobile', $mobile)->whereNotNull('account_id')
             ->select('account_id', DB::raw('MAX(called_at) as last_at'))
             ->groupBy('account_id')->pluck('last_at', 'account_id');
         $nextFollow  = CallLog::where('employee_mobile', $mobile)
-            ->whereNotNull('follow_up_date')->where('callback_done', false)
+            ->whereNotNull('follow_up_date')->where('callback_done', false)->whereNotNull('account_id')
             ->select('account_id', DB::raw('MIN(follow_up_date) as next_at'))
             ->groupBy('account_id')->pluck('next_at', 'account_id');
 

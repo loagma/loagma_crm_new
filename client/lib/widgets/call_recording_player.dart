@@ -92,9 +92,23 @@ class _CallRecordingPlayerState extends State<CallRecordingPlayer> {
       _bytes = bytes;
       await _player.play(BytesSource(bytes, mimeType: 'audio/mpeg'));
     } catch (e) {
-      if (mounted) setState(() => _error = 'Could not play recording');
+      // Some platform decoders (notably Windows Media Foundation) reject the
+      // narrowband/low-bitrate MP3 variant Knowlarity records calls in, even
+      // though the bytes are a valid recording - "Open Externally" hands the
+      // same audio to the OS's own player/app as a fallback.
+      debugPrint('CallRecordingPlayer: play failed for log ${widget.callLogId}: $e');
+      if (mounted) setState(() => _error = 'Could not play in-app — try "Open Externally" below');
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _openExternally() async {
+    final uri = Uri.parse(ApiService.callRecordingStreamUrl(widget.callLogId));
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else if (mounted) {
+      setState(() => _error = 'Could not open recording externally');
     }
   }
 
@@ -136,7 +150,23 @@ class _CallRecordingPlayerState extends State<CallRecordingPlayer> {
                 ),
           Expanded(
             child: _error != null
-                ? Text(_error!, style: const TextStyle(fontSize: 11.5, color: Colors.red))
+                ? Row(
+                    children: [
+                      Expanded(
+                        child: Text(_error!,
+                            style: const TextStyle(fontSize: 11.5, color: Colors.red)),
+                      ),
+                      TextButton(
+                        onPressed: _openExternally,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text('Open Externally', style: TextStyle(fontSize: 11.5)),
+                      ),
+                    ],
+                  )
                 : SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       trackHeight: 3,

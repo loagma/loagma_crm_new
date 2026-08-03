@@ -192,6 +192,7 @@ Route::prefix('telecaller')->group(function () {
     Route::get('/dashboard',    [TelecallerController::class, 'dashboard']);
     Route::get('/callbacks',    [TelecallerController::class, 'callbacks']);
     Route::get('/call-history', [TelecallerController::class, 'callHistory']);
+    Route::get('/call-status/{id}', [TelecallerController::class, 'callStatus']);
     Route::get('/call-recording/{id}', [TelecallerController::class, 'callRecording']);
     Route::get('/worklist',     [TelecallerController::class, 'worklist']);
     Route::post('/label',       [TelecallerController::class, 'setLabel']);

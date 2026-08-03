@@ -1182,21 +1182,7 @@ class _AccountCard extends StatelessWidget {
     final accountType = (account['_type'] as String?) == 'customer' ? 'customer' : 'lead';
     if (accountId.isEmpty) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Calling… your phone will ring first, then the customer.')),
-    );
-    final result = await ApiService.triggerKnowlarityCall(
-      accountId: accountId,
-      accountType: accountType,
-      customerNumber: phone,
-    );
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(result == null ? 'Could not start the call. Try again.' : 'Call started'),
-        backgroundColor: result == null ? Colors.red : const Color(0xFF43A047),
-      ),
-    );
+    await context.push('/telecaller/call', extra: {'account': account, 'accountType': accountType});
   }
 
   String _formatAccountId(String code) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:go_router/go_router.dart';
@@ -41,6 +43,10 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
 
   bool get _isLead => widget.accountType == 'lead';
 
+  /// A cloud call was placed and we're still waiting for Knowlarity's
+  /// completed-call webhook to resolve its outcome.
+  bool get _liveCallInProgress => _liveLogId != null && !_called;
+
   static const _outcomeOptions = [
     ('answered',   'Answered',        Icons.check_circle_outline_rounded),
     ('busy',       'Busy',            Icons.phone_locked_rounded),
@@ -72,10 +78,16 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
     _selectedFunnelStage = (widget.account['funnelStage']   ?? '').toString().toLowerCase().trim();
     if (!_stageOptions.contains(_selectedStage))   _selectedStage = null;
     if (!_funnelOptions.contains(_selectedFunnelStage)) _selectedFunnelStage = null;
+
+    // Landing on this screen already means "place a cloud call" — start it
+    // right away instead of making the telecaller tap Call again.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _call());
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
+    _tickTimer?.cancel();
     _notesCtrl.dispose();
     _rejectCtrl.dispose();
     _followUpCtrl.dispose();
@@ -83,13 +95,41 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
   }
 
   bool _calling = false;
+  Timer? _pollTimer;
+  int _pollCount = 0;
+  String? _liveLogId;
+  Map<String, dynamic>? _liveStatus; // current SR/Knowlarity call-log row, refreshed while the call is live
+
+  // Ticks once per second from the moment the call is placed, since Knowlarity
+  // only reports a final outcome+duration once the call has actually ended —
+  // there's no live "ringing"/"connected" event to poll. This is what gives
+  // the telecaller a running clock while `_liveStatus.outcome` is still 'pending'.
+  Timer? _tickTimer;
+  int    _elapsedSeconds = 0;
+
+  static const _maxPolls = 40; // ~2 minutes at 3s intervals
+
+  String _fmtDuration(int seconds) {
+    final m = (seconds ~/ 60).toString().padLeft(2, '0');
+    final s = (seconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
 
   Future<void> _call() async {
     final phone = (widget.account['contactNumber'] ?? '').toString();
     if (phone.isEmpty || _calling) return;
     final accountId = (widget.account['id'] ?? '').toString();
 
-    setState(() => _calling = true);
+    _pollTimer?.cancel();
+    _tickTimer?.cancel();
+    setState(() {
+      _calling = true;
+      _called = false;
+      _liveLogId = null;
+      _liveStatus = null;
+      _pollCount = 0;
+      _elapsedSeconds = 0;
+    });
     final result = await ApiService.triggerKnowlarityCall(
       accountId: accountId,
       accountType: widget.accountType,
@@ -105,10 +145,63 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
       return;
     }
 
-    setState(() => _called = true); // unlock the post-call notes
+    setState(() => _liveLogId = (result['id'] ?? '').toString());
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Calling… your phone will ring first, then the customer.')),
     );
+    if (_liveLogId != null && _liveLogId!.isNotEmpty) {
+      _startPolling();
+      _tickTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!mounted || _called) { timer.cancel(); return; }
+        setState(() => _elapsedSeconds++);
+      });
+    }
+  }
+
+  /// Polls the SR/Knowlarity call-log row until the completed-call webhook
+  /// flips its outcome away from 'pending', then unlocks the outcome form.
+  void _startPolling() {
+    _pollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+      if (!mounted || _liveLogId == null) {
+        timer.cancel();
+        return;
+      }
+      _pollCount++;
+      final status = await ApiService.getCallStatus(_liveLogId!);
+      if (!mounted) return;
+      if (status != null) setState(() => _liveStatus = status);
+
+      final outcome = (status?['outcome'] ?? '').toString();
+      if (outcome.isNotEmpty && outcome != 'pending') {
+        timer.cancel();
+        _finishLiveCall(outcome);
+      } else if (_pollCount >= _maxPolls) {
+        // Webhook never landed (not configured yet, or Knowlarity is slow) —
+        // stop polling but let the telecaller carry on manually.
+        timer.cancel();
+      }
+    });
+  }
+
+  /// Unlocks the post-call notes once the call has actually finished,
+  /// pre-filling the outcome Knowlarity detected when it matches one of ours.
+  void _finishLiveCall(String detectedOutcome) {
+    if (!mounted) return;
+    _tickTimer?.cancel();
+    setState(() {
+      _called = true;
+      if (_outcomeOptions.any((o) => o.$1 == detectedOutcome)) {
+        _callOutcome = detectedOutcome;
+      }
+    });
+  }
+
+  /// Manual fallback for when the webhook is delayed or not wired up yet —
+  /// lets the telecaller open the outcome form without waiting further.
+  void _skipWaitingForWebhook() {
+    _pollTimer?.cancel();
+    _tickTimer?.cancel();
+    setState(() => _called = true);
   }
 
   Future<void> _openWhatsApp() async {
@@ -226,6 +319,9 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
     final area    = (widget.account['area']          ?? '').toString();
     final city    = (widget.account['city']          ?? '').toString();
     final pincode = (widget.account['pincode']       ?? '').toString();
+    // Orders don't carry area/city/pincode separately - just one delivery
+    // address string - so fall back to that when the structured fields are empty.
+    final address = (widget.account['address']       ?? '').toString();
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
 
     return Scaffold(
@@ -291,7 +387,7 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
                     ],
                   ),
 
-                  if (area.isNotEmpty || city.isNotEmpty || pincode.isNotEmpty) ...[
+                  if (area.isNotEmpty || city.isNotEmpty || pincode.isNotEmpty || address.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -300,7 +396,9 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
                         const SizedBox(width: 4),
                         Flexible(
                           child: Text(
-                            [area, city, pincode].where((s) => s.isNotEmpty).join(' • '),
+                            [area, city, pincode].any((s) => s.isNotEmpty)
+                                ? [area, city, pincode].where((s) => s.isNotEmpty).join(' • ')
+                                : address,
                             style: const TextStyle(fontSize: 12, color: Colors.black45),
                             textAlign: TextAlign.center,
                           ),
@@ -324,18 +422,22 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         elevation: 0,
                       ),
-                      onPressed: (contact.isNotEmpty && !_calling) ? _call : null,
+                      onPressed: (contact.isNotEmpty && !_calling && !_liveCallInProgress) ? _call : null,
                       icon: _calling
                           ? const SizedBox(
                               width: 18,
                               height: 18,
                               child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                             )
-                          : const Icon(Icons.call_rounded, size: 20),
+                          : Icon(_called ? Icons.replay_rounded : Icons.call_rounded, size: 20),
                       label: Text(
                         _calling
                             ? 'Calling…'
-                            : (contact.isNotEmpty ? 'Call  $contact' : 'No Phone Number'),
+                            : _liveCallInProgress
+                                ? 'Call in progress…'
+                                : _called
+                                    ? 'Call Again'
+                                    : (contact.isNotEmpty ? 'Call  $contact' : 'No Phone Number'),
                         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                       ),
                     ),
@@ -365,11 +467,19 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
 
             const SizedBox(height: 14),
 
-            // ── Post-Call Dashboard ───────────────────────────────────────
-            if (!_called) ...[
+            // ── Live SR / Knowlarity call status ────────────────────────────
+            if (_liveCallInProgress) ...[
+              _liveStatusCard(),
+              const SizedBox(height: 10),
+            ] else if (_called && _liveStatus != null) ...[
+              _callResultCard(),
+              const SizedBox(height: 10),
+            ] else if (!_called) ...[
               _callFirstBanner(),
               const SizedBox(height: 10),
             ],
+
+            // ── Post-Call Dashboard ───────────────────────────────────────
             AbsorbPointer(
               absorbing: !_called,
               child: Opacity(
@@ -608,6 +718,123 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
 
   Widget _fieldLabel(String text) => Text(text,
       style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black54));
+
+  /// Live SR / Knowlarity call-log data shown while a cloud call is in
+  /// progress — polled every few seconds until the completed-call webhook
+  /// resolves the outcome (see [_startPolling]).
+  Widget _liveStatusCard() {
+    final status = _liveStatus;
+    final srNumber = (status?['sr_number'] ?? '').toString();
+    final callUuid = (status?['call_uuid'] ?? '').toString();
+    final direction = (status?['direction'] ?? '').toString();
+    final waitedTooLong = _pollCount >= _maxPolls;
+
+    return _sectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const SizedBox(
+                width: 16, height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: _green),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text('Call in progress — live SR log',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.black87)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _detailRow('Status', waitedTooLong ? 'Still ringing / no update yet' : 'Connecting…'),
+          _detailRow('Talk Time', _fmtDuration(_elapsedSeconds)),
+          _detailRow('SR Number', srNumber.isNotEmpty ? srNumber : '—'),
+          _detailRow('Call UUID', callUuid.isNotEmpty ? callUuid : '—'),
+          _detailRow('Direction', direction.isNotEmpty ? direction : '—'),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: _skipWaitingForWebhook,
+              style: OutlinedButton.styleFrom(foregroundColor: _gold, side: const BorderSide(color: _gold)),
+              child: const Text('Call already finished — fill outcome now',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static const _outcomeLabels = {
+    'answered':   'Connected',
+    'busy':       'Busy',
+    'no_answer':  'No Answer',
+    'switch_off': 'Switched Off',
+    'invalid':    'Invalid Number',
+  };
+
+  /// Persistent summary of how the last cloud call actually went, shown once
+  /// the outcome has resolved — replaces the live-progress card so the
+  /// telecaller can still see the connected status/duration/SR number while
+  /// filling out the post-call form below.
+  Widget _callResultCard() {
+    final status = _liveStatus!;
+    final outcome  = (status['outcome'] ?? '').toString();
+    final duration = int.tryParse((status['duration_seconds'] ?? 0).toString()) ?? 0;
+    final srNumber = (status['sr_number'] ?? '').toString();
+    final connected = outcome == 'answered';
+    final label = _outcomeLabels[outcome] ?? (outcome.isEmpty ? 'Unknown' : outcome);
+    final color = connected ? _green : Colors.orange.shade700;
+
+    return _sectionCard(
+      child: Row(
+        children: [
+          Icon(connected ? Icons.call_end_rounded : Icons.phone_missed_rounded, color: color, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: color)),
+                if (srNumber.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text('SR $srNumber',
+                      style: const TextStyle(fontSize: 11.5, color: Colors.black45)),
+                ],
+              ],
+            ),
+          ),
+          if (connected)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(_fmtDuration(duration),
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _green)),
+                const Text('Talk Time',
+                    style: TextStyle(fontSize: 10, color: Colors.black45)),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value) => Padding(
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 90,
+          child: Text(label, style: const TextStyle(fontSize: 12, color: Colors.black45, fontWeight: FontWeight.w600)),
+        ),
+        Expanded(child: Text(value, style: const TextStyle(fontSize: 12.5, color: Colors.black87))),
+      ],
+    ),
+  );
 
   Widget _callFirstBanner() => Container(
     width: double.infinity,

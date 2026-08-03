@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
 import '../../services/notification_service.dart';
@@ -116,20 +117,10 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
       _toast('No phone number on file');
       return;
     }
-    _toast('Calling… your phone will ring first, then the customer.');
-    final result = await ApiService.triggerKnowlarityCall(
-      accountId: _id,
-      accountType: widget.accountType,
-      customerNumber: _phone,
-    );
+    widget.onCalled?.call();
+    await context.push('/telecaller/call', extra: {'account': _acc, 'accountType': widget.accountType});
     if (!mounted) return;
-    if (result != null) {
-      _callInitiated = true;
-      widget.onCalled?.call();
-      _toast('Call started');
-    } else {
-      _toast('Could not start the call. Try again.');
-    }
+    await _load(); // pick up the outcome/notes just logged on the call screen
   }
 
   Future<void> _load() async {

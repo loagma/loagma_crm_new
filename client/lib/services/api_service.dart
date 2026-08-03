@@ -849,6 +849,12 @@ class ApiService {
     return null;
   }
 
+  /// Poll the live status of one cloud (Knowlarity) call — used right after
+  /// [triggerKnowlarityCall] to detect when the completed webhook lands and
+  /// to show the current SR/call-log data while the call is in progress.
+  static Future<Map<String, dynamic>?> getCallStatus(String callLogId) =>
+      _tcGetMap('call-status/$callLogId');
+
   // ── Telecaller dashboard + modules (live data) ─────────────────────────────
 
   static Future<Map<String, dynamic>?> _tcGetMap(String path) async {
@@ -914,6 +920,17 @@ class ApiService {
   static String callRecordingDownloadUrl(int callLogId) {
     final uri = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/call-recording/$callLogId').replace(
       queryParameters: {'download': '1', 'token': UserService.token},
+    );
+    return uri.toString();
+  }
+
+  /// Same authenticated recording URL as [callRecordingDownloadUrl] but
+  /// without `download=1` - used as a fallback to open the recording in the
+  /// device's own media player/browser when the in-app player can't decode
+  /// it (e.g. narrowband/low-bitrate MP3 variants some platform codecs reject).
+  static String callRecordingStreamUrl(int callLogId) {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/call-recording/$callLogId').replace(
+      queryParameters: {'token': UserService.token},
     );
     return uri.toString();
   }

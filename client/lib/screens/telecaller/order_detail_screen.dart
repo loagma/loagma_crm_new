@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
@@ -81,22 +82,17 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   void _printInvoice() => InvoicePrinter.print(context, _currentOrderId, preloaded: _order);
 
-  Future<void> _cloudCall(String buyerUserId, String phone) async {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Calling… your phone will ring first, then the customer.')),
-    );
-    final result = await ApiService.triggerKnowlarityCall(
-      accountId: buyerUserId,
-      accountType: 'customer',
-      customerNumber: phone,
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(result == null ? 'Could not start the call. Try again.' : 'Call started'),
-        backgroundColor: result == null ? Colors.red : const Color(0xFF43A047),
-      ),
-    );
+  Future<void> _cloudCall(String buyerUserId, String phone, [String name = '', String shopName = '', String address = '']) async {
+    await context.push('/telecaller/call', extra: {
+      'account': {
+        'id':            buyerUserId,
+        'contactNumber': phone,
+        'businessName':  shopName.isNotEmpty ? shopName : name,
+        'personName':    name,
+        'address':       address,
+      },
+      'accountType': 'customer',
+    });
   }
 
   double? _toDouble(dynamic v) {
@@ -397,7 +393,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             const SizedBox(width: 6),
                             _iconBtn(
                               const Icon(Icons.ring_volume_rounded, size: 16, color: Color(0xFF8E24AA)),
-                              () => _cloudCall(buyerId, ownerContact),
+                              () => _cloudCall(buyerId, ownerContact, ownerName, shop, address),
                               bg: const Color(0xFF8E24AA).withValues(alpha: 0.12),
                             ),
                             const SizedBox(width: 6),

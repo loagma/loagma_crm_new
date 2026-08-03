@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
@@ -302,22 +303,19 @@ class _OrderCard extends StatelessWidget {
     onLaunch('https://wa.me/$number');
   }
 
-  Future<void> _cloudCall(BuildContext context, String buyerUserId, String phone) async {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Calling… your phone will ring first, then the customer.')),
-    );
-    final result = await ApiService.triggerKnowlarityCall(
-      accountId: buyerUserId,
-      accountType: 'customer',
-      customerNumber: phone,
-    );
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(result == null ? 'Could not start the call. Try again.' : 'Call started'),
-        backgroundColor: result == null ? Colors.red : const Color(0xFF43A047),
-      ),
-    );
+  Future<void> _cloudCall(BuildContext context, String buyerUserId, String phone,
+      [String name = '', String shopName = '', String address = '', String area = '']) async {
+    await context.push('/telecaller/call', extra: {
+      'account': {
+        'id':            buyerUserId,
+        'contactNumber': phone,
+        'businessName':  shopName.isNotEmpty ? shopName : name,
+        'personName':    name,
+        'address':       address,
+        'area':          area,
+      },
+      'accountType': 'customer',
+    });
   }
 
   @override
@@ -386,7 +384,7 @@ class _OrderCard extends StatelessWidget {
                 const SizedBox(width: 6),
                 _iconBtn(
                   const Icon(Icons.ring_volume_rounded, size: 16, color: Color(0xFF8E24AA)),
-                  () => _cloudCall(context, buyerId, phone),
+                  () => _cloudCall(context, buyerId, phone, name, shop, address, area),
                   bg: const Color(0xFF8E24AA).withValues(alpha: 0.12),
                 ),
                 const SizedBox(width: 6),
