@@ -20,6 +20,7 @@ class RoleDashboardTemplate extends StatefulWidget {
 
 class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
   int _pendingCount = 0;
+  int _assignedComplaintCount = 0;
   Timer? _pollTimer;
 
   // Any role above the leaf submitter roles (salesman/telecaller) can be an
@@ -33,18 +34,23 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
   @override
   void initState() {
     super.initState();
-    if (_showBell) {
-      _loadPendingCount();
-      // Poll while this screen is alive so approvers get a device
-      // notification the moment a new request comes in below them.
-      _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) => _loadPendingCount());
-    }
+    _loadCounts();
+    // Poll while this screen is alive so approvers get a device notification
+    // the moment a new request comes in below them, and ANY role (including
+    // salesman/telecaller) gets notified the moment a complaint is assigned
+    // to them — assignment can be delegated all the way down the hierarchy.
+    _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) => _loadCounts());
   }
 
   @override
   void dispose() {
     _pollTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadCounts() async {
+    if (_showBell) await _loadPendingCount();
+    await _loadAssignedComplaintCount();
   }
 
   Future<void> _loadPendingCount() async {
@@ -60,6 +66,21 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
       );
     }
     setState(() => _pendingCount = count);
+  }
+
+  Future<void> _loadAssignedComplaintCount() async {
+    final count = await ApiService.complaintAssignedCount();
+    if (!mounted) return;
+    if (count > _assignedComplaintCount) {
+      NotificationService.showNow(
+        id: 9200,
+        title: 'Complaint assigned to you',
+        body: count == 1
+            ? 'You have 1 complaint to handle.'
+            : 'You have $count complaints to handle.',
+      );
+    }
+    setState(() => _assignedComplaintCount = count);
   }
 
   Future<void> _logout(BuildContext context) async {
@@ -174,6 +195,37 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
                   ),
               ],
             ),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.assignment_ind_outlined, color: Colors.white),
+                tooltip: 'Complaints assigned to me',
+                onPressed: () async {
+                  await context.push('/complaints', extra: {'assignedToMe': true});
+                  if (mounted) _loadAssignedComplaintCount();
+                },
+              ),
+              if (_assignedComplaintCount > 0)
+                Positioned(
+                  right: 6,
+                  top: 6,
+                  child: Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: const BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                    constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                    child: Text(
+                      _assignedComplaintCount > 99 ? '99+' : '$_assignedComplaintCount',
+                      style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ],
       ),
       body: Padding(

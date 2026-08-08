@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:battery_plus/battery_plus.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
@@ -10,6 +11,37 @@ import 'package:sqflite/sqflite.dart';
 
 import 'api_service.dart';
 import 'user_service.dart';
+
+/// Shared by both capture paths: refuses to start a recorder that can't
+/// actually get a fix. Without this, a denied/off location would still spin
+/// up the Android foreground service ("Recording your route" notification)
+/// or the web/desktop stream, capture nothing, and never tell anyone why the
+/// admin map stays empty for that employee.
+Future<bool> _hasUsableLocationAccess() async {
+  try {
+    if (!await Geolocator.isLocationServiceEnabled()) return false;
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    return permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
+  } catch (_) {
+    return false;
+  }
+}
+
+double _metersBetween(double lat1, double lng1, double lat2, double lng2) {
+  const r = 6371000.0;
+  final dLat = (lat2 - lat1) * math.pi / 180;
+  final dLng = (lng2 - lng1) * math.pi / 180;
+  final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+      math.cos(lat1 * math.pi / 180) *
+          math.cos(lat2 * math.pi / 180) *
+          math.sin(dLng / 2) *
+          math.sin(dLng / 2);
+  return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+}
 
 /// Continuous GPS capture while punched in.
 ///
@@ -22,6 +54,17 @@ import 'user_service.dart';
 ///
 /// start() is called after punch-in success, stop() after punch-out success
 /// (see app_drawer.dart). Both no-op when already in the desired state.
+///
+/// `flutter_foreground_task` and `sqflite` only ship platform code for
+/// Android/iOS (sqflite additionally covers macOS, but not Windows/Linux/web).
+/// Calling either on an unsupported platform throws MissingPluginException,
+/// which — because start()/stop() are fired-and-forgotten from app_drawer.dart
+/// — used to fail silently: punch-in would "succeed" with tracking never
+/// actually starting, and the admin live map would show that employee stuck
+/// on "No location yet" forever. Web/Windows/Linux now route to
+/// [_ForegroundOnlyTracker] instead, a plain-isolate fallback (no background
+/// service, no local queue table — those platforms can't do persistent
+/// background execution anyway; the tab/window must stay open).
 class TrackingService {
   TrackingService._();
 
@@ -33,8 +76,18 @@ class TrackingService {
   // multiply data/battery — it only shortens how long a real point waits.
   static const int _flushIntervalMs = 9000;
 
-  static Future<void> start() async {
-    if (await FlutterForegroundTask.isRunningService) return;
+  static bool get _supportsBackgroundService =>
+      !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+  /// Returns whether tracking is (now) actually running, so callers can warn
+  /// the employee instead of assuming a fire-and-forget call always works.
+  static Future<bool> start() async {
+    if (!_supportsBackgroundService) {
+      return _ForegroundOnlyTracker.instance.start();
+    }
+    if (await FlutterForegroundTask.isRunningService) return true;
+
+    if (!await _hasUsableLocationAccess()) return false;
 
     // Android 13+ needs runtime notification permission for the
     // foreground-service notification to be visible.
@@ -73,9 +126,14 @@ class TrackingService {
       notificationText: 'Recording your route while punched in',
       callback: trackingTaskCallback,
     );
+    return true;
   }
 
   static Future<void> stop() async {
+    if (!_supportsBackgroundService) {
+      await _ForegroundOnlyTracker.instance.stop();
+      return;
+    }
     if (!await FlutterForegroundTask.isRunningService) return;
     await FlutterForegroundTask.stopService();
   }
@@ -168,18 +226,6 @@ class _TrackingTaskHandler extends TaskHandler {
       print('TrackingService stream closed — resubscribing in 5s');
       Future.delayed(const Duration(seconds: 5), _subscribeStream);
     });
-  }
-
-  double _metersBetween(double lat1, double lng1, double lat2, double lng2) {
-    const r = 6371000.0;
-    final dLat = (lat2 - lat1) * math.pi / 180;
-    final dLng = (lng2 - lng1) * math.pi / 180;
-    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(lat1 * math.pi / 180) *
-            math.cos(lat2 * math.pi / 180) *
-            math.sin(dLng / 2) *
-            math.sin(dLng / 2);
-    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
   }
 
   @override
@@ -351,5 +397,182 @@ class _TrackingTaskHandler extends TaskHandler {
     }
 
     await FlutterForegroundTask.stopService();
+  }
+}
+
+/// Fallback used on platforms `flutter_foreground_task`/`sqflite` don't cover
+/// (web, Windows, Linux — see the class doc on [TrackingService]).
+///
+/// Same capture thinning (accuracy gate, ≥5m distance, 60s heartbeat) and
+/// the same ~9s flush cadence as the mobile path, but running as a plain
+/// StreamSubscription/Timer in the app's own isolate — there's no background
+/// service to host it, and no on-disk queue table, so a closed tab/window
+/// loses whatever hasn't flushed yet. That's the realistic ceiling for a
+/// browser tab or a desktop window: best-effort tracking while the app is
+/// actually open, not guaranteed background delivery.
+class _ForegroundOnlyTracker {
+  _ForegroundOnlyTracker._();
+  static final _ForegroundOnlyTracker instance = _ForegroundOnlyTracker._();
+
+  static const double _minKeepMeters = 5;
+  static const double _maxAccuracyMeters = 30;
+  static const Duration _heartbeat = Duration(seconds: 60);
+  static const Duration _batteryRefresh = Duration(seconds: 60);
+  // No on-disk cap needed like the sqflite queue's _queueCapRows — this list
+  // only ever holds a few flush cycles' worth before _flush() drains it.
+  static const int _queueCapRows = 2000;
+
+  StreamSubscription<Position>? _positionSub;
+  Timer? _flushTimer;
+  final Battery _battery = Battery();
+  int? _cachedBatteryLevel;
+  DateTime? _batteryReadAt;
+
+  // (id, ping) pairs instead of a plain list: a flush snapshots the queue,
+  // awaits the network call, then must remove exactly what it sent. Removing
+  // "the first N" by position instead of by id would be wrong if a new point
+  // got appended (or the cap below trimmed the front) while that await was
+  // in flight — id-based removal is correct regardless of what else touched
+  // the queue in between.
+  final List<(int, Map<String, dynamic>)> _queue = [];
+  int _nextId = 0;
+  bool _flushing = false;
+  bool _dead = false;
+  double? _lastKeptLat;
+  double? _lastKeptLng;
+  DateTime? _lastKeptAt;
+
+  Future<bool> start() async {
+    if (_positionSub != null) return true;
+
+    if (!await _hasUsableLocationAccess()) {
+      print('TrackingService (foreground-only): location permission/service unavailable');
+      return false;
+    }
+
+    _dead = false;
+    _lastKeptLat = null;
+    _lastKeptLng = null;
+    _lastKeptAt = null;
+
+    const settings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 0, // thinned client-side, same as the mobile path
+    );
+
+    _positionSub = Geolocator.getPositionStream(locationSettings: settings)
+        .listen(_onPosition, onError: (e) {
+      print('TrackingService (foreground-only) stream error: $e');
+    });
+
+    _flushTimer = Timer.periodic(
+      const Duration(milliseconds: TrackingService._flushIntervalMs),
+      (_) => _flush(),
+    );
+    return true;
+  }
+
+  Future<void> stop() async {
+    await _positionSub?.cancel();
+    _positionSub = null;
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    // Best-effort final flush so the last few captured points aren't lost
+    // just because punch-out happened right after a capture. Whatever is
+    // still queued after this (e.g. offline) is deliberately left in place,
+    // not cleared — the next start() spins the flush timer back up and
+    // drains it then, instead of discarding it outright.
+    await _flush();
+  }
+
+  Future<void> _onPosition(Position pos) async {
+    if (_dead) return;
+
+    final now = DateTime.now();
+    final heartbeatDue =
+        _lastKeptAt == null || now.difference(_lastKeptAt!) >= _heartbeat;
+
+    if (!heartbeatDue) {
+      final acc = pos.accuracy;
+      if (acc.isFinite && acc > _maxAccuracyMeters) return;
+      final moved = _metersBetween(
+          _lastKeptLat!, _lastKeptLng!, pos.latitude, pos.longitude);
+      if (moved < _minKeepMeters) return;
+    }
+
+    _lastKeptLat = pos.latitude;
+    _lastKeptLng = pos.longitude;
+    _lastKeptAt = now;
+
+    _queue.add((_nextId++, {
+      'lat': pos.latitude,
+      'lng': pos.longitude,
+      'accuracy': pos.accuracy.isFinite ? pos.accuracy : null,
+      'speed': pos.speed.isFinite ? pos.speed : null,
+      'heading': pos.heading.isFinite ? pos.heading : null,
+      'battery': await _batteryLevel(),
+      'is_mock': pos.isMocked,
+      'recorded_at': pos.timestamp.toUtc().toIso8601String(),
+    }));
+
+    if (_queue.length > _queueCapRows) {
+      _queue.removeRange(0, _queue.length - _queueCapRows);
+    }
+  }
+
+  Future<int?> _batteryLevel() async {
+    final now = DateTime.now();
+    if (_cachedBatteryLevel != null &&
+        _batteryReadAt != null &&
+        now.difference(_batteryReadAt!) < _batteryRefresh) {
+      return _cachedBatteryLevel;
+    }
+    try {
+      _cachedBatteryLevel = await _battery.batteryLevel;
+      _batteryReadAt = now;
+    } catch (_) {
+      // Not every desktop/browser exposes a battery API — fine, battery is
+      // display-only on the admin side.
+    }
+    return _cachedBatteryLevel;
+  }
+
+  Future<void> _flush() async {
+    if (_flushing || _dead || _queue.isEmpty) return;
+    _flushing = true;
+
+    final snapshot = List<(int, Map<String, dynamic>)>.from(_queue);
+    final batch = snapshot.map((p) => p.$2).toList();
+    try {
+      var res = await ApiService.postPings(batch);
+
+      if (res != null && res['_status'] == 401) {
+        await UserService.init();
+        res = await ApiService.postPings(batch);
+        if (res != null && res['_status'] == 401) {
+          _dead = true;
+          await _positionSub?.cancel();
+          _positionSub = null;
+          _flushTimer?.cancel();
+          _flushTimer = null;
+          _queue.clear();
+          _flushing = false;
+          return;
+        }
+      }
+
+      if (res != null && res['success'] == true) {
+        // Remove exactly what was sent, by id — never by position/count, so
+        // a point appended (or the cap trimmed) while this await was in
+        // flight can't cause the wrong entries to be dropped.
+        final sentIds = snapshot.map((p) => p.$1).toSet();
+        _queue.removeWhere((p) => sentIds.contains(p.$1));
+      }
+      // Any other outcome: keep the queue, retry on the next timer tick.
+    } catch (e) {
+      print('TrackingService (foreground-only) flush error: $e');
+    } finally {
+      _flushing = false;
+    }
   }
 }

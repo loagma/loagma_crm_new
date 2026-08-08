@@ -7,13 +7,18 @@ import '../../services/user_service.dart';
 import '../../widgets/account_map_screen.dart';
 import '../telecaller/telecaller_actions.dart';
 
-/// Complaint ticket list. Role-aware: salesman/telecaller see only tickets
-/// they raised (own status tracking); admin/incharge-type roles see a
-/// hierarchy-scoped queue (mirrors AttendanceController's approval scoping)
-/// with a status-update action. v1 — no auto-routing, no SLA, manual status
-/// only (open -> in_progress -> resolved -> closed).
+/// Complaint ticket list. Role-aware: salesman/telecaller default to tickets
+/// they raised (own status tracking); admin/incharge-type roles default to a
+/// hierarchy-scoped queue (mirrors AttendanceController's approval scoping).
+/// Everyone — any role — can also switch to an "Assigned to Me" view, since a
+/// complaint can be delegated all the way down to a salesman/telecaller, not
+/// just to fellow incharges. Whoever a ticket is currently assigned to gets
+/// a status-update action on it even outside their normal scope; only
+/// incharge-type roles (and admin) can re-delegate it further.
 class ComplaintsScreen extends StatefulWidget {
-  const ComplaintsScreen({super.key});
+  final bool initialAssignedToMe;
+
+  const ComplaintsScreen({super.key, this.initialAssignedToMe = false});
 
   @override
   State<ComplaintsScreen> createState() => _ComplaintsScreenState();
@@ -27,6 +32,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
   bool _hasMore = true;
   int _page = 1;
   String _statusFilter = 'all'; // all | open | in_progress | resolved | closed
+  late bool _assignedToMe = widget.initialAssignedToMe;
   final _scroll = ScrollController();
 
   bool get _isApprover {
@@ -62,8 +68,10 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
     try {
       final res = await ApiService.getComplaints(
         page: _page,
-        // Non-approvers (salesman/telecaller) only ever see their own tickets.
-        raisedBy: _isApprover ? null : UserService.currentMobile,
+        assignedTo: _assignedToMe ? UserService.currentMobile : null,
+        // Non-approvers (salesman/telecaller) default to their own raised
+        // tickets; ignored when the "Assigned to Me" scope is active.
+        raisedBy: (_assignedToMe || _isApprover) ? null : UserService.currentMobile,
         status: _statusFilter == 'all' ? null : _statusFilter,
       );
       if (!mounted) return;
@@ -84,6 +92,12 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
   void _setStatusFilter(String status) {
     if (_statusFilter == status) return;
     setState(() => _statusFilter = status);
+    _load(refresh: true);
+  }
+
+  void _setAssignedToMe(bool value) {
+    if (_assignedToMe == value) return;
+    setState(() => _assignedToMe = value);
     _load(refresh: true);
   }
 
@@ -153,20 +167,132 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
     }
   }
 
+  /// Staff this user may hand a complaint to: themself, plus everyone in
+  /// their own downward incharge hierarchy (admin may assign to anyone).
+  /// Mirrors the recursive walk in MyInchargesScreen / getDescendantMobiles.
+  Future<List<Map<String, String>>> _loadAssignableStaff() async {
+    final role = (UserService.currentRole ?? '').toLowerCase().trim();
+    final selfMobile = (UserService.currentMobile ?? '').trim();
+
+    final results = await Future.wait([
+      ApiService.getAllInchargeAssigns(),
+      ApiService.getEmployees(perPage: 500),
+    ]);
+    final allAssigns = results[0];
+    final allStaff = results[1];
+
+    final empByMobile = <String, Map<String, dynamic>>{
+      for (final e in allStaff) (e['mobile'] ?? '').toString().trim(): e,
+    };
+
+    final Set<String> targets;
+    if (role == 'admin') {
+      targets = empByMobile.keys.where((m) => m.isNotEmpty && m != selfMobile).toSet();
+    } else {
+      final childIdsOf = <String, List<String>>{};
+      for (final a in allAssigns) {
+        final parentId = (a['head_incharge_id'] ?? '').toString();
+        final ids = a['incharge_ids'];
+        if (parentId.isEmpty || parentId == '0' || ids is! List) continue;
+        childIdsOf[parentId] =
+            ids.map((e) => e.toString()).where((s) => s.isNotEmpty && s != '0').toList();
+      }
+      targets = <String>{};
+      final stack = [selfMobile];
+      final visited = {selfMobile};
+      while (stack.isNotEmpty) {
+        final cur = stack.removeLast();
+        for (final child in childIdsOf[cur] ?? const <String>[]) {
+          if (visited.contains(child)) continue;
+          visited.add(child);
+          targets.add(child);
+          stack.add(child);
+        }
+      }
+    }
+
+    final list = targets
+        .where((m) => empByMobile.containsKey(m)) // drop stale/removed staff
+        .map((m) => {
+              'mobile': m,
+              'name': (empByMobile[m]?['name'] ?? '').toString(),
+              'role': (empByMobile[m]?['role'] ?? '').toString(),
+            })
+        .toList();
+    list.sort((a, b) => (a['name'] ?? '').compareTo(b['name'] ?? ''));
+    return list;
+  }
+
+  Future<void> _assignComplaint(Map<String, dynamic> record, int index) async {
+    final selfMobile = (UserService.currentMobile ?? '').trim();
+    final selfName = (UserService.currentName ?? '').trim();
+    final selfRole = (UserService.currentRole ?? '').trim();
+
+    List<Map<String, String>> staff;
+    try {
+      staff = await _loadAssignableStaff();
+    } catch (e) {
+      if (mounted) Fluttertoast.showToast(msg: 'Failed to load team: $e');
+      return;
+    }
+    if (!mounted) return;
+
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (ctx) => _AssignDialog(
+        staff: staff,
+        selfMobile: selfMobile,
+        selfName: selfName.isEmpty ? 'Myself' : selfName,
+        selfRole: selfRole,
+        currentAssignee: record['assigned_to']?.toString(),
+      ),
+    );
+    if (selected == null || !mounted) return;
+
+    final res = await ApiService.assignComplaint(record['id'] as int, assignedTo: selected);
+    if (!mounted) return;
+
+    if (res != null && !res.containsKey('errors')) {
+      final data = Map<String, dynamic>.from(res['data'] as Map? ?? {});
+      setState(() {
+        _records[index] = {..._records[index], ...data};
+      });
+      Fluttertoast.showToast(msg: 'Complaint assigned');
+    } else {
+      Fluttertoast.showToast(msg: res?['errors']?.toString() ?? 'Failed to assign complaint');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final title = _assignedToMe ? 'Assigned to Me' : (_isApprover ? 'Complaints' : 'My Complaints');
+    final myMobile = UserService.currentMobile ?? '';
+
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
         backgroundColor: _gold,
         foregroundColor: Colors.white,
-        title: Text(_isApprover ? 'Complaints' : 'My Complaints', style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
         actions: [IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: () => _load(refresh: true))],
       ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _scopeChip(false, _isApprover ? 'All' : 'Raised by Me'),
+                  const SizedBox(width: 6),
+                  _scopeChip(true, 'Assigned to Me'),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -215,10 +341,19 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
                                 child: Center(child: CircularProgressIndicator(color: _gold)),
                               );
                             }
+                            final record = _records[i];
+                            final assignedToMobile = (record['assigned_to'] ?? '').toString();
+                            // Whoever it's assigned to may act on it even if they're a
+                            // leaf role (salesman/telecaller) outside the normal approver
+                            // set; only incharge-type roles/admin may re-delegate further.
+                            final canUpdateStatus = _isApprover ||
+                                (assignedToMobile.isNotEmpty && assignedToMobile == myMobile);
                             return _ComplaintCard(
-                              record: _records[i],
-                              showRaisedBy: _isApprover,
+                              record: record,
+                              showRaisedBy: canUpdateStatus,
+                              canAssign: _isApprover,
                               onUpdateStatus: () => _updateStatus(_records[i], i),
+                              onAssign: () => _assignComplaint(_records[i], i),
                             );
                           },
                         ),
@@ -226,6 +361,23 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _scopeChip(bool value, String label) {
+    final selected = _assignedToMe == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => _setAssignedToMe(value),
+      selectedColor: const Color(0xFF1565C0).withValues(alpha: 0.15),
+      backgroundColor: Colors.white,
+      labelStyle: TextStyle(
+        fontSize: 12.5,
+        fontWeight: FontWeight.w700,
+        color: selected ? const Color(0xFF1565C0) : Colors.black87,
+      ),
+      side: BorderSide(color: selected ? const Color(0xFF1565C0) : Colors.grey.shade300),
     );
   }
 
@@ -250,9 +402,17 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
 class _ComplaintCard extends StatelessWidget {
   final Map<String, dynamic> record;
   final bool showRaisedBy;
+  final bool canAssign;
   final VoidCallback onUpdateStatus;
+  final VoidCallback onAssign;
 
-  const _ComplaintCard({required this.record, required this.showRaisedBy, required this.onUpdateStatus});
+  const _ComplaintCard({
+    required this.record,
+    required this.showRaisedBy,
+    required this.canAssign,
+    required this.onUpdateStatus,
+    required this.onAssign,
+  });
 
   static const _statusColors = <String, Color>{
     'open': Color(0xFFF59E0B),
@@ -339,6 +499,10 @@ class _ComplaintCard extends StatelessWidget {
     final raisedByName = record['raised_by_name']?.toString();
     final raisedByRole = record['raised_by_role']?.toString() ?? '';
     final raisedByLabel = (raisedByName != null && raisedByName.isNotEmpty) ? raisedByName : raisedByMobile;
+    final assignedToMobile = record['assigned_to']?.toString() ?? '';
+    final assignedToName = record['assigned_to_name']?.toString() ?? '';
+    final assignedToRole = record['assigned_to_role']?.toString() ?? '';
+    final assignedToLabel = assignedToName.isNotEmpty ? assignedToName : assignedToMobile;
     final resolutionNotes = record['resolution_notes']?.toString() ?? '';
     final location = [accountArea, accountCity].where((s) => s.isNotEmpty).join(', ');
 
@@ -488,21 +652,208 @@ class _ComplaintCard extends StatelessWidget {
               ),
             ],
             if (showRaisedBy) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(
+                    assignedToLabel.isNotEmpty ? Icons.assignment_ind_rounded : Icons.assignment_late_outlined,
+                    size: 13,
+                    color: assignedToLabel.isNotEmpty ? const Color(0xFF1565C0) : Colors.grey.shade400,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      assignedToLabel.isNotEmpty
+                          ? 'Assigned to $assignedToLabel${assignedToRole.isNotEmpty ? ' ($assignedToRole)' : ''}'
+                          : 'Not yet assigned',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: assignedToLabel.isNotEmpty ? const Color(0xFF1565C0) : Colors.grey.shade500,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 10),
               const Divider(height: 1),
               const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: onUpdateStatus,
-                  icon: const Icon(Icons.edit_note_rounded, size: 16),
-                  label: const Text('Update Status', style: TextStyle(fontWeight: FontWeight.w600)),
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: onUpdateStatus,
+                      icon: const Icon(Icons.edit_note_rounded, size: 16),
+                      label: const Text('Update Status', style: TextStyle(fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                  if (canAssign) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: onAssign,
+                        style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF1565C0)),
+                        icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
+                        label: Text(assignedToLabel.isNotEmpty ? 'Reassign' : 'Assign',
+                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ],
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Picker for who a complaint should be handed to: the current user
+/// ("solve it myself") pinned at the top, plus everyone in their own
+/// downward hierarchy (or, for admin, every staff member). Returns the
+/// chosen mobile via [Navigator.pop], or null if cancelled.
+class _AssignDialog extends StatefulWidget {
+  final List<Map<String, String>> staff;
+  final String selfMobile;
+  final String selfName;
+  final String selfRole;
+  final String? currentAssignee;
+
+  const _AssignDialog({
+    required this.staff,
+    required this.selfMobile,
+    required this.selfName,
+    required this.selfRole,
+    required this.currentAssignee,
+  });
+
+  @override
+  State<_AssignDialog> createState() => _AssignDialogState();
+}
+
+class _AssignDialogState extends State<_AssignDialog> {
+  static const _gold = Color(0xFFD7BE69);
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final q = _query.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? widget.staff
+        : widget.staff
+            .where((s) =>
+                (s['name'] ?? '').toLowerCase().contains(q) || (s['mobile'] ?? '').contains(q))
+            .toList();
+    final selfMatches = q.isEmpty ||
+        widget.selfName.toLowerCase().contains(q) ||
+        widget.selfMobile.contains(q);
+
+    return AlertDialog(
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      titlePadding: const EdgeInsets.fromLTRB(20, 16, 12, 0),
+      title: Row(
+        children: [
+          const Expanded(
+            child: Text('Assign Complaint',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.black87)),
+          ),
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: Icon(Icons.close_rounded, color: Colors.grey.shade600),
+            tooltip: 'Close',
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+      contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _searchCtrl,
+              style: const TextStyle(color: Colors.black87, fontSize: 13.5),
+              onChanged: (v) => setState(() => _query = v),
+              decoration: InputDecoration(
+                hintText: 'Search team by name or mobile…',
+                hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                prefixIcon: Icon(Icons.search_rounded, size: 20, color: Colors.grey.shade600),
+                isDense: true,
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.grey.shade300)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.grey.shade300)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _gold, width: 1.5)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  if (selfMatches)
+                    _tile(
+                      mobile: widget.selfMobile,
+                      name: '${widget.selfName} (Myself)',
+                      role: widget.selfRole,
+                      icon: Icons.person_pin_circle_rounded,
+                    ),
+                  ...filtered.map((s) => _tile(
+                        mobile: s['mobile'] ?? '',
+                        name: s['name'] ?? '',
+                        role: s['role'] ?? '',
+                        icon: Icons.person_rounded,
+                      )),
+                  if (!selfMatches && filtered.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      child: Center(
+                        child: Text('No matches', style: TextStyle(color: Colors.grey.shade600)),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('Cancel', style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.w600)),
+        ),
+      ],
+    );
+  }
+
+  Widget _tile({required String mobile, required String name, required String role, required IconData icon}) {
+    final isCurrent = widget.currentAssignee != null && widget.currentAssignee == mobile;
+    return ListTile(
+      dense: true,
+      leading: CircleAvatar(
+        radius: 16,
+        backgroundColor: _gold.withValues(alpha: 0.15),
+        child: Icon(icon, size: 16, color: _gold),
+      ),
+      title: Text(name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Colors.black87)),
+      subtitle: Text(
+        [if (role.isNotEmpty) role, mobile].where((s) => s.isNotEmpty).join(' · '),
+        style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+      ),
+      trailing: isCurrent ? const Icon(Icons.check_circle_rounded, color: Color(0xFF43A047), size: 20) : null,
+      onTap: () => Navigator.pop(context, mobile),
     );
   }
 }

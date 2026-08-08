@@ -732,6 +732,17 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
               if (_workDuration.isNegative) _workDuration = Duration.zero;
 
               _startTimer();
+              // App was relaunched (killed process, crash, device reboot)
+              // while still punched in — the foreground service/stream died
+              // with the old process, so it must be restarted here or the
+              // rest of the shift silently stops recording. start() is a
+              // no-op if already running. This also re-runs on every 30s
+              // poll while punched in (see initState's _pollTimer) — no
+              // toast here on failure, or a persistently-off location would
+              // spam a warning every 30s; the explicit punch-in/confirm
+              // actions already surface that warning once, at the moment
+              // tracking should start.
+              await TrackingService.start();
             }
           }
         }
@@ -896,6 +907,10 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
       if (!mounted) return;
       if (res != null && res['success'] == true) {
         _pollTimer?.cancel(); // no longer need to poll once confirmed
+        // Must run before setState — start() awaits permission/service
+        // checks and can't be called from inside a synchronous setState body.
+        final trackingOk = type == 'in' ? await TrackingService.start() : true;
+        if (!mounted) return;
         setState(() {
           if (type == 'in') {
             _needsConfirmIn = false;
@@ -904,7 +919,6 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             _workDuration = Duration.zero;
             _breakDuration = Duration.zero;
             _startTimer();
-            TrackingService.start();
           } else {
             _needsConfirmOut = false;
           }
@@ -914,6 +928,12 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
               ? 'Punch-in confirmed! Timer started.'
               : 'Punch-out confirmed!',
         );
+        if (type == 'in' && !trackingOk) {
+          Fluttertoast.showToast(
+            msg:
+                'Route tracking could not start — check that location is turned on and permission is allowed.',
+          );
+        }
       } else {
         final msg =
             (res?['message'] as String?) ?? 'Confirmation failed. Try again.';
@@ -1068,9 +1088,10 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             _breakDuration = Duration.zero;
           });
           // Start timer for on_time and early_in (both are immediate punch-ins)
+          bool trackingOk = true;
           if (newStatus == 'on_time' || newStatus == 'early_in') {
             _startTimer();
-            TrackingService.start();
+            trackingOk = await TrackingService.start();
           }
           final String msg;
           if (needsApproval) {
@@ -1083,6 +1104,12 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
             msg = 'Punched in successfully';
           }
           Fluttertoast.showToast(msg: msg);
+          if (!trackingOk) {
+            Fluttertoast.showToast(
+              msg:
+                  'Route tracking could not start — check that location is turned on and permission is allowed.',
+            );
+          }
         } else {
           final msg =
               (res?['message'] as String?) ??

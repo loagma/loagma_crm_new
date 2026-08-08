@@ -52,8 +52,9 @@ class ComplaintController extends Controller
 
     // True if the requester may act on / view this specific complaint: admin
     // sees everything, any incharge-type role sees complaints raised by their
-    // descendants, and the original raiser can always see (not necessarily
-    // change) their own ticket.
+    // descendants, the original raiser can always see (not necessarily
+    // change) their own ticket, and whoever it's currently assigned to may
+    // act on it even if they're outside the raiser's own reporting line.
     private function authorizeAction(Complaint $complaint): bool
     {
         $staff = $this->approverStaff();
@@ -61,6 +62,7 @@ class ComplaintController extends Controller
 
         if (strtolower($staff->role ?? '') === 'admin') return true;
         if ($staff->mobile === $complaint->raised_by) return true;
+        if ($complaint->assigned_to && $staff->mobile === $complaint->assigned_to) return true;
 
         $descendants = $this->getDescendantMobiles($staff->mobile);
         return \in_array((string) $complaint->raised_by, $descendants, true);
@@ -109,11 +111,14 @@ class ComplaintController extends Controller
         return $map;
     }
 
-    // Resolves raised_by mobiles into staff name/role, so the UI never has to
-    // show a bare mobile number for who raised a ticket.
-    private function enrichRaisers($complaints): array
+    // Resolves a set of staff mobiles (raised_by / assigned_to / assigned_by)
+    // into name/role, so the UI never has to show a bare mobile number.
+    private function enrichStaff($complaints): array
     {
-        $mobiles = $complaints->pluck('raised_by')->filter()->unique()->values()->all();
+        $mobiles = $complaints->pluck('raised_by')
+            ->merge($complaints->pluck('assigned_to'))
+            ->merge($complaints->pluck('assigned_by'))
+            ->filter()->unique()->values()->all();
         if (empty($mobiles)) return [];
 
         $staff = DeliStaff::whereIn('mobile', $mobiles)->get(['mobile', 'name', 'role']);
@@ -166,10 +171,21 @@ class ComplaintController extends Controller
             // Explicit "my complaints" view — always allowed for one's own mobile;
             // an approver may also filter down to a specific descendant.
             $query->where('raised_by', request()->query('raised_by'));
+        } elseif (request()->filled('assigned_to')) {
+            // Explicit "assigned to me" view — works for any role, since a
+            // complaint can be delegated all the way down to a salesman or
+            // telecaller, not just to fellow incharges.
+            $query->where('assigned_to', request()->query('assigned_to'));
         } elseif ($role !== 'admin') {
             $mobiles = $this->getDescendantMobiles($staff->mobile);
             $mobiles[] = $staff->mobile; // also see complaints they raised themselves
-            $query->whereIn('raised_by', $mobiles);
+            // A complaint assigned to this staff member is visible even if the
+            // original raiser sits outside their own reporting line (e.g. a
+            // head incharge assigned it to someone in a different branch).
+            $query->where(function ($q) use ($mobiles, $staff) {
+                $q->whereIn('raised_by', $mobiles)
+                    ->orWhere('assigned_to', $staff->mobile);
+            });
         }
 
         if (request()->filled('status')) {
@@ -185,11 +201,13 @@ class ComplaintController extends Controller
 
         $items    = collect($p->items());
         $accounts = $this->enrich($items);
-        $raisers  = $this->enrichRaisers($items);
+        $staffMap = $this->enrichStaff($items);
 
-        $data = $items->map(function (Complaint $c) use ($accounts, $raisers) {
-            $acc    = $accounts[$c->account_id] ?? [];
-            $raiser = $raisers[$c->raised_by] ?? [];
+        $data = $items->map(function (Complaint $c) use ($accounts, $staffMap) {
+            $acc      = $accounts[$c->account_id] ?? [];
+            $raiser   = $staffMap[$c->raised_by] ?? [];
+            $assignee = $staffMap[$c->assigned_to] ?? [];
+            $assigner = $staffMap[$c->assigned_by] ?? [];
             $arr = $c->toArray();
             $arr['account_name']      = $acc['name']      ?? null;
             $arr['account_owner']     = $acc['owner']     ?? null;
@@ -201,6 +219,10 @@ class ComplaintController extends Controller
             $arr['account_longitude'] = $acc['longitude'] ?? null;
             $arr['raised_by_name']    = $raiser['name']   ?? null;
             $arr['raised_by_role']    = $raiser['role']   ?? null;
+            $arr['assigned_to_name']  = $assignee['name'] ?? null;
+            $arr['assigned_to_role']  = $assignee['role'] ?? null;
+            $arr['assigned_by_name']  = $assigner['name'] ?? null;
+            $arr['assigned_by_role']  = $assigner['role'] ?? null;
             return $arr;
         });
 
@@ -245,5 +267,76 @@ class ComplaintController extends Controller
         $complaint->update($update);
 
         return response()->json(['success' => true, 'data' => $complaint->fresh()]);
+    }
+
+    // ── Assign ─────────────────────────────────────────────────────────────────
+    // Anyone who can already act on a complaint (admin, the raiser's own
+    // superior chain, or the current assignee re-delegating) may hand it to
+    // someone else — but only to themselves or a member of their own
+    // downward hierarchy, never to an arbitrary unrelated staff member.
+    // Admin is exempt from the hierarchy check since admin has no incharge
+    // subtree of their own.
+
+    public function assign(string $id): JsonResponse
+    {
+        $complaint = Complaint::find((int) $id);
+        if (!$complaint) {
+            return response()->json(['success' => false, 'message' => 'Complaint not found'], 404);
+        }
+        if (!$this->authorizeAction($complaint)) {
+            return response()->json(['success' => false, 'message' => 'You are not authorized to assign this complaint'], 403);
+        }
+
+        $validated = validator(request()->only(['assigned_to']), [
+            'assigned_to' => 'required|string|max:20',
+        ])->validate();
+
+        $actor        = $this->approverStaff();
+        $targetMobile = $validated['assigned_to'];
+        $isAdmin      = strtolower($actor->role ?? '') === 'admin';
+        $isSelf       = $targetMobile === $actor->mobile;
+
+        if (!$isAdmin && !$isSelf) {
+            $descendants = $this->getDescendantMobiles($actor->mobile);
+            if (!\in_array($targetMobile, $descendants, true)) {
+                return response()->json(['success' => false, 'message' => 'You can only assign to yourself or someone in your own team'], 403);
+            }
+        }
+
+        $target = DeliStaff::where('mobile', $targetMobile)->first();
+        if (!$target) {
+            return response()->json(['success' => false, 'message' => 'Assignee not found'], 404);
+        }
+
+        $update = [
+            'assigned_to' => $targetMobile,
+            'assigned_by' => $actor->mobile,
+            'assigned_at' => now(),
+        ];
+        // Assigning an untouched ticket implicitly starts work on it.
+        if ($complaint->status === 'open') {
+            $update['status'] = 'in_progress';
+        }
+
+        $complaint->update($update);
+
+        return response()->json(['success' => true, 'data' => $complaint->fresh()]);
+    }
+
+    // ── Assigned-to-me count (for notification badge) ───────────────────────────
+    // Any role can be an assignee (a supervisor may delegate all the way down
+    // to a salesman/telecaller), so this is unscoped by hierarchy — just "how
+    // many still-open tickets are sitting in my own queue right now".
+
+    public function assignedCount(): JsonResponse
+    {
+        $staff = $this->approverStaff();
+        if (!$staff) return response()->json(['success' => true, 'count' => 0]);
+
+        $count = Complaint::where('assigned_to', $staff->mobile)
+            ->whereIn('status', ['open', 'in_progress'])
+            ->count();
+
+        return response()->json(['success' => true, 'count' => $count]);
     }
 }

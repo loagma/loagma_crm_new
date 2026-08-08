@@ -772,16 +772,21 @@ class ApiService {
   }
 
   /// Hierarchy-scoped complaint list. Pass [raisedBy] for a "my complaints"
-  /// view (always allowed for one's own mobile); omit it to see everything
-  /// visible to the caller's role (admin = all, incharge-type = descendants).
+  /// view (always allowed for one's own mobile); pass [assignedTo] for an
+  /// "assigned to me" view (works for any role, since a complaint can be
+  /// delegated down to a salesman/telecaller); omit both to see everything
+  /// visible to the caller's role (admin = all, incharge-type = descendants
+  /// + anything assigned to them).
   static Future<Map<String, dynamic>> getComplaints({
     int page = 1,
     String? raisedBy,
+    String? assignedTo,
     String? status,
   }) async {
     final uri = Uri.parse('${ApiConfig.baseUrl}/api/complaints').replace(queryParameters: {
       'page': page.toString(),
       if (raisedBy != null && raisedBy.isNotEmpty) 'raised_by': raisedBy,
+      if (assignedTo != null && assignedTo.isNotEmpty) 'assigned_to': assignedTo,
       if (status != null && status.isNotEmpty) 'status': status,
     });
     try {
@@ -815,6 +820,41 @@ class ApiService {
       print('updateComplaintStatus failed: $e');
     }
     return false;
+  }
+
+  /// Assign a complaint to a staff mobile — either the caller themself
+  /// ("solve it myself") or someone in the caller's own downward hierarchy.
+  /// Admins may assign to anyone. Returns null with an error message on
+  /// failure (e.g. target isn't in the caller's team).
+  static Future<Map<String, dynamic>?> assignComplaint(int id, {required String assignedTo}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/complaints/$id/assign');
+    try {
+      final response = await http
+          .put(url, headers: _authHeaders, body: jsonEncode({'assigned_to': assignedTo}))
+          .timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode >= 200 && response.statusCode < 300) return decoded;
+      return {'errors': decoded['message'] ?? 'Failed to assign complaint'};
+    } catch (e) {
+      print('assignComplaint failed: $e');
+    }
+    return null;
+  }
+
+  /// Count of open/in_progress complaints currently assigned to the caller —
+  /// used to poll for a "complaint assigned to you" device notification.
+  static Future<int> complaintAssignedCount() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/complaints/assigned-count');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        return (decoded['count'] as int?) ?? 0;
+      }
+    } catch (e) {
+      print('complaintAssignedCount failed: $e');
+    }
+    return 0;
   }
 
   /// Trigger a Knowlarity bridge call: rings the telecaller's own number,

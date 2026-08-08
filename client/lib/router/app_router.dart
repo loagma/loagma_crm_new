@@ -233,7 +233,10 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: '/complaints',
-      builder: (context, state) => const ComplaintsScreen(),
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>?;
+        return ComplaintsScreen(initialAssignedToMe: extra?['assignedToMe'] == true);
+      },
     ),
     GoRoute(
       path: '/incharge-assign',

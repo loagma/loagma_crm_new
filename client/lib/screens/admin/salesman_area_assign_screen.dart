@@ -544,6 +544,7 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
           final subtitle  = [city, district].where((s) => s.isNotEmpty).join(', ');
           final pins      = area['pincodes'];
           final pinList   = pins is List ? pins.map((p) => p.toString()).take(3).join(', ') : '';
+          final owners    = _areaOwners[id] ?? const [];
 
           final prev   = i > 0 ? items[i - 1] : null;
           final topGap = prev is _SectionHeader ? 0.0 : 4.0;
@@ -605,6 +606,23 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
                               ),
+                            if (owners.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFF3E0),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: const Color(0xFFFFB74D).withValues(alpha: 0.6)),
+                                ),
+                                child: Text(
+                                  'Already with: ${owners.map((o) => '${o['name']} (${_roleLabel(o['role'] ?? '')})').join(', ')}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w600, color: Color(0xFFE65100)),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),

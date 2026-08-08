@@ -180,9 +180,11 @@ Route::put('/call-logs/{id}', [CallLogController::class, 'update']); // reschedu
 // Complaints (hierarchy-scoped ticket tracking — see ComplaintController)
 // ---------------------------------------------------------------------------
 Route::middleware('jwtauth')->group(function () {
-    Route::post('/complaints',            [ComplaintController::class, 'store']); // salesman-visit channel; telecaller channel goes via /call-logs
-    Route::get('/complaints',              [ComplaintController::class, 'index']);
-    Route::put('/complaints/{id}/status',  [ComplaintController::class, 'updateStatus']);
+    Route::post('/complaints',                [ComplaintController::class, 'store']); // salesman-visit channel; telecaller channel goes via /call-logs
+    Route::get('/complaints',                  [ComplaintController::class, 'index']);
+    Route::get('/complaints/assigned-count',   [ComplaintController::class, 'assignedCount']); // must be before /complaints/{id}/* if such a route is ever added
+    Route::put('/complaints/{id}/status',      [ComplaintController::class, 'updateStatus']);
+    Route::put('/complaints/{id}/assign',      [ComplaintController::class, 'assign']);
 });
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,9 @@ class Complaint extends Model
         'account_type',
         'source_channel',
         'raised_by',
+        'assigned_to',
+        'assigned_by',
+        'assigned_at',
         'call_log_id',
         'beat_plan_id',
         'category',
@@ -24,6 +27,7 @@ class Complaint extends Model
     ];
 
     protected $casts = [
+        'assigned_at' => 'datetime',
         'resolved_at' => 'datetime',
     ];
 }
