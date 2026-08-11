@@ -18,17 +18,32 @@ import 'user_service.dart';
 /// or the web/desktop stream, capture nothing, and never tell anyone why the
 /// admin map stays empty for that employee.
 Future<bool> _hasUsableLocationAccess() async {
+  if (!await Geolocator.isLocationServiceEnabled()) return false;
+
+  // Two calls, deliberately in separate try/catches: on web, checkPermission()
+  // queries the browser's Permissions API for the 'geolocation' descriptor,
+  // which THROWS (doesn't just return denied) on browsers that don't support
+  // querying it that way (Safari, notably). Letting that throw abort the whole
+  // function — as a single wrapping try/catch would — means requestPermission()
+  // (the call that actually triggers the browser's location prompt) never
+  // runs, so the prompt silently never appears and nothing is ever captured.
+  // Falling through to requestPermission() regardless of how the check above
+  // went is what makes this work on those browsers too.
+  LocationPermission permission = LocationPermission.denied;
   try {
-    if (!await Geolocator.isLocationServiceEnabled()) return false;
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
+    permission = await Geolocator.checkPermission();
+  } catch (_) {}
+
+  if (permission != LocationPermission.always &&
+      permission != LocationPermission.whileInUse) {
+    try {
       permission = await Geolocator.requestPermission();
+    } catch (_) {
+      return false;
     }
-    return permission == LocationPermission.always ||
-        permission == LocationPermission.whileInUse;
-  } catch (_) {
-    return false;
   }
+  return permission == LocationPermission.always ||
+      permission == LocationPermission.whileInUse;
 }
 
 double _metersBetween(double lat1, double lng1, double lat2, double lng2) {

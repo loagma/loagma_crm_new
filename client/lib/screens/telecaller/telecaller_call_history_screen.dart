@@ -8,8 +8,18 @@ import 'telecaller_mock_data.dart';
 /// Call History (live data). The telecaller's recent calls with outcome, the
 /// note from last time and when — so they see the last conversation before
 /// dialling again. Searchable; tap to re-call.
+///
+/// Also doubles as the hierarchy-scoped "Team Call History" view (set
+/// [teamMode] true): admin/teleadmin/incharge-chain roles see their team's
+/// calls (server-scoped via TelecallerController::teamCallHistory — admin
+/// gets everyone, everyone else gets their own descendants only, never a
+/// flat unscoped dump), with an added Agent filter and each row/detail sheet
+/// labelled with who made the call, reusing every other filter/detail/
+/// recording-playback bit of the telecaller's own screen as-is.
 class TelecallerCallHistoryScreen extends StatefulWidget {
-  const TelecallerCallHistoryScreen({super.key});
+  final bool teamMode;
+
+  const TelecallerCallHistoryScreen({super.key, this.teamMode = false});
 
   @override
   State<TelecallerCallHistoryScreen> createState() => _TelecallerCallHistoryScreenState();
@@ -36,6 +46,8 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
   String? _outcomeFilter;
   /// null = all, 'knowlarity' = cloud calls, 'manual' = manually-logged calls.
   String? _sourceFilter;
+  /// Team mode only: null = whole team, else one agent's employee_mobile.
+  String? _employeeFilter;
 
   @override
   void initState() {
@@ -45,12 +57,28 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final items = await ApiService.getTelecallerCallHistory();
+    final items = widget.teamMode
+        ? await ApiService.getTeamCallHistory()
+        : await ApiService.getTelecallerCallHistory();
     if (!mounted) return;
     setState(() {
       _items = items;
       _loading = false;
     });
+  }
+
+  /// Team mode only: distinct (mobile, name) pairs present in the loaded
+  /// calls, for the Agent filter — derived from the data itself rather than
+  /// a separate "who's on my team" endpoint.
+  List<MapEntry<String, String>> get _teamAgents {
+    final seen = <String, String>{};
+    for (final h in _items) {
+      final mobile = '${h['employee_mobile'] ?? ''}';
+      if (mobile.isEmpty || seen.containsKey(mobile)) continue;
+      seen[mobile] = '${h['employee_name'] ?? mobile}';
+    }
+    final entries = seen.entries.toList()..sort((a, b) => a.value.compareTo(b.value));
+    return entries;
   }
 
   String _relative(String? iso) {
@@ -66,7 +94,8 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
     return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}';
   }
 
-  bool get _hasActiveFilter => _dateFilter != _DateFilter.all || _outcomeFilter != null || _sourceFilter != null;
+  bool get _hasActiveFilter =>
+      _dateFilter != _DateFilter.all || _outcomeFilter != null || _sourceFilter != null || _employeeFilter != null;
 
   bool _matchesDate(String? iso) {
     if (_dateFilter == _DateFilter.all) return true;
@@ -98,6 +127,7 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
     _DateFilter tempDate = _dateFilter;
     DateTimeRange? tempRange = _customRange;
     String? tempOutcome = _outcomeFilter;
+    String? tempEmployee = _employeeFilter;
 
     await showModalBottomSheet(
       context: context,
@@ -176,6 +206,34 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                         }),
                       ],
                     ),
+                    if (widget.teamMode && _teamAgents.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      const Text('Agent', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.black54)),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ChoiceChip(
+                            label: const Text('All'),
+                            selected: tempEmployee == null,
+                            selectedColor: kGold.withValues(alpha: 0.25),
+                            labelStyle: TextStyle(fontSize: 12, color: tempEmployee == null ? kGoldDark : Colors.black87, fontWeight: FontWeight.w600),
+                            onSelected: (_) => setSheetState(() => tempEmployee = null),
+                          ),
+                          ..._teamAgents.map((e) {
+                            final selected = tempEmployee == e.key;
+                            return ChoiceChip(
+                              label: Text(e.value),
+                              selected: selected,
+                              selectedColor: kGold.withValues(alpha: 0.25),
+                              labelStyle: TextStyle(fontSize: 12, color: selected ? kGoldDark : Colors.black87, fontWeight: FontWeight.w600),
+                              onSelected: (_) => setSheetState(() => tempEmployee = e.key),
+                            );
+                          }),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     Row(
                       children: [
@@ -186,6 +244,7 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                                 tempDate = _DateFilter.all;
                                 tempRange = null;
                                 tempOutcome = null;
+                                tempEmployee = null;
                               });
                             },
                             child: const Text('Reset'),
@@ -200,6 +259,7 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                                 _dateFilter = tempDate;
                                 _customRange = tempDate == _DateFilter.custom ? tempRange : null;
                                 _outcomeFilter = tempOutcome;
+                                _employeeFilter = tempEmployee;
                               });
                               Navigator.pop(ctx);
                             },
@@ -224,12 +284,15 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
     final items = _items.where((h) {
       final matchesQuery = q.isEmpty ||
           '${h['name'] ?? ''}'.toLowerCase().contains(q) ||
-          '${h['phone'] ?? ''}'.contains(q);
+          '${h['phone'] ?? ''}'.contains(q) ||
+          (widget.teamMode && '${h['employee_name'] ?? ''}'.toLowerCase().contains(q));
       final matchesOutcome = _outcomeFilter == null || '${h['outcome'] ?? ''}' == _outcomeFilter;
       final matchesDate = _matchesDate('${h['called_at'] ?? ''}');
       final source = '${h['source'] ?? 'manual'}';
       final matchesSource = _sourceFilter == null || source == _sourceFilter;
-      return matchesQuery && matchesOutcome && matchesDate && matchesSource;
+      final matchesEmployee =
+          _employeeFilter == null || '${h['employee_mobile'] ?? ''}' == _employeeFilter;
+      return matchesQuery && matchesOutcome && matchesDate && matchesSource && matchesEmployee;
     }).toList();
     final cloudCount = _items.where((h) => h['source'] == 'knowlarity').length;
     final manualCount = _items.length - cloudCount;
@@ -237,7 +300,7 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
     return Scaffold(
       backgroundColor: kBg,
       appBar: AppBar(
-        title: const Text('Call History'),
+        title: Text(widget.teamMode ? 'Team Call History' : 'Call History'),
         backgroundColor: kGold,
         foregroundColor: Colors.white,
         actions: [IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load)],
@@ -252,7 +315,9 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                   child: TextField(
                     onChanged: (v) => setState(() => _query = v),
                     decoration: InputDecoration(
-                      hintText: 'Search by name or number…',
+                      hintText: widget.teamMode
+                          ? 'Search by name, number, or agent…'
+                          : 'Search by name or number…',
                       prefixIcon: const Icon(Icons.search_rounded, color: kGoldDark),
                       isDense: true,
                       filled: true,
@@ -314,6 +379,14 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                       _activeFilterChip(
                         kOutcomeLabels[_outcomeFilter] ?? _outcomeFilter!,
                         () => setState(() => _outcomeFilter = null),
+                      ),
+                    if (_employeeFilter != null)
+                      _activeFilterChip(
+                        _teamAgents
+                            .firstWhere((e) => e.key == _employeeFilter,
+                                orElse: () => MapEntry(_employeeFilter!, _employeeFilter!))
+                            .value,
+                        () => setState(() => _employeeFilter = null),
                       ),
                   ],
                 ),
@@ -484,6 +557,16 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                         ],
                       ],
                     ),
+                    if (widget.teamMode && '${h['employee_name'] ?? ''}'.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Icon(Icons.support_agent_rounded, size: 12, color: Colors.grey.shade500),
+                          const SizedBox(width: 3),
+                          Text('${h['employee_name']}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ],
                     if ((h['notes'] ?? '').toString().isNotEmpty) ...[
                       const SizedBox(height: 5),
                       Text('${h['notes']}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
@@ -540,6 +623,8 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                 ],
               ),
               const SizedBox(height: 14),
+              if (widget.teamMode && '${h['employee_name'] ?? ''}'.isNotEmpty)
+                _detailRow('Agent', '${h['employee_name']}'),
               _detailRow('Phone', '${h['phone'] ?? '-'}'),
               _detailRow('Called at', _fmtDateTime('${h['called_at'] ?? ''}')),
               _detailRow('Duration', duration > 0 ? formatCallDuration(duration) : '-'),

@@ -934,6 +934,27 @@ class ApiService {
   /// Recent enriched call history for the current telecaller.
   static Future<List<Map<String, dynamic>>> getTelecallerCallHistory() => _tcGetList('call-history');
 
+  /// Hierarchy-scoped call history: admin sees every telecaller, a
+  /// teleadmin/incharge sees their own team (via the server's
+  /// getDescendantMobiles walk). Pass [mobile] to narrow to one team member;
+  /// omit it to get the whole team merged together, newest first.
+  static Future<List<Map<String, dynamic>>> getTeamCallHistory({String? mobile}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/team-call-history').replace(
+      queryParameters: mobile != null ? {'mobile': mobile} : null,
+    );
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return ((decoded['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+      }
+      print('getTeamCallHistory failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getTeamCallHistory error: $e');
+    }
+    return [];
+  }
+
   /// Fetches a call recording's raw audio bytes through the authenticated
   /// backend proxy - the underlying Knowlarity URL 401s without the server's
   /// own API credentials, which no player/browser can attach directly.

@@ -324,6 +324,10 @@ final appRouter = GoRouter(
       builder: (context, state) => const TelecallerCallHistoryScreen(),
     ),
     GoRoute(
+      path: '/team-call-history',
+      builder: (context, state) => const TelecallerCallHistoryScreen(teamMode: true),
+    ),
+    GoRoute(
       path: '/orders-list',
       builder: (context, state) => const OrderListScreen(),
     ),

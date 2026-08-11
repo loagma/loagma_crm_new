@@ -6,6 +6,8 @@ use App\Jobs\ProcessKnowlarityCallCompleted;
 use App\Models\Area;
 use App\Models\AreaAssign;
 use App\Models\CallLog;
+use App\Models\DeliStaff;
+use App\Models\InchargeAssign;
 use App\Models\LeadsAccount;
 use App\Models\TelecallerLabel;
 use App\Services\KnowlarityService;
@@ -17,7 +19,10 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 
 /**
  * Live data for the telecaller dashboard + agent modules. Every query is
- * scoped to the logged-in telecaller (JWT mobile).
+ * scoped to the logged-in telecaller (JWT mobile) EXCEPT teamCallHistory()
+ * and the hierarchy branch of callRecording(), which are the one place a
+ * senior (teleadmin/incharge chain/admin) may view someone else's calls —
+ * see the hierarchy helpers below, same pattern as ComplaintController.
  */
 class TelecallerController extends Controller
 {
@@ -26,6 +31,48 @@ class TelecallerController extends Controller
     private function mobile(): string
     {
         return (string) JWTAuth::parseToken()->authenticate()->mobile;
+    }
+
+    // ── Hierarchy helpers (same pattern as AttendanceController/ComplaintController) ─
+
+    // Returns mobile strings of the children directly assigned to this parent
+    // incharge in incharge_assign_crm. Works at every level of the hierarchy
+    // (head_incharge → zonal_incharge → area_incharge/teleadmin → telecaller)
+    // since the table is generically keyed by the parent's mobile.
+    private function getAssignedInchargeMobiles(string $parentMobile): array
+    {
+        $assign = InchargeAssign::where('head_incharge_id', (int) $parentMobile)->first();
+        if (!$assign || empty($assign->incharge_ids)) return [];
+        return array_map('strval', $assign->incharge_ids);
+    }
+
+    // Returns mobile strings of ALL descendants below this incharge, walking the
+    // hierarchy recursively. Cycle-safe via the $visited set.
+    private function getDescendantMobiles(string $parentMobile, array &$visited = []): array
+    {
+        if (isset($visited[$parentMobile])) return [];
+        $visited[$parentMobile] = true;
+
+        $descendants = [];
+        foreach ($this->getAssignedInchargeMobiles($parentMobile) as $childMobile) {
+            $descendants[] = $childMobile;
+            $descendants = array_merge($descendants, $this->getDescendantMobiles($childMobile, $visited));
+        }
+        return array_values(array_unique($descendants));
+    }
+
+    // True if $viewerMobile may access $log: it's their own call, they're
+    // admin, or the call's owner is somewhere in the viewer's own downward
+    // hierarchy.
+    private function canAccessCallLog(CallLog $log, string $viewerMobile): bool
+    {
+        if ((string) $log->employee_mobile === $viewerMobile) return true;
+
+        $staff = DeliStaff::where('mobile', $viewerMobile)->first();
+        if (!$staff) return false;
+        if (strtolower($staff->role ?? '') === 'admin') return true;
+
+        return \in_array((string) $log->employee_mobile, $this->getDescendantMobiles($viewerMobile), true);
     }
 
     /** [areaIds[], pincodes[]] assigned to this telecaller. */
@@ -234,6 +281,77 @@ class TelecallerController extends Controller
         return response()->json(['success' => true, 'data' => $data]);
     }
 
+    // ── Team call history (hierarchy-scoped) ──────────────────────────────────────
+    // For admin + the telecaller-senior chain (teleadmin and everyone above it —
+    // see the `role:` middleware on this route in routes/api.php). admin sees
+    // every telecaller's calls; everyone else sees only their own descendants'
+    // (via getDescendantMobiles), same shape/fields as callHistory() plus who
+    // made the call, so this doubles as "my own team's recordings" for a
+    // teleadmin and "any telecaller's" for admin — never a flat, unscoped dump.
+    public function teamCallHistory(): JsonResponse
+    {
+        $mobile = $this->mobile();
+        $staff  = DeliStaff::where('mobile', $mobile)->first();
+        if (!$staff) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+        }
+
+        $role         = strtolower($staff->role ?? '');
+        $targetMobile = request()->query('mobile');
+
+        if ($role === 'admin') {
+            $query = CallLog::query();
+            if ($targetMobile) {
+                $query->where('employee_mobile', $targetMobile);
+            }
+        } else {
+            $descendants = $this->getDescendantMobiles($mobile);
+            if ($targetMobile) {
+                if (!\in_array((string) $targetMobile, $descendants, true)) {
+                    return response()->json(['success' => false, 'message' => 'That employee is not in your team'], 403);
+                }
+                $query = CallLog::where('employee_mobile', $targetMobile);
+            } else {
+                if (empty($descendants)) {
+                    return response()->json(['success' => true, 'data' => []]);
+                }
+                $query = CallLog::whereIn('employee_mobile', $descendants);
+            }
+        }
+
+        $logs = $query->orderBy('called_at', 'desc')->limit(300)->get();
+        $enriched = $this->enrich($logs);
+
+        $staffNames = DeliStaff::whereIn('mobile', $logs->pluck('employee_mobile')->filter()->unique()->values())
+            ->pluck('name', 'mobile');
+
+        $data = $logs->map(function (CallLog $l) use ($enriched, $staffNames) {
+            $acc = $enriched[$l->account_id] ?? [];
+            $raw = $l->raw_payload ?? [];
+            return [
+                'id'               => $l->id,
+                'employee_mobile'  => $l->employee_mobile,
+                'employee_name'    => $staffNames[$l->employee_mobile] ?? $l->employee_mobile,
+                'account_id'       => $l->account_id,
+                'account_type'     => $l->account_type,
+                'name'             => $acc['name'] ?? 'Unknown',
+                'phone'            => $acc['phone'] ?? '',
+                'outcome'          => $l->call_outcome,
+                'notes'            => $l->notes,
+                'called_at'        => optional($l->called_at)->toIso8601String(),
+                'source'           => $l->source,
+                'direction'        => $l->direction,
+                'duration_seconds' => $l->duration_seconds,
+                'recording_url'    => $l->recording_url,
+                'call_uuid'        => $l->knowlarity_call_id,
+                'sr_number'        => $raw['knowlarity_number'] ?? null,
+                'customer_number'  => $raw['customer_number'] ?? null,
+            ];
+        })->values();
+
+        return response()->json(['success' => true, 'data' => $data]);
+    }
+
     /**
      * Polled right after a cloud (Knowlarity) call is triggered, so the app
      * can show live SR/call-log data and detect the moment the completed
@@ -315,8 +433,14 @@ class TelecallerController extends Controller
     {
         $mobile = $this->mobile();
 
-        $log = CallLog::where('id', $id)->where('employee_mobile', $mobile)->first();
-        if (!$log || !$log->recording_url) {
+        // Not scoped to `employee_mobile` at the query level (unlike every other
+        // method here) because this single endpoint now serves two callers: the
+        // telecaller's own recordings AND a senior's view of their team's — see
+        // canAccessCallLog(). Kept as 404 rather than 403 for a log that exists
+        // but isn't accessible, so an unauthorized id can't be distinguished
+        // from one that simply doesn't exist.
+        $log = CallLog::where('id', $id)->first();
+        if (!$log || !$log->recording_url || !$this->canAccessCallLog($log, $mobile)) {
             abort(404, 'Recording not found');
         }
 

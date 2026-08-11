@@ -194,7 +194,15 @@ Route::prefix('telecaller')->group(function () {
     Route::get('/dashboard',    [TelecallerController::class, 'dashboard']);
     Route::get('/callbacks',    [TelecallerController::class, 'callbacks']);
     Route::get('/call-history', [TelecallerController::class, 'callHistory']);
+    // Hierarchy-scoped: admin sees everyone, a teleadmin/incharge sees their
+    // own descendants — never a flat unscoped dump. Same role list as the
+    // tracking module's admin-view routes.
+    Route::get('/team-call-history', [TelecallerController::class, 'teamCallHistory'])
+        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin');
     Route::get('/call-status/{id}', [TelecallerController::class, 'callStatus']);
+    // Not role-restricted at the route level: serves both a telecaller's own
+    // recordings and a senior's team view — canAccessCallLog() inside does the
+    // actual authorization per-recording.
     Route::get('/call-recording/{id}', [TelecallerController::class, 'callRecording']);
     Route::get('/worklist',     [TelecallerController::class, 'worklist']);
     Route::post('/label',       [TelecallerController::class, 'setLabel']);

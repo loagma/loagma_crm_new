@@ -95,6 +95,13 @@ class AppDrawer extends StatelessWidget {
             'subtitle': 'On-duty tracking',
           },
           {
+            'title': 'Team Call History',
+            'icon': Icons.record_voice_over_rounded,
+            'route': '/team-call-history',
+            'color': const Color(0xFF7E57C2),
+            'subtitle': 'Calls & recordings',
+          },
+          {
             'title': 'Settings',
             'icon': Icons.settings_rounded,
             'route': '/admin/settings',
@@ -122,6 +129,13 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF2F9E57),
             'subtitle': 'On-duty tracking',
           },
+          {
+            'title': 'Team Call History',
+            'icon': Icons.record_voice_over_rounded,
+            'route': '/team-call-history',
+            'color': const Color(0xFF7E57C2),
+            'subtitle': 'Calls & recordings',
+          },
         ];
 
       case 'head_incharge':
@@ -145,6 +159,13 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF2F9E57),
             'subtitle': 'On-duty tracking',
           },
+          {
+            'title': 'Team Call History',
+            'icon': Icons.record_voice_over_rounded,
+            'route': '/team-call-history',
+            'color': const Color(0xFF7E57C2),
+            'subtitle': 'Calls & recordings',
+          },
         ];
       case 'zonal_incharge':
         return [
@@ -167,6 +188,13 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF2F9E57),
             'subtitle': 'On-duty tracking',
           },
+          {
+            'title': 'Team Call History',
+            'icon': Icons.record_voice_over_rounded,
+            'route': '/team-call-history',
+            'color': const Color(0xFF7E57C2),
+            'subtitle': 'Calls & recordings',
+          },
         ];
       case 'area_incharge':
         return [
@@ -188,6 +216,13 @@ class AppDrawer extends StatelessWidget {
             'route': '/live-salesmen',
             'color': const Color(0xFF2F9E57),
             'subtitle': 'On-duty tracking',
+          },
+          {
+            'title': 'Team Call History',
+            'icon': Icons.record_voice_over_rounded,
+            'route': '/team-call-history',
+            'color': const Color(0xFF7E57C2),
+            'subtitle': 'Calls & recordings',
           },
         ];
       case 'teleadmin':
@@ -223,6 +258,13 @@ class AppDrawer extends StatelessWidget {
             'route': '/live-salesmen',
             'color': const Color(0xFF2F9E57),
             'subtitle': 'On-duty tracking',
+          },
+          {
+            'title': 'Team Call History',
+            'icon': Icons.record_voice_over_rounded,
+            'route': '/team-call-history',
+            'color': const Color(0xFF7E57C2),
+            'subtitle': 'Calls & recordings',
           },
         ];
       case 'salesman':
@@ -854,14 +896,89 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
     );
   }
 
+  // ── Photo capture with an explicit accept/retake step ────────────────────
+  //
+  // ImagePicker's own camera UI returns the shot as soon as it's taken —
+  // there's no "are you sure" step in between, so a shot that was actually
+  // meant to be discarded (backed out of, retaken) still comes back as a
+  // non-null XFile and got uploaded. This wraps every camera capture in our
+  // own preview dialog so nothing is accepted until the user explicitly taps
+  // OK; Retake reopens the camera, and closing the dialog any other way
+  // discards the shot entirely.
+  Future<XFile?> _pickAndConfirmPhoto() async {
+    while (true) {
+      XFile? picked;
+      try {
+        picked = await ImagePicker().pickImage(
+          source: ImageSource.camera,
+          imageQuality: 70,
+          maxWidth: 1280,
+        );
+      } catch (_) {
+        return null;
+      }
+      if (picked == null || !mounted) return null;
+
+      final bytes = await picked.readAsBytes();
+      if (!mounted) return null;
+
+      final action = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          contentPadding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(4)),
+              child: Image.memory(bytes, fit: BoxFit.contain),
+            ),
+          ),
+          actionsPadding: const EdgeInsets.symmetric(horizontal: 8),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'retake'),
+              child: const Text('Retake'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'cancel'),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: _green),
+              onPressed: () => Navigator.pop(ctx, 'ok'),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+
+      if (action == 'ok') return picked;
+      if (action != 'retake') return null; // cancel, or dismissed
+      // else: loop back and reopen the camera
+    }
+  }
+
   // ── Location capture (best-effort) ───────────────────────────────────────
 
   Future<Map<String, dynamic>?> _captureLocation() async {
+    // Best-effort permission pre-check, deliberately isolated from the
+    // getCurrentPosition() call below: on web, checkPermission()/
+    // requestPermission() query the browser's Permissions API, which THROWS
+    // on browsers that don't support querying the 'geolocation' descriptor
+    // that way (Safari, notably) instead of just returning denied. If that
+    // throw were allowed to abort this whole function, getCurrentPosition()
+    // — which triggers the browser's actual location prompt — would never
+    // run, so the prompt would silently never appear.
     try {
       final perm = await Geolocator.checkPermission();
       if (perm == LocationPermission.denied) {
         await Geolocator.requestPermission();
       }
+    } catch (_) {}
+
+    try {
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
@@ -882,11 +999,7 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
       // Photo
       String? photoUrl;
       try {
-        final picked = await ImagePicker().pickImage(
-          source: ImageSource.camera,
-          imageQuality: 70,
-          maxWidth: 1280,
-        );
+        final picked = await _pickAndConfirmPhoto();
         if (picked != null && mounted) {
           Fluttertoast.showToast(msg: 'Uploading photo…');
           photoUrl = await ApiService.uploadAttendancePhoto(picked.path);
@@ -971,11 +1084,7 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
       Map<String, dynamic>? location;
       if (!needsApproval) {
         try {
-          final picked = await ImagePicker().pickImage(
-            source: ImageSource.camera,
-            imageQuality: 70,
-            maxWidth: 1280,
-          );
+          final picked = await _pickAndConfirmPhoto();
           if (picked != null && mounted) {
             Fluttertoast.showToast(msg: 'Uploading photo…');
             photoUrl = await ApiService.uploadAttendancePhoto(picked.path);
@@ -1053,11 +1162,7 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
       Map<String, dynamic>? location;
       if (!needsApproval) {
         try {
-          final picked = await ImagePicker().pickImage(
-            source: ImageSource.camera,
-            imageQuality: 70,
-            maxWidth: 1280,
-          );
+          final picked = await _pickAndConfirmPhoto();
           if (picked != null && mounted) {
             Fluttertoast.showToast(msg: 'Uploading photo…');
             photoUrl = await ApiService.uploadAttendancePhoto(picked.path);
