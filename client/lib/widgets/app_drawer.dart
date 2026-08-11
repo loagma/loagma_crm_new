@@ -990,27 +990,96 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
     }
   }
 
+  // ── Mandatory proof-of-presence capture (photo + location) ───────────────
+  //
+  // Punch-in/out is proof the employee is physically present — a photo and
+  // GPS fix that silently get skipped on any failure defeats that purpose
+  // entirely. This blocks the calling action until both succeed, offering a
+  // Retry/Cancel prompt on each failure instead of quietly proceeding
+  // without them (as the old best-effort try/catch-and-ignore did).
+  Future<bool> _retryDialog(String message) async {
+    if (!mounted) return false;
+    final retry = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text(
+          'Required',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        ),
+        content: Text(message, style: const TextStyle(fontSize: 12.5)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: _green),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+    return retry ?? false;
+  }
+
+  // Returns (photoUrl, location) once both are captured, or null if the user
+  // gave up at a retry prompt — callers must abort the punch action entirely
+  // on null, never submit with a placeholder/empty value.
+  Future<(String, Map<String, dynamic>)?> _captureRequiredProof() async {
+    String? photoUrl;
+    while (photoUrl == null) {
+      final picked = await _pickAndConfirmPhoto();
+      if (picked == null) {
+        if (!await _retryDialog(
+          'A photo is required to punch in/out. Try again?',
+        )) {
+          return null;
+        }
+        continue;
+      }
+      if (!mounted) return null;
+      Fluttertoast.showToast(msg: 'Uploading photo…');
+      photoUrl = await ApiService.uploadAttendancePhoto(picked.path);
+      if (photoUrl == null) {
+        if (!await _retryDialog('Photo upload failed. Try again?')) {
+          return null;
+        }
+      }
+    }
+
+    Map<String, dynamic>? location;
+    while (location == null) {
+      location = await _captureLocation();
+      if (location == null) {
+        if (!await _retryDialog(
+          'Location capture failed — check that location is turned on '
+          'and permission is allowed. Try again?',
+        )) {
+          return null;
+        }
+      }
+    }
+
+    return (photoUrl, location);
+  }
+
   // ── Confirm punch after admin approval ───────────────────────────────────
 
   Future<void> _confirmPunch(String type) async {
     if (_actionLoading) return;
+
+    // Photo + location are mandatory proof of presence for this step —
+    // capture before touching _actionLoading so the retry dialogs aren't
+    // fighting a disabled/loading button underneath them.
+    final proof = await _captureRequiredProof();
+    if (proof == null) return; // user gave up — leave the pending state as-is
+    final (photoUrl, location) = proof;
+
+    if (!mounted) return;
     setState(() => _actionLoading = true);
     try {
-      // Photo
-      String? photoUrl;
-      try {
-        final picked = await _pickAndConfirmPhoto();
-        if (picked != null && mounted) {
-          Fluttertoast.showToast(msg: 'Uploading photo…');
-          photoUrl = await ApiService.uploadAttendancePhoto(picked.path);
-        }
-      } catch (_) {}
-
-      // Location
-      final location = await _captureLocation();
-
-      if (!mounted) return;
-
       final res = await ApiService.attendanceConfirmPunch(
         type: type,
         photo: photoUrl,
@@ -1083,14 +1152,9 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
       String? photoUrl;
       Map<String, dynamic>? location;
       if (!needsApproval) {
-        try {
-          final picked = await _pickAndConfirmPhoto();
-          if (picked != null && mounted) {
-            Fluttertoast.showToast(msg: 'Uploading photo…');
-            photoUrl = await ApiService.uploadAttendancePhoto(picked.path);
-          }
-        } catch (_) {}
-        location = await _captureLocation();
+        final proof = await _captureRequiredProof();
+        if (proof == null) return; // user gave up — do not punch out
+        (photoUrl, location) = proof;
       }
 
       if (!mounted) return;
@@ -1161,14 +1225,9 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
       String? photoUrl;
       Map<String, dynamic>? location;
       if (!needsApproval) {
-        try {
-          final picked = await _pickAndConfirmPhoto();
-          if (picked != null && mounted) {
-            Fluttertoast.showToast(msg: 'Uploading photo…');
-            photoUrl = await ApiService.uploadAttendancePhoto(picked.path);
-          }
-        } catch (_) {}
-        location = await _captureLocation();
+        final proof = await _captureRequiredProof();
+        if (proof == null) return; // user gave up — do not punch in
+        (photoUrl, location) = proof;
       }
 
       if (!mounted) return;

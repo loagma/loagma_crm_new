@@ -133,6 +133,20 @@ class AttendanceController extends Controller
         $approvalRequired = $staff->approval_required ?? true;
         $needsApproval    = $isLate && $approvalRequired; // early-in never needs approval
 
+        // Photo + location are the proof of presence for this punch. When
+        // approval is pending, they're deliberately captured later (at
+        // confirmPunch, after an admin signs off) — not required here. The
+        // client already blocks submission without them; this is the
+        // server-side backstop against a bypassed/modified client.
+        if (!$needsApproval) {
+            $request->validate([
+                'punch_in_photo'         => 'required|string',
+                'punch_in_location'      => 'required|array',
+                'punch_in_location.lat'  => 'required|numeric',
+                'punch_in_location.lng'  => 'required|numeric',
+            ]);
+        }
+
         $data = [
             'employee_mobile'   => $mobile,
             'date'              => $today,
@@ -176,6 +190,17 @@ class AttendanceController extends Controller
         $approvalRequired = $staff->approval_required ?? true;
         $needsApproval    = $isEarlyOut && $approvalRequired;
 
+        // Same proof-of-presence requirement as punchIn() — skipped only when
+        // approval is pending, since confirmPunch() collects it after approval.
+        if (!$needsApproval) {
+            $request->validate([
+                'punch_out_photo'        => 'required|string',
+                'punch_out_location'     => 'required|array',
+                'punch_out_location.lat' => 'required|numeric',
+                'punch_out_location.lng' => 'required|numeric',
+            ]);
+        }
+
         $workMinutes  = (int) $request->input('total_work_minutes', 0);
         $breakMinutes = (int) $request->input('total_break_minutes', 0);
 
@@ -218,8 +243,16 @@ class AttendanceController extends Controller
 
     public function confirmPunch(Request $request): JsonResponse
     {
+        // Proof of presence is the entire point of this endpoint (it's what
+        // an employee submits after a late/early punch gets admin approval)
+        // — always required, unlike punchIn()/punchOut() where it's optional
+        // only while approval is still pending.
         $request->validate([
-            'type' => 'required|in:in,out',
+            'type'          => 'required|in:in,out',
+            'photo'         => 'required|string',
+            'location'      => 'required|array',
+            'location.lat'  => 'required|numeric',
+            'location.lng'  => 'required|numeric',
         ]);
 
         $mobile = $this->authMobile();
