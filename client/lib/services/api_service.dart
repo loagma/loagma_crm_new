@@ -1361,13 +1361,24 @@ class ApiService {
 
   // ── Attendance (employee) ─────────────────────────────────────────────────
 
-  static Future<String?> uploadAttendancePhoto(String filePath) async {
+  // Takes raw bytes rather than a file path: on web, XFile.path is a blob:
+  // URL, not a real filesystem path, and MultipartFile.fromPath() reads via
+  // dart:io's File — which is a non-functional stub on web and throws at
+  // runtime. fromBytes() works identically across every platform.
+  static Future<String?> uploadAttendancePhoto(
+    Uint8List bytes, {
+    String filename = 'attendance.jpg',
+  }) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/upload-photo');
     try {
       final req = http.MultipartRequest('POST', url)
         ..headers['Accept'] = 'application/json'
         ..headers['Authorization'] = 'Bearer ${UserService.token}'
-        ..files.add(await http.MultipartFile.fromPath('image', filePath));
+        ..files.add(http.MultipartFile.fromBytes(
+          'image',
+          bytes,
+          filename: filename,
+        ));
 
       final streamed = await req.send().timeout(const Duration(seconds: 30));
       final response = await http.Response.fromStream(streamed);

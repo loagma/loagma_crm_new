@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:fluttertoast/fluttertoast.dart';
@@ -905,7 +906,11 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
   // own preview dialog so nothing is accepted until the user explicitly taps
   // OK; Retake reopens the camera, and closing the dialog any other way
   // discards the shot entirely.
-  Future<XFile?> _pickAndConfirmPhoto() async {
+  // Returns the confirmed shot's raw bytes (not an XFile/path) — on web,
+  // XFile.path is a blob: URL rather than a real filesystem path, and
+  // MultipartFile.fromPath() reads it via dart:io's File, which is a
+  // non-functional stub on web. Bytes upload identically on every platform.
+  Future<Uint8List?> _pickAndConfirmPhoto() async {
     while (true) {
       XFile? picked;
       try {
@@ -954,7 +959,7 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
         ),
       );
 
-      if (action == 'ok') return picked;
+      if (action == 'ok') return bytes;
       if (action != 'retake') return null; // cancel, or dismissed
       // else: loop back and reopen the camera
     }
@@ -1030,8 +1035,8 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
   Future<(String, Map<String, dynamic>)?> _captureRequiredProof() async {
     String? photoUrl;
     while (photoUrl == null) {
-      final picked = await _pickAndConfirmPhoto();
-      if (picked == null) {
+      final bytes = await _pickAndConfirmPhoto();
+      if (bytes == null) {
         if (!await _retryDialog(
           'A photo is required to punch in/out. Try again?',
         )) {
@@ -1041,7 +1046,7 @@ class _AttendanceDrawerCardState extends State<_AttendanceDrawerCard> {
       }
       if (!mounted) return null;
       Fluttertoast.showToast(msg: 'Uploading photo…');
-      photoUrl = await ApiService.uploadAttendancePhoto(picked.path);
+      photoUrl = await ApiService.uploadAttendancePhoto(bytes);
       if (photoUrl == null) {
         if (!await _retryDialog('Photo upload failed. Try again?')) {
           return null;
