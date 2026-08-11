@@ -1,11 +1,11 @@
 {
-    "name": "client",
-    "short_name": "client",
+    "name": "Loagma CRM",
+    "short_name": "Loagma CRM",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#ffffff",
+    "theme_color": "#D7BE69",
+    "description": "Loagma CRM",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
