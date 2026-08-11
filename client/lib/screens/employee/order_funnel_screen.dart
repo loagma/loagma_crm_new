@@ -7,6 +7,7 @@ import '../../services/api_config.dart';
 import '../../services/api_service.dart';
 import '../../widgets/account_map_screen.dart';
 import '../telecaller/telecaller_mock_data.dart' show kComplaintCategories;
+import 'create_sales_order_screen.dart';
 
 class OrderFunnelScreen extends StatefulWidget {
   final String accountId;
@@ -358,6 +359,42 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     );
   }
 
+  // A real Sales Order can only be created for a registered customer
+  // (SalesOrderController::store requires buyer_userid to match a `user`
+  // row) — a lead account's id doesn't correspond to one, so the server
+  // rejects it outright. Catching that here up front instead of letting
+  // every attempt round-trip to a 422.
+  Future<void> _takeOrder() async {
+    final accountType = (_acc['account_type'] as String?) ?? 'lead';
+    if (accountType != 'customer') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This is a lead account — convert it to a customer before taking an order.'),
+        ),
+      );
+      return;
+    }
+
+    await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CreateSalesOrderScreen(
+          buyerUserId: widget.accountId,
+          shopName: (_acc['businessName'] as String?) ?? '',
+          ownerName: (_acc['personName'] as String?) ?? '',
+          address: (_acc['address'] as String?) ?? '',
+          latitude: (_acc['latitude'] as num?)?.toDouble(),
+          longitude: (_acc['longitude'] as num?)?.toDouble(),
+          areaName: _acc['area'] as String?,
+        ),
+      ),
+    );
+    // The confirmation toast is shown by CreateSalesOrderScreen itself
+    // before it pops — nothing else to reconcile here. (This screen's
+    // "Order History" tab is a static placeholder, not a real order list,
+    // so there's no local list to refresh after a successful order.)
+  }
+
   String _fmt(Duration d) {
     final h = d.inHours.toString().padLeft(2, '0');
     final m = (d.inMinutes % 60).toString().padLeft(2, '0');
@@ -419,19 +456,29 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  // Schedule chips + visit buttons
+                  // Schedule chips + visit buttons. A weekly plan with
+                  // several days selected produced enough chips to overflow
+                  // a plain Row + Spacer on narrower widths — the chips now
+                  // live in an Expanded Wrap so they wrap to a second line
+                  // instead, while the two buttons stay pinned at the end.
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      if (_scheduleLabel != null)
-                        _Chip(label: _scheduleLabel!,
-                            bg: _green.withValues(alpha: 0.10), fg: const Color(0xFF2E7D32)),
-                      const SizedBox(width: 6),
-                      ..._dayChips.map((d) => Padding(
-                        padding: const EdgeInsets.only(right: 4),
-                        child: _Chip(label: d,
-                            bg: Colors.grey.shade200, fg: Colors.black54),
-                      )),
-                      const Spacer(),
+                      Expanded(
+                        child: Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            if (_scheduleLabel != null)
+                              _Chip(label: _scheduleLabel!,
+                                  bg: _green.withValues(alpha: 0.10), fg: const Color(0xFF2E7D32)),
+                            ..._dayChips.map((d) => _Chip(label: d,
+                                bg: Colors.grey.shade200, fg: Colors.black54)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
                       // Visit In
                       _VisitBtn(
                         label: 'Visit In',
@@ -536,7 +583,7 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: () {},
+                          onPressed: _takeOrder,
                           icon: const Icon(Icons.shopping_cart_rounded, size: 16),
                           label: const Text('Take Order',
                               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),

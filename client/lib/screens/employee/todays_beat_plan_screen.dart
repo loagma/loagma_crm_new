@@ -271,32 +271,49 @@ class _CustomerCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Code + freq chip + account type
-            Row(children: [
-              Text(code,
-                  style: const TextStyle(
-                      fontSize: 11, color: Colors.grey,
-                      letterSpacing: 0.5)),
-              const Spacer(),
-              _Tag(
-                label: accountType.toUpperCase(),
-                bg: accountType == 'customer'
-                    ? const Color(0xFFE3F2FD)
-                    : const Color(0xFFFFF3E0),
-                fg: accountType == 'customer'
-                    ? const Color(0xFF1976D2)
-                    : const Color(0xFFF57C00),
+            // A long freq label (e.g. a weekly plan with several days
+            // selected, "MON, TUE, WED, THU, FRI (ALT)") plus the account-type
+            // tag used to overflow a plain Row with no flexible child — on
+            // narrower phones/web widths this threw a RenderFlex overflow.
+            // Flexible + Wrap lets the tags wrap to a second line instead.
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Flexible(
+                child: Text(code,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 11, color: Colors.grey,
+                        letterSpacing: 0.5)),
               ),
-              const SizedBox(width: 6),
-              if (visited)
-                _Tag(label: '✓ Visited',
-                    bg: const Color(0xFFE8F5E9),
-                    fg: const Color(0xFF2E7D32))
-              else
-                _Tag(
-                  label: _freqLabel(freq, days),
-                  bg: const Color(0xFFE8F5E9),
-                  fg: const Color(0xFF2E7D32),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    _Tag(
+                      label: accountType.toUpperCase(),
+                      bg: accountType == 'customer'
+                          ? const Color(0xFFE3F2FD)
+                          : const Color(0xFFFFF3E0),
+                      fg: accountType == 'customer'
+                          ? const Color(0xFF1976D2)
+                          : const Color(0xFFF57C00),
+                    ),
+                    if (visited)
+                      _Tag(label: '✓ Visited',
+                          bg: const Color(0xFFE8F5E9),
+                          fg: const Color(0xFF2E7D32))
+                    else
+                      _Tag(
+                        label: _freqLabel(freq, days),
+                        bg: const Color(0xFFE8F5E9),
+                        fg: const Color(0xFF2E7D32),
+                      ),
+                  ],
                 ),
+              ),
             ]),
             const SizedBox(height: 6),
             // Name + salesman + proceed
