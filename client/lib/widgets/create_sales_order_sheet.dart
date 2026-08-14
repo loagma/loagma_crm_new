@@ -4,6 +4,7 @@ import 'package:fluttertoast/fluttertoast.dart';
 import '../screens/telecaller/telecaller_mock_data.dart' show kGold, kGoldDark;
 import '../services/api_service.dart';
 import 'product_picker_sheet.dart';
+import 'unit_picker_sheet.dart';
 
 /// The "Create Sales Order" bottom sheet — originally built for the
 /// telecaller's account profile, now shared so every role that can take an
@@ -52,6 +53,15 @@ class CreateSalesOrderSheet extends StatefulWidget {
   final String accountType; // 'lead' | 'customer'
   final Map<String, dynamic>? deliveryAddress;
   final String? areaName;
+  // Shown read-only in the Customer section so whoever is taking the order can
+  // confirm they're billing the right account (GST number especially) without
+  // leaving the sheet.
+  final String? contactNumber;
+  final String? gstNumber;
+  final String? accountCode;
+  final String? city;
+  final String? state;
+  final String? pincode;
   final void Function(String items, int amount, String status, String pay, String? realOrderId) onSave;
   const CreateSalesOrderSheet({
     super.key,
@@ -60,6 +70,12 @@ class CreateSalesOrderSheet extends StatefulWidget {
     required this.accountType,
     this.deliveryAddress,
     this.areaName,
+    this.contactNumber,
+    this.gstNumber,
+    this.accountCode,
+    this.city,
+    this.state,
+    this.pincode,
     required this.onSave,
   });
 
@@ -68,7 +84,11 @@ class CreateSalesOrderSheet extends StatefulWidget {
 }
 
 class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
-  static const _units = ['PCS', 'KG', 'BOX', 'LTR', 'DOZ'];
+  // Fallback shown until units_master loads. Deliberately a subset of real
+  // units_master names: a selected value that's absent from the loaded list
+  // trips DropdownButton's "value must match exactly one item" assert. (The
+  // old fallback had 'DOZ', which units_master spells 'DOZEN'.)
+  List<String> _units = const ['PCS', 'KG', 'BOX', 'LTR', 'NOS'];
   static const _addonNames = ['Hamali', 'Transport', 'Packing', 'Discount', 'Other'];
 
   int? _voucherNo; // null while loading the real preview from the server
@@ -86,12 +106,33 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   void initState() {
     super.initState();
     _loadVoucherPreview();
+    _loadUnits();
   }
 
   Future<void> _loadVoucherPreview() async {
     final next = await ApiService.getNextSalesOrderId();
     if (!mounted) return;
     setState(() => _voucherNo = next);
+  }
+
+  Future<void> _loadUnits() async {
+    final units = await ApiService.getUnits();
+    final names = units.map((u) => (u['unit_name'] as String?) ?? '').where((u) => u.isNotEmpty).toList();
+    if (!mounted || names.isEmpty) return;
+    setState(() {
+      _units = names;
+      // Belt-and-braces for the assert noted on _units: if a line item is still
+      // holding a fallback value the real list doesn't have, move it onto one
+      // that does instead of crashing the sheet.
+      for (final i in _lineItems) {
+        if (!names.contains(i.unit)) i.unit = names.first;
+      }
+    });
+  }
+
+  Future<void> _pickUnit(OrderLineItem item) async {
+    final picked = await showUnitPickerSheet(context, units: _units, selected: item.unit);
+    if (picked != null) setState(() => item.unit = picked);
   }
 
   @override
@@ -143,6 +184,31 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         child: Text(t.toUpperCase(),
             style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, letterSpacing: .5, color: Colors.grey.shade400)),
       );
+
+  List<Widget> _customerDetailRows() {
+    final place = [widget.city, widget.state, widget.pincode]
+        .map((v) => (v ?? '').trim())
+        .where((v) => v.isNotEmpty)
+        .join(', ');
+    final rows = <String, String>{
+      'Code':    (widget.accountCode ?? '').trim(),
+      'Phone':   (widget.contactNumber ?? '').trim(),
+      'GST No':  (widget.gstNumber ?? '').trim(),
+      'Area':    (widget.areaName ?? '').trim(),
+      'Place':   place,
+    }..removeWhere((_, v) => v.isEmpty);
+
+    if (rows.isEmpty) return const [];
+
+    return [
+      const SizedBox(height: 6),
+      ...rows.entries.map((e) => Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text('${e.key}: ${e.value}',
+                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+          )),
+    ];
+  }
 
   Widget _sectionTitle(String t) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
@@ -388,11 +454,22 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                   _label('Customer'),
                   Container(
                     width: double.infinity,
-                    height: 46,
-                    alignment: Alignment.centerLeft,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
-                    child: Text(widget.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.name.trim().isEmpty ? 'Unnamed customer' : widget.name,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: widget.name.trim().isEmpty ? Colors.grey.shade500 : null,
+                          ),
+                        ),
+                        ..._customerDetailRows(),
+                      ],
+                    ),
                   ),
                   if (widget.deliveryAddress != null) ...[
                     const SizedBox(height: 14),
@@ -501,18 +578,23 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                             Expanded(
                               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                                 _label('Unit'),
-                                Container(
-                                  height: 46,
-                                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                                  decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
-                                  child: DropdownButtonHideUnderline(
-                                    child: DropdownButton<String>(
-                                      value: item.unit,
-                                      isExpanded: true,
-                                      isDense: true,
-                                      style: const TextStyle(fontSize: 13, color: Color(0xFF20242B), fontWeight: FontWeight.w500),
-                                      items: _units.map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
-                                      onChanged: (v) { if (v != null) setState(() => item.unit = v); },
+                                InkWell(
+                                  borderRadius: BorderRadius.circular(11),
+                                  onTap: () => _pickUnit(item),
+                                  child: Container(
+                                    height: 46,
+                                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                                    decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(item.unit,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(fontSize: 13, color: Color(0xFF20242B), fontWeight: FontWeight.w500)),
+                                        ),
+                                        Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Colors.grey.shade500),
+                                      ],
                                     ),
                                   ),
                                 ),

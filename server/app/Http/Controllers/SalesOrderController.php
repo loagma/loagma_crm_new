@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\ProductTaxResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
@@ -63,16 +64,16 @@ class SalesOrderController extends Controller
         }
 
         // Validate every item references a real, non-deleted product — orders_item.product_id is NOT NULL.
-        // Also the single source of truth for GST rate: tax_percent/sgst_percent/
-        // cgst_percent are derived from product.gst_percent here, never trusted
-        // from the client — a stale cache or buggy client shouldn't be able to
-        // write an arbitrary tax rate onto a real order.
+        // Tax rates are resolved server-side from `product_taxes` and never
+        // trusted from the client — a stale cache or buggy client shouldn't be
+        // able to write an arbitrary tax rate onto a real order.
         $productIds = collect($items)->pluck('product_id')->filter()->unique()->values();
         $products = DB::table('product')
             ->whereIn('product_id', $productIds)
             ->where('is_deleted', 0)
-            ->get(['product_id', 'name', 'gst_percent'])
+            ->get(['product_id', 'name'])
             ->keyBy('product_id');
+        $taxes = ProductTaxResolver::forProducts($productIds);
 
         foreach ($items as $item) {
             $pid = $item['product_id'] ?? null;
@@ -110,7 +111,7 @@ class SalesOrderController extends Controller
         $orderId = null;
 
         DB::transaction(function () use (
-            $items, $products, $buyerUserId, $discount, $deliveryCharge, $narration, $department,
+            $items, $taxes, $buyerUserId, $discount, $deliveryCharge, $narration, $department,
             $areaName, $timeSlot, $documentDate, $deliveryInfo, $beforeDiscount, $orderTotal,
             $idempotencyKey, &$orderId
         ) {
@@ -140,9 +141,9 @@ class SalesOrderController extends Controller
                 'discount'          => $discount,
                 'before_discount'   => $beforeDiscount,
                 'time_slot'         => $timeSlot,
-                'Bill_Narration'    => $narration,
-                'Department'        => $department,
-                'Bill_Dt'           => $documentDate,
+                'bill_narration'    => $narration,
+                'department'        => $department,
+                'bill_dt'           => $documentDate,
                 'idempotency_key'   => $idempotencyKey,
             ]);
 
@@ -150,11 +151,12 @@ class SalesOrderController extends Controller
             foreach ($items as $item) {
                 $qty        = (float) $item['quantity'];
                 $price      = (float) ($item['item_price'] ?? 0);
-                // Tax rate is authoritative from the product row, not the client —
-                // see the note at $products above.
-                $taxPercent  = (float) ($products->get((int) $item['product_id'])->gst_percent ?? 0);
-                $sgstPercent = round($taxPercent / 2, 2);
-                $cgstPercent = round($taxPercent / 2, 2);
+                // Tax comes from product_taxes via the resolver, not the client —
+                // see the note at $taxes above.
+                $tax         = $taxes[(int) $item['product_id']];
+                $taxPercent  = $tax['tax_percent'];
+                $sgstPercent = $tax['sgst_percent'];
+                $cgstPercent = $tax['cgst_percent'];
                 DB::table('orders_item')->insert([
                     'order_id'   => $nextOrderId,
                     'item_id'    => $itemId,
@@ -232,14 +234,15 @@ class SalesOrderController extends Controller
             ], 422);
         }
 
-        // Tax rate is authoritative from the product row, not the client — see
-        // the matching note in store().
+        // Tax comes from product_taxes, not the client — see the matching note
+        // in store().
         $productIds = collect($items)->pluck('product_id')->filter()->unique()->values();
         $products = DB::table('product')
             ->whereIn('product_id', $productIds)
             ->where('is_deleted', 0)
-            ->get(['product_id', 'name', 'gst_percent'])
+            ->get(['product_id', 'name'])
             ->keyBy('product_id');
+        $taxes = ProductTaxResolver::forProducts($productIds);
 
         foreach ($items as $item) {
             $pid = $item['product_id'] ?? null;
@@ -253,7 +256,7 @@ class SalesOrderController extends Controller
 
         $result = null;
 
-        DB::transaction(function () use ($orderId, $items, $products, &$result) {
+        DB::transaction(function () use ($orderId, $items, $taxes, &$result) {
             $order = DB::table('orders')->where('order_id', $orderId)->lockForUpdate()->first(['order_id', 'order_state', 'discount', 'delivery_charge']);
 
             if (!$order) {
@@ -281,9 +284,10 @@ class SalesOrderController extends Controller
                 $lineTotal = round($qty * $price, 2);
                 $beforeDiscount += $lineTotal;
 
-                $taxPercent  = (float) ($products->get((int) $item['product_id'])->gst_percent ?? 0);
-                $sgstPercent = round($taxPercent / 2, 2);
-                $cgstPercent = round($taxPercent / 2, 2);
+                $tax         = $taxes[(int) $item['product_id']];
+                $taxPercent  = $tax['tax_percent'];
+                $sgstPercent = $tax['sgst_percent'];
+                $cgstPercent = $tax['cgst_percent'];
                 DB::table('orders_item')->insert([
                     'order_id'   => $orderId,
                     'item_id'    => $itemId,

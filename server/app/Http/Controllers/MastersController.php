@@ -37,6 +37,27 @@ class MastersController extends Controller
         return response()->json(['success' => true]);
     }
 
+    /**
+     * GET /api/masters/units
+     *
+     * Real unit list from `units_master` — used wherever a Sales Order line
+     * item needs a unit (dropdown), instead of a hardcoded set.
+     */
+    public function units(): JsonResponse
+    {
+        $units = DB::table('units_master')
+            ->where('is_active', 1)
+            ->orderBy('serial_no')
+            ->orderBy('unit_name')
+            ->get(['unit_id', 'unit_name'])
+            ->map(fn ($u) => [
+                'unit_id'   => (int) $u->unit_id,
+                'unit_name' => $u->unit_name,
+            ]);
+
+        return response()->json(['success' => true, 'data' => $units]);
+    }
+
     public function employees(): JsonResponse
     {
         $q       = request()->query('q', null);

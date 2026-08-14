@@ -216,6 +216,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         'name':       result['name'],
         'pack_size':  result['pack_size'],
         'quantity':   result['quantity'],
+        'unit':       result['unit'],
         'item_price': result['item_price'],
         'item_total': result['item_total'],
       };
@@ -263,6 +264,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         'name':          result['name'],
         'pack_size':     result['pack_size'],
         'quantity':      result['quantity'],
+        'unit':          result['unit'],
         'qty_delivered': 0,
         'item_price':    result['item_price'],
         'item_total':    result['item_total'],
@@ -348,6 +350,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final deliveryW   = (o['delivery_window'] ?? '').toString();
     final driver      = o['driver'] as Map<String, dynamic>?;
     final buyerId     = (o['buyer_userid'] ?? '').toString();
+    final area        = (o['area_name'] ?? '').toString();
+    final adminName   = (o['admin_name'] ?? '').toString();
 
     return ListView(
       padding: const EdgeInsets.all(14),
@@ -593,6 +597,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 final qty   = (item['quantity'] as int?) ?? 0;
                 final deliv = (item['qty_delivered'] as int?) ?? 0;
                 final total = _toDouble(item['item_total']) ?? 0;
+                final unit  = (item['unit'] ?? '').toString();
+                final rate  = _toDouble(item['item_price']) ?? 0;
+                final sgstP = _toDouble(item['sgst_percent']) ?? 0;
+                final cgstP = _toDouble(item['cgst_percent']) ?? 0;
                 return Container(
                   margin: const EdgeInsets.only(bottom: 8),
                   padding: const EdgeInsets.all(10),
@@ -620,8 +628,15 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                 maxLines: 2, overflow: TextOverflow.ellipsis),
                             if (pack.isNotEmpty)
                               Text(pack, style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-                            Text('Qty: $qty  |  Delivered: $deliv',
+                            Text('Qty: $qty${unit.isEmpty ? '' : ' $unit'}  |  Delivered: $deliv',
                                 style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                            Text('Rate: ₹${rate.toStringAsFixed(2)}${unit.isEmpty ? '' : ' / $unit'}',
+                                style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                            // Rates come from the product's own gst_percent at
+                            // save time, so show what was actually charged.
+                            if (sgstP > 0 || cgstP > 0)
+                              Text('SGST ${sgstP.toStringAsFixed(2)}%  •  CGST ${cgstP.toStringAsFixed(2)}%',
+                                  style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500)),
                           ],
                         ),
                       ),
@@ -659,6 +674,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               _summaryRow('Method', method),
               _summaryRow('Time Slot', deliveryW),
               _summaryRow('Order Date', orderDt),
+              if (area.isNotEmpty) _summaryRow('Area', area),
+              if (adminName.isNotEmpty) _summaryRow('Partner', adminName),
               _summaryRow('Items', '$itemsCount'),
               _summaryRow('Before Discount', '₹${beforeDisc.toStringAsFixed(2)}'),
               _summaryRow('Discount', '₹${discount.toStringAsFixed(2)}'),

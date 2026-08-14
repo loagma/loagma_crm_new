@@ -69,6 +69,36 @@ class BeatPlanController extends Controller
         return $list->unique(fn ($a) => strtolower(trim((string) $a['address'])))->values();
     }
 
+    // Shared by today()/range() so the customer shape stays identical in both.
+    // `businessName` falls back to the contact's own name: `user.shop_name` is
+    // NULL for B2C accounts, which left the Create Sales Order form showing a
+    // blank customer.
+    private function customerAccountPayload(object $user, \Illuminate\Support\Collection $savedAddresses): array
+    {
+        $addrs   = $this->buildAddressList($user, $savedAddresses);
+        $primary = $addrs->first();
+
+        $shopName = trim((string) ($user->shop_name ?? ''));
+        $person   = trim((string) ($user->name ?? ''));
+
+        return [
+            'id'            => $user->userid,
+            'accountCode'   => (string) ($user->party_code ?? ''),
+            'businessName'  => $shopName !== '' ? $shopName : $person,
+            'personName'    => $person,
+            'contactNumber' => $user->contactno ?? '',
+            'address'       => $primary['address'] ?? ($user->shop_address ?? ''),
+            'addresses'     => $addrs,
+            'area'          => '',
+            'pincode'       => $user->pincode ?? '',
+            'city'          => $user->city ?? '',
+            'state'         => $user->state ?? '',
+            'gstNumber'     => $user->gst_no ?? '',
+            'latitude'      => $primary['latitude']  ?? null,
+            'longitude'     => $primary['longitude'] ?? null,
+        ];
+    }
+
     private function dayFiringQuery(\Illuminate\Database\Eloquent\Builder $q, Carbon $date): void
     {
         $dayName    = $date->shortDayName; // 'Mon', 'Tue', ...
@@ -217,21 +247,9 @@ class BeatPlanController extends Controller
             $account = null;
             if ($plan->account_type === 'customer') {
                 $user = $customers->get($plan->account_id);
-                $addrs = $user ? $this->buildAddressList($user, $addressesByUser->get($plan->account_id, collect())) : collect();
-                $primary = $addrs->first();
-                $account = $user ? [
-                    'id'            => $user->userid,
-                    'accountCode'   => '',
-                    'businessName'  => $user->shop_name ?? '',
-                    'personName'    => $user->name ?? '',
-                    'contactNumber' => $user->contactno ?? '',
-                    'address'       => $primary['address'] ?? ($user->shop_address ?? ''),
-                    'addresses'     => $addrs,
-                    'area'          => '',
-                    'pincode'       => $user->pincode ?? '',
-                    'latitude'      => $primary['latitude']  ?? null,
-                    'longitude'     => $primary['longitude'] ?? null,
-                ] : null;
+                $account = $user
+                    ? $this->customerAccountPayload($user, $addressesByUser->get($plan->account_id, collect()))
+                    : null;
             } else {
                 $lead = $leads->get($plan->account_id);
                 $account = $lead ? [
@@ -314,21 +332,9 @@ class BeatPlanController extends Controller
                     $account = null;
                     if ($plan->account_type === 'customer') {
                         $user = $customers->get($plan->account_id);
-                        $addrs = $user ? $this->buildAddressList($user, $addressesByUser->get($plan->account_id, collect())) : collect();
-                        $primary = $addrs->first();
-                        $account = $user ? [
-                            'id'            => $user->userid,
-                            'accountCode'   => '',
-                            'businessName'  => $user->shop_name ?? '',
-                            'personName'    => $user->name ?? '',
-                            'contactNumber' => $user->contactno ?? '',
-                            'address'       => $primary['address'] ?? ($user->shop_address ?? ''),
-                            'addresses'     => $addrs,
-                            'area'          => '',
-                            'pincode'       => $user->pincode ?? '',
-                            'latitude'      => $primary['latitude']  ?? null,
-                            'longitude'     => $primary['longitude'] ?? null,
-                        ] : null;
+                        $account = $user
+                            ? $this->customerAccountPayload($user, $addressesByUser->get($plan->account_id, collect()))
+                            : null;
                     } else {
                         $lead = $leads->get($plan->account_id);
                         $account = $lead ? [

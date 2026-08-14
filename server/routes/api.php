@@ -32,6 +32,8 @@ Route::get('/utils/pincode/{pincode}', [PincodeController::class, 'lookup']);
 Route::get('/masters/roles',         [MastersController::class, 'roles']);
 Route::post('/masters/roles',        [MastersController::class, 'storeRole']);
 Route::delete('/masters/roles/{id}', [MastersController::class, 'destroyRole']);
+// Unit list (units_master table) — Sales Order line-item unit dropdown
+Route::get('/masters/units', [MastersController::class, 'units']);
 // List staff/employees (simple public endpoint for dashboards)
 Route::get('/employees', [MastersController::class, 'employees']);
 Route::post('/employees', [MastersController::class, 'store']);

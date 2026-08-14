@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../services/api_service.dart';
 import 'product_picker_sheet.dart';
+import 'unit_picker_sheet.dart';
 
 /// Opens the "Product Detail" bottom-sheet form (same layout used by the
 /// Create Sales Order screen) to add or edit one order line item. Pass
@@ -35,15 +37,22 @@ class _OrderItemFormSheet extends StatefulWidget {
 class _OrderItemFormSheetState extends State<_OrderItemFormSheet> {
   static const _gold = Color(0xFFD7BE69);
   static const _goldDark = Color(0xFFC09E3E);
-  static const _units = ['PCS', 'KG', 'BOX', 'LTR', 'DOZ'];
+  // Fallback shown until units_master loads. Deliberately a subset of real
+  // units_master names: a selected value that's absent from the loaded list
+  // trips DropdownButton's "value must match exactly one item" assert. (The
+  // old fallback had 'DOZ', which units_master spells 'DOZEN'.)
+  List<String> _units = const ['PCS', 'KG', 'BOX', 'LTR', 'NOS'];
 
   final _productCtrl = TextEditingController();
   final _qtyCtrl = TextEditingController(text: '1');
   final _priceCtrl = TextEditingController(text: '0');
-  final _taxCtrl = TextEditingController(text: '0');
   String _unit = 'PCS';
   String? _productId;
   String? _hsnCode;
+  // GST rate for the selected product, resolved server-side from product_taxes.
+  // Unit price is entered tax-inclusive, so tax is extracted back out of it
+  // rather than added on top — matching CreateSalesOrderSheet.
+  double _gstPercent = 0;
 
   @override
   void initState() {
@@ -53,11 +62,28 @@ class _OrderItemFormSheetState extends State<_OrderItemFormSheet> {
       _productCtrl.text = (i['name'] ?? '').toString();
       _qtyCtrl.text = ((i['quantity'] as num?) ?? 1).toString();
       _priceCtrl.text = ((i['item_price'] as num?) ?? 0).toStringAsFixed(2);
-      _taxCtrl.text = ((i['total_tax'] as num?) ?? 0).toStringAsFixed(2);
+      _gstPercent = ((i['tax_percent'] as num?) ?? 0).toDouble();
       _unit = (i['unit'] as String?) ?? 'PCS';
+      if (!_units.contains(_unit)) _units = [..._units, _unit];
       _productId = i['product_id'] as String?;
       _hsnCode = i['pack_size'] as String?;
     }
+    _loadUnits();
+  }
+
+  Future<void> _loadUnits() async {
+    final units = await ApiService.getUnits();
+    final names = units.map((u) => (u['unit_name'] as String?) ?? '').where((u) => u.isNotEmpty).toList();
+    if (!mounted || names.isEmpty) return;
+    // An order saved earlier can carry any unit string in orders_item.pinfo,
+    // including one units_master no longer lists — keep it as an option so
+    // editing that item doesn't silently rewrite its unit (or trip the assert).
+    setState(() => _units = names.contains(_unit) ? names : [...names, _unit]);
+  }
+
+  Future<void> _pickUnit() async {
+    final picked = await showUnitPickerSheet(context, units: _units, selected: _unit);
+    if (picked != null) setState(() => _unit = picked);
   }
 
   @override
@@ -65,14 +91,13 @@ class _OrderItemFormSheetState extends State<_OrderItemFormSheet> {
     _productCtrl.dispose();
     _qtyCtrl.dispose();
     _priceCtrl.dispose();
-    _taxCtrl.dispose();
     super.dispose();
   }
 
   double get _qty => double.tryParse(_qtyCtrl.text.trim()) ?? 0;
   double get _price => double.tryParse(_priceCtrl.text.trim()) ?? 0;
-  double get _tax => double.tryParse(_taxCtrl.text.trim()) ?? 0;
   double get _productTotal => _qty * _price;
+  double get _tax => _gstPercent > 0 ? _productTotal - _productTotal / (1 + _gstPercent / 100) : 0;
   double get _grossAmount => _productTotal - _tax;
 
   Future<void> _pickProduct() async {
@@ -87,6 +112,7 @@ class _OrderItemFormSheetState extends State<_OrderItemFormSheet> {
         _productCtrl.text = picked['name'] as String? ?? '';
         _productId = picked['product_id'] as String?;
         _hsnCode = picked['hsn_code'] as String?;
+        _gstPercent = (picked['gst_percent'] as num?)?.toDouble() ?? 0;
       });
     }
   }
@@ -167,18 +193,23 @@ class _OrderItemFormSheetState extends State<_OrderItemFormSheet> {
                     Expanded(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         _label('Unit'),
-                        Container(
-                          height: 46,
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              value: _unit,
-                              isExpanded: true,
-                              isDense: true,
-                              style: const TextStyle(fontSize: 13, color: Color(0xFF20242B), fontWeight: FontWeight.w500),
-                              items: _units.map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
-                              onChanged: (v) { if (v != null) setState(() => _unit = v); },
+                        InkWell(
+                          borderRadius: BorderRadius.circular(11),
+                          onTap: _pickUnit,
+                          child: Container(
+                            height: 46,
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            decoration: BoxDecoration(color: const Color(0xFFFAFAFA), borderRadius: BorderRadius.circular(11), border: Border.all(color: const Color(0xFFE7E7E7))),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(_unit,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 13, color: Color(0xFF20242B), fontWeight: FontWeight.w500)),
+                                ),
+                                Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Colors.grey.shade500),
+                              ],
                             ),
                           ),
                         ),
@@ -206,8 +237,8 @@ class _OrderItemFormSheetState extends State<_OrderItemFormSheet> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        _label('Total Tax'),
-                        TextField(controller: _taxCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), onChanged: (_) => setState(() {}), decoration: _decor()),
+                        _label(_gstPercent > 0 ? 'Total Tax (${_gstPercent.toStringAsFixed(_gstPercent % 1 == 0 ? 0 : 2)}%)' : 'Total Tax'),
+                        Text(_tax.toStringAsFixed(2), style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
                       ]),
                     ),
                     const SizedBox(width: 10),
@@ -247,6 +278,7 @@ class _OrderItemFormSheetState extends State<_OrderItemFormSheet> {
                             'quantity': _qty.round(),
                             'unit': _unit,
                             'item_price': _price,
+                            'tax_percent': _gstPercent,
                             'total_tax': _tax,
                             'item_total': _productTotal,
                             'gross_amount': _grossAmount,

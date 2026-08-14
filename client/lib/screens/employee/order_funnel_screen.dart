@@ -1,13 +1,16 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_config.dart';
 import '../../services/api_service.dart';
+import '../../services/open_visit_store.dart';
 import '../../widgets/account_map_screen.dart';
 import '../../widgets/create_sales_order_sheet.dart';
-import '../telecaller/telecaller_mock_data.dart' show kComplaintCategories;
+import '../telecaller/order_detail_screen.dart';
+import '../telecaller/telecaller_mock_data.dart' show kComplaintCategories, kOrderStatusColors;
 
 class OrderFunnelScreen extends StatefulWidget {
   final String accountId;
@@ -41,6 +44,18 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
   Timer?    _timer;
   Duration  _elapsed = Duration.zero;
 
+  // Geofence anchor — the salesman's position when he punched in.
+  double? _anchorLat;
+  double? _anchorLng;
+
+  // 50m, not the 10m first suggested: phone GPS drifts 5-20m while standing
+  // still, so a tighter fence closes visits the salesman is still attending.
+  static const double _geofenceMeters = 50;
+
+  StreamSubscription<Position>? _geoSub;
+  bool _leftGeofence = false;
+  bool _verifyingLocation = false;
+
   int _tab = 1; // 0 = History, 1 = Funnel, 2 = Transaction
 
   // ── Funnel form state ─────────────────────────────────────────────────────
@@ -59,8 +74,16 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
   bool _loadingTx   = false;
   bool _txLoadedOnce = false;
 
+  // ── Order History tab state ───────────────────────────────────────────────
+  List<Map<String, dynamic>> _orders = [];
+  bool _loadingOrders    = false;
+  bool _ordersLoadedOnce = false;
+  bool _ordersFailed     = false;
+  Timer? _ordersPoll;
+
   Map<String, dynamic> get _acc => widget.account ?? {};
   bool get _editable => _visitedIn && !_visitedOut;
+  bool get _isCustomerAccount => (_acc['account_type'] as String?) == 'customer';
 
   String? get _scheduleLabel {
     switch (_acc['frequency'] as String?) {
@@ -87,11 +110,77 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
   void initState() {
     super.initState();
     _loadFunnel();
+    _restoreOpenVisit();
+  }
+
+  // Navigating back doesn't end a visit — it just disposes this screen. Rebuild
+  // the in-progress visit from the store so returning shows the same visit,
+  // still counting, instead of a fresh one.
+  Future<void> _restoreOpenVisit() async {
+    final open = await OpenVisitStore.load(widget.accountId);
+    if (!mounted || open == null) return;
+    setState(() {
+      _visitedIn  = true;
+      _visitInAt  = open.visitInAt;
+      _elapsed    = DateTime.now().difference(open.visitInAt);
+      _anchorLat  = open.lat;
+      _anchorLng  = open.lng;
+    });
+    _startTicker();
+    _startGeofenceWatch();
+  }
+
+  void _startTicker() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _visitInAt == null) return;
+      // Recomputed from the punch-in instant rather than incremented, so time
+      // spent on another screen (or with the app backgrounded) still counts.
+      setState(() => _elapsed = DateTime.now().difference(_visitInAt!));
+    });
+  }
+
+  // Watches distance from the punch-in point for as long as this screen is
+  // open. Leaving the fence ends the visit if a funnel stage was already
+  // chosen; otherwise the visit stays open and the salesman is warned, since
+  // the server (rightly) won't accept a visit with no stage and inventing one
+  // would put a reason on record that he never gave.
+  void _startGeofenceWatch() {
+    if (_anchorLat == null || _anchorLng == null) return;
+    _geoSub?.cancel();
+    _geoSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      ),
+    ).listen(_onGeofencePosition, onError: (_) {});
+  }
+
+  void _onGeofencePosition(Position pos) {
+    if (!mounted || !_visitedIn || _visitedOut) return;
+    if (_anchorLat == null || _anchorLng == null) return;
+
+    final metres = Geolocator.distanceBetween(
+        _anchorLat!, _anchorLng!, pos.latitude, pos.longitude);
+
+    if (metres <= _geofenceMeters) {
+      if (_leftGeofence) setState(() => _leftGeofence = false);
+      return;
+    }
+
+    if (_selectedSlug != null && !_persisting) {
+      _geoSub?.cancel();
+      _endVisit();
+      return;
+    }
+    if (!_leftGeofence) setState(() => _leftGeofence = true);
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _geoSub?.cancel();
+    _ordersPoll?.cancel();
     _notesCtrl.dispose();
     super.dispose();
   }
@@ -118,20 +207,189 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     });
   }
 
+  /// [silent] is used by the background poll: it refreshes the list in place
+  /// without flashing a spinner, and keeps the last good data if the poll fails.
+  Future<void> _loadOrderHistory({bool silent = false}) async {
+    // Orders hang off a real `user` row via orders.buyer_userid — a lead has no
+    // such row, so there is nothing to fetch rather than an empty result.
+    if (!_isCustomerAccount || widget.accountId.isEmpty) return;
+    setState(() {
+      // A silent poll must not clear an existing error state up front: if the
+      // poll also fails, the error card would vanish and the empty list would
+      // render as "no orders yet" — the exact lie this guards against.
+      if (!silent) {
+        _loadingOrders = true;
+        _ordersFailed  = false;
+      }
+      _ordersLoadedOnce = true;
+    });
+    final res = await ApiService.getOrders(buyerUserId: widget.accountId, perPage: 50);
+    if (!mounted) return;
+    final raw = res['data'];
+    setState(() {
+      _loadingOrders = false;
+      // Distinguish a genuinely empty history from a failed request — getOrders
+      // returns success:false with an empty list on error, and reporting that as
+      // "no orders" would be a lie.
+      if (res['success'] == true && raw is List) {
+        _orders       = raw.map((o) => Map<String, dynamic>.from(o as Map)).toList();
+        _ordersFailed = false;
+      } else if (!silent) {
+        _ordersFailed = true;
+      }
+    });
+  }
+
+  // No push channel on this backend, so "live" is a poll — but only while the
+  // History tab is actually on screen, so it costs nothing the rest of the time.
+  void _startOrdersPolling() {
+    _ordersPoll?.cancel();
+    _ordersPoll = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (!mounted || _tab != 0) return;
+      _loadOrderHistory(silent: true);
+    });
+  }
+
+  void _stopOrdersPolling() {
+    _ordersPoll?.cancel();
+    _ordersPoll = null;
+  }
+
+  String _titleCase(String s) => s.isEmpty
+      ? s
+      : s.split(RegExp(r'[_\s]+')).map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}').join(' ');
+
   // ── Visit lifecycle ───────────────────────────────────────────────────────
-  void _startVisit() {
+
+  double? get _shopLat => (_acc['latitude'] as num?)?.toDouble();
+  double? get _shopLng => (_acc['longitude'] as num?)?.toDouble();
+
+  /// Plenty of accounts still carry 0,0 rather than a real fix, and 0,0 is a
+  /// point in the Atlantic — treating it as the shop would put every salesman
+  /// thousands of km "away" and lock them out of those accounts entirely.
+  bool get _hasShopLocation {
+    final lat = _shopLat, lng = _shopLng;
+    return lat != null && lng != null && !(lat == 0 && lng == 0);
+  }
+
+  Future<bool> _ensureLocationPermission() async {
+    if (!await Geolocator.isLocationServiceEnabled()) return false;
+    LocationPermission permission = LocationPermission.denied;
+    try {
+      permission = await Geolocator.checkPermission();
+    } catch (_) {}
+    if (permission != LocationPermission.always &&
+        permission != LocationPermission.whileInUse) {
+      try {
+        permission = await Geolocator.requestPermission();
+      } catch (_) {
+        return false;
+      }
+    }
+    return permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
+  }
+
+  void _visitError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: const Color(0xFFC0584C),
+      duration: const Duration(seconds: 4),
+    ));
+  }
+
+  Future<void> _startVisit() async {
+    double? anchorLat;
+    double? anchorLng;
+
+    // A salesman may only punch in while he is actually at the shop. This is
+    // only enforceable when the account has real coordinates to measure
+    // against — see _hasShopLocation.
+    if (_hasShopLocation) {
+      setState(() => _verifyingLocation = true);
+
+      Position? pos;
+      if (await _ensureLocationPermission()) {
+        try {
+          pos = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+          ).timeout(const Duration(seconds: 15));
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+      setState(() => _verifyingLocation = false);
+
+      // No fix means the check can't be performed. Letting the visit through
+      // here would make the rule opt-out by simply switching GPS off.
+      if (pos == null) {
+        _visitError('Could not read your location. Turn on GPS/location permission and try again.');
+        return;
+      }
+
+      final metres = Geolocator.distanceBetween(
+          _shopLat!, _shopLng!, pos.latitude, pos.longitude);
+      if (metres > _geofenceMeters) {
+        _visitError(
+            'You are not at the shop location — about ${metres.round()} m away. '
+            'Move within ${_geofenceMeters.round()} m to Visit In.');
+        return;
+      }
+
+      // Measure the auto-close fence from the shop itself, since we now know
+      // he started at it.
+      anchorLat = _shopLat;
+      anchorLng = _shopLng;
+    }
+
+    final startedAt = DateTime.now();
     setState(() {
       _visitedIn = true;
-      _visitInAt = DateTime.now();
+      _visitInAt = startedAt;
       _elapsed   = Duration.zero;
+      _anchorLat = anchorLat;
+      _anchorLng = anchorLng;
     });
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || _visitInAt == null) return;
-      setState(() => _elapsed = DateTime.now().difference(_visitInAt!));
-    });
+    _startTicker();
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Visit started')),
     );
+
+    // Persist immediately so a back-press right after punching in can't lose
+    // the visit.
+    await OpenVisitStore.save(OpenVisit(
+      accountId: widget.accountId,
+      visitInAt: startedAt,
+      lat: anchorLat,
+      lng: anchorLng,
+    ));
+
+    if (anchorLat != null) {
+      _startGeofenceWatch();
+      return;
+    }
+
+    // Shop coordinates unknown, so fall back to wherever he punched in as the
+    // auto-close anchor — the visit still can't be left open indefinitely.
+    Position? pos;
+    try {
+      pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      ).timeout(const Duration(seconds: 10));
+    } catch (_) {}
+    if (pos == null || !mounted) return;
+    setState(() {
+      _anchorLat = pos!.latitude;
+      _anchorLng = pos.longitude;
+    });
+    _startGeofenceWatch();
+    await OpenVisitStore.save(OpenVisit(
+      accountId: widget.accountId,
+      visitInAt: startedAt,
+      lat: pos.latitude,
+      lng: pos.longitude,
+    ));
   }
 
   Future<void> _endVisit() async {
@@ -158,6 +416,13 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
       durationSeconds: _visitInAt == null ? null : outAt.difference(_visitInAt!).inSeconds,
       images:          _images.isEmpty ? null : List<String>.from(_images),
     );
+
+    // The visit is closed once the server has it — drop the local open-visit
+    // record so reopening this account starts a fresh visit rather than
+    // resurrecting this one.
+    if (result != null && result['errors'] == null) {
+      await OpenVisitStore.clear(widget.accountId);
+    }
 
     if (!mounted) return;
     final ok = result != null && result['errors'] == null;
@@ -384,8 +649,17 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
         accountType: accountType,
         deliveryAddress: deliveryAddress,
         areaName: _acc['area'] as String?,
+        contactNumber: _acc['contactNumber'] as String?,
+        gstNumber: _acc['gstNumber'] as String?,
+        accountCode: _acc['accountCode'] as String?,
+        city: _acc['city'] as String?,
+        state: _acc['state'] as String?,
+        pincode: _acc['pincode'] as String?,
         onSave: (items, amt, status, pay, realOrderId) {
           if (!mounted) return;
+          // The order the salesman just placed should be in the history
+          // immediately, not 20 seconds later on the next poll.
+          if (realOrderId != null) _loadOrderHistory(silent: true);
           // Unlike the telecaller flow, this screen has no local order list to
           // append a draft to (its "Order History" tab is a static placeholder)
           // — so for a lead account nothing is actually persisted here. Say so
@@ -489,9 +763,9 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                       const SizedBox(width: 8),
                       // Visit In
                       _VisitBtn(
-                        label: 'Visit In',
-                        active: !_visitedIn,
-                        onTap: _visitedIn ? null : _startVisit,
+                        label: _verifyingLocation ? 'Checking…' : 'Visit In',
+                        active: !_visitedIn && !_verifyingLocation,
+                        onTap: (_visitedIn || _verifyingLocation) ? null : _startVisit,
                       ),
                       const SizedBox(width: 6),
                       // Visit Out
@@ -502,6 +776,39 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                       ),
                     ],
                   ),
+
+                  // Walked out of the fence without choosing a stage — the
+                  // visit is still running and still his to close.
+                  if (_leftGeofence && _editable) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFC0584C).withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: const Color(0xFFC0584C).withValues(alpha: 0.45)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.location_off_rounded,
+                              size: 17, color: Color(0xFFC0584C)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'You have left this shop and the visit is still open. '
+                              'Pick a funnel stage, then tap Visit Out to close it.',
+                              style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.red.shade900),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
 
                   // Visit timer
                   if (_visitedIn) ...[
@@ -571,17 +878,21 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                   const SizedBox(height: 10),
                   // Complaint + Take Order — separated from the contact icons
                   // above since these are full actions, not quick-dial links.
+                  // Both are gated on an open visit: the salesman has to be
+                  // checked in before transacting. Call/WhatsApp/Map stay open
+                  // so he can still reach the shop to announce his arrival.
                   Row(
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: _raiseComplaint,
+                          onPressed: _editable ? _raiseComplaint : null,
                           icon: const Icon(Icons.report_problem_rounded, size: 16),
                           label: const Text('Raise Complaint',
                               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.red.shade600,
-                            side: BorderSide(color: Colors.red.shade300),
+                            side: BorderSide(
+                                color: _editable ? Colors.red.shade300 : Colors.grey.shade300),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10)),
                             padding: const EdgeInsets.symmetric(vertical: 10),
@@ -591,13 +902,15 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: _takeOrder,
+                          onPressed: _editable ? _takeOrder : null,
                           icon: const Icon(Icons.shopping_cart_rounded, size: 16),
                           label: const Text('Take Order',
                               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _gold,
                             foregroundColor: Colors.white,
+                            disabledBackgroundColor: _gold.withValues(alpha: 0.35),
+                            disabledForegroundColor: Colors.white70,
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10)),
                             padding: const EdgeInsets.symmetric(vertical: 10),
@@ -606,6 +919,26 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                       ),
                     ],
                   ),
+                  // A disabled button with no reason reads as a broken screen —
+                  // say which state the visit is in instead.
+                  if (!_editable) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(Icons.lock_outline_rounded,
+                            size: 14, color: Colors.grey.shade500),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            _visitedOut
+                                ? 'Visit closed — these actions are locked for this visit.'
+                                : 'Tap Visit In to take an order or raise a complaint.',
+                            style: TextStyle(
+                                fontSize: 11.5, color: Colors.grey.shade600)),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -617,16 +950,26 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
               children: [
                 Expanded(child: _TabBtn(
                     label: 'Order History', active: _tab == 0,
-                    onTap: () => setState(() => _tab = 0))),
+                    onTap: () {
+                      setState(() => _tab = 0);
+                      // Always refetch on entry, not just the first time — an
+                      // order placed since the last look should already be here.
+                      _loadOrderHistory(silent: _ordersLoadedOnce);
+                      _startOrdersPolling();
+                    })),
                 const SizedBox(width: 10),
                 Expanded(child: _TabBtn(
                     label: 'Order Funnel', active: _tab == 1,
-                    onTap: () => setState(() => _tab = 1))),
+                    onTap: () {
+                      setState(() => _tab = 1);
+                      _stopOrdersPolling();
+                    })),
                 const SizedBox(width: 10),
                 Expanded(child: _TabBtn(
                     label: 'Transaction', active: _tab == 2,
                     onTap: () {
                       setState(() => _tab = 2);
+                      _stopOrdersPolling();
                       if (!_txLoadedOnce) _loadTransactions();
                     })),
               ],
@@ -640,7 +983,7 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
             else if (_tab == 2)
               _buildTransactionTab()
             else
-              const _PlaceholderCard(text: 'No order history yet.'),
+              _buildHistoryTab(),
           ],
         ),
       ),
@@ -768,6 +1111,146 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
       ),
     );
   }
+
+  // ── Order History tab ───────────────────────────────────────────────────
+  Widget _buildHistoryTab() {
+    if (!_isCustomerAccount) {
+      return const _PlaceholderCard(
+          text: 'No order history — this account is still a lead, not a registered customer.');
+    }
+    if (_loadingOrders) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 40),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_ordersFailed) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFEEEEEE)),
+        ),
+        child: Column(
+          children: [
+            Icon(Icons.wifi_off_rounded, size: 34, color: Colors.grey.shade300),
+            const SizedBox(height: 8),
+            Text('Could not load order history.',
+                style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600)),
+            const SizedBox(height: 10),
+            ElevatedButton.icon(
+              onPressed: _loadOrderHistory,
+              icon: const Icon(Icons.refresh_rounded, size: 16),
+              label: const Text('Retry'),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: _gold, foregroundColor: Colors.white),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_orders.isEmpty) {
+      return const _PlaceholderCard(text: 'No orders yet for this customer.');
+    }
+    return Column(children: _orders.map(_buildOrderCard).toList());
+  }
+
+  Widget _buildOrderCard(Map<String, dynamic> o) {
+    final orderId = o['order_id']?.toString();
+    final state   = _titleCase((o['order_state'] ?? '').toString());
+    final pay     = _titleCase((o['payment_status'] ?? '').toString());
+    final items   = (o['items_count'] as num?)?.toInt() ?? 0;
+    final total   = (o['order_total'] as num?)?.toDouble() ?? 0;
+    final when    = (o['order_datetime'] ?? '').toString();
+    final sc      = kOrderStatusColors[state] ?? const Color(0xFF5A6472);
+
+    return GestureDetector(
+      onTap: orderId == null
+          ? null
+          : () async {
+              // Order Detail can add/edit/delete line items, so refresh on the
+              // way back rather than leaving a stale total on this card.
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => OrderDetailScreen(orderId: orderId)),
+              );
+              if (mounted) await _loadOrderHistory();
+            },
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFEEEEEE)),
+          boxShadow: const [BoxShadow(
+              color: Colors.black12, blurRadius: 4, offset: Offset(0, 1))],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  height: 34,
+                  width: 34,
+                  decoration: BoxDecoration(
+                      color: _gold.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(11)),
+                  child: const Icon(Icons.receipt_long_rounded,
+                      size: 17, color: Color(0xFF9C7B1E)),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Order #$orderId',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 13.5, fontWeight: FontWeight.w800)),
+                      if (when.isNotEmpty)
+                        Text(when,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 11.5, color: Colors.grey.shade600)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text('₹${total.round()}',
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                if (state.isNotEmpty) _orderPill(state, sc),
+                if (pay.isNotEmpty) _orderPill(pay, const Color(0xFF5A6472)),
+                _orderPill('$items item(s)', const Color(0xFF5A6472)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _orderPill(String label, Color c) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+            color: c.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(20)),
+        child: Text(label,
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: c)),
+      );
 
   // ── Transaction tab ─────────────────────────────────────────────────────
   Widget _buildTransactionTab() {

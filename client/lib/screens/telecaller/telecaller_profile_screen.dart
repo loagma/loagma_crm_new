@@ -837,6 +837,12 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
         accountType: widget.accountType,
         deliveryAddress: selectedAddress,
         areaName: _acc['area'] as String?,
+        contactNumber: _phone,
+        gstNumber: _acc['gstNumber'] as String?,
+        accountCode: _code,
+        city: _acc['city'] as String?,
+        state: _acc['state'] as String?,
+        pincode: _acc['pincode'] as String?,
         onSave: (items, amt, status, pay, realOrderId) async {
           if (realOrderId != null) {
             // Real order — refetch from the server so the list/summary
