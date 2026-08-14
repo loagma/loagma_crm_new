@@ -352,6 +352,117 @@ class TelecallerController extends Controller
         return response()->json(['success' => true, 'data' => $data]);
     }
 
+    // ── Team agents roster (hierarchy-scoped) ─────────────────────────────────
+    // Landing list for the Team Call History module: the working telecallers
+    // this viewer is allowed to see, each with their call stats, so a senior
+    // picks a person first and then drills into that person's calls
+    // (teamCallHistory?mobile=…). Same scope rule as teamCallHistory(): admin
+    // sees every telecaller, everyone else only their own descendants — so a
+    // teleadmin can never enumerate staff outside their own team.
+    //
+    // ?from=&to= (Y-m-d, inclusive, app-timezone days) narrow the stats to the
+    // window the client's date filter is showing, so the counts here and the
+    // rows on the drill-in screen agree. calls_today deliberately ignores the
+    // window. ?include_locked=1 brings disabled staff back into the list.
+    public function teamAgents(): JsonResponse
+    {
+        $mobile = $this->mobile();
+        $staff  = DeliStaff::where('mobile', $mobile)->first();
+        if (!$staff) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+        }
+
+        $validated = request()->validate([
+            'from' => 'nullable|date_format:Y-m-d',
+            'to'   => 'nullable|date_format:Y-m-d',
+        ]);
+
+        // Role is stored free-form in deli_staff, so normalize rather than
+        // matching 'telecaller' exactly (mirrors normalizeRole on the client).
+        $query = DeliStaff::query()->whereRaw('LOWER(TRIM(role)) = ?', ['telecaller']);
+
+        if (strtolower(trim($staff->role ?? '')) !== 'admin') {
+            $descendants = $this->getDescendantMobiles($mobile);
+            if (empty($descendants)) {
+                return response()->json(['success' => true, 'data' => []]);
+            }
+            $query->whereIn('mobile', $descendants);
+        }
+
+        // "Working" = not locked out of the app; a NULL flag counts as working.
+        if (!request()->boolean('include_locked')) {
+            $query->where(function ($q) {
+                $q->whereNull('is_locked')->orWhere('is_locked', 0);
+            });
+        }
+
+        $agents = $query->orderBy('name')->get(['mobile', 'name', 'city', 'is_locked']);
+        if ($agents->isEmpty()) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        $mobiles = $agents->pluck('mobile')->map(fn ($m) => (string) $m)->all();
+
+        // called_at holds naive app-timezone wall-clock, so the window edges are
+        // built in that zone — a UTC boundary would clip 5h30m off each end.
+        $tz   = config('app.timezone');
+        $from = !empty($validated['from'])
+            ? Carbon::createFromFormat('Y-m-d', $validated['from'], $tz)->startOfDay()
+            : null;
+        $to = !empty($validated['to'])
+            ? Carbon::createFromFormat('Y-m-d', $validated['to'], $tz)->endOfDay()
+            : null;
+
+        $statsQuery = CallLog::whereIn('employee_mobile', $mobiles);
+        if ($from) {
+            $statsQuery->where('called_at', '>=', $from);
+        }
+        if ($to) {
+            $statsQuery->where('called_at', '<=', $to);
+        }
+
+        $stats = $statsQuery
+            ->selectRaw("employee_mobile,
+                COUNT(*) AS total_calls,
+                MAX(called_at) AS last_called_at,
+                SUM(CASE WHEN call_outcome = 'answered' THEN 1 ELSE 0 END) AS connected_calls,
+                SUM(CASE WHEN recording_url IS NOT NULL AND recording_url <> '' THEN 1 ELSE 0 END) AS recordings,
+                COALESCE(SUM(duration_seconds), 0) AS talk_time_seconds")
+            ->groupBy('employee_mobile')
+            ->get()
+            ->keyBy('employee_mobile');
+
+        // Today's count sits outside the window on purpose — a senior reading a
+        // month's totals still wants to see who is actually calling right now.
+        $todayCounts = CallLog::whereIn('employee_mobile', $mobiles)
+            ->where('called_at', '>=', Carbon::today($tz)->startOfDay())
+            ->where('called_at', '<=', Carbon::today($tz)->endOfDay())
+            ->selectRaw('employee_mobile, COUNT(*) AS c')
+            ->groupBy('employee_mobile')
+            ->pluck('c', 'employee_mobile');
+
+        $data = $agents->map(function (DeliStaff $a) use ($stats, $todayCounts) {
+            $key  = (string) $a->mobile;
+            $s    = $stats[$key] ?? null;
+            $last = $s?->last_called_at;
+
+            return [
+                'mobile'            => $key,
+                'name'              => $a->name ?: $key,
+                'city'              => $a->city,
+                'is_locked'         => (bool) $a->is_locked,
+                'total_calls'       => (int) ($s?->total_calls ?? 0),
+                'connected_calls'   => (int) ($s?->connected_calls ?? 0),
+                'recordings'        => (int) ($s?->recordings ?? 0),
+                'talk_time_seconds' => (int) ($s?->talk_time_seconds ?? 0),
+                'calls_today'       => (int) ($todayCounts[$key] ?? 0),
+                'last_called_at'    => $last ? Carbon::parse($last)->toIso8601String() : null,
+            ];
+        })->values();
+
+        return response()->json(['success' => true, 'data' => $data]);
+    }
+
     /**
      * Polled right after a cloud (Knowlarity) call is triggered, so the app
      * can show live SR/call-log data and detect the moment the completed

@@ -218,13 +218,9 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF2F9E57),
             'subtitle': 'On-duty tracking',
           },
-          {
-            'title': 'Team Call History',
-            'icon': Icons.record_voice_over_rounded,
-            'route': '/team-call-history',
-            'color': const Color(0xFF7E57C2),
-            'subtitle': 'Calls & recordings',
-          },
+          // No "Team Call History": calls belong to the telecaller hierarchy's
+          // seniors. Area Incharge owns salesmen, not telecallers — the server
+          // 403s /api/telecaller/team-call-history for this role too.
         ];
       case 'teleadmin':
         return [
@@ -253,13 +249,9 @@ class AppDrawer extends StatelessWidget {
             'route': '/my-incharges',
             'color': const Color(0xFFAB47BC),
           },
-          {
-            'title': 'Live Salesmen',
-            'icon': Icons.location_searching_rounded,
-            'route': '/live-salesmen',
-            'color': const Color(0xFF2F9E57),
-            'subtitle': 'On-duty tracking',
-          },
+          // No "Live Salesmen": tracking belongs to the salesman hierarchy's
+          // seniors. Teleadmin owns telecallers, not salesmen — the server
+          // 403s /api/tracking/* for this role too.
           {
             'title': 'Team Call History',
             'icon': Icons.record_voice_over_rounded,

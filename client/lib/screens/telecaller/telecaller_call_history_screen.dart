@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/api_service.dart';
 import '../../widgets/call_recording_player.dart';
+import 'call_date_filter.dart';
 import 'telecaller_actions.dart';
 import 'telecaller_mock_data.dart';
 
@@ -16,32 +17,43 @@ import 'telecaller_mock_data.dart';
 /// flat unscoped dump), with an added Agent filter and each row/detail sheet
 /// labelled with who made the call, reusing every other filter/detail/
 /// recording-playback bit of the telecaller's own screen as-is.
+///
+/// Team mode has two entry points. [TeamCallAgentsScreen] is the normal one:
+/// it lists the telecallers first and opens this screen with [agentMobile]
+/// set, so only that person's calls load (server-side, via `?mobile=`) and the
+/// Agent filter is dropped as redundant. The app-bar shortcut there opens the
+/// combined view instead, with [agentMobile] null.
 class TelecallerCallHistoryScreen extends StatefulWidget {
   final bool teamMode;
 
-  const TelecallerCallHistoryScreen({super.key, this.teamMode = false});
+  /// Team mode: restrict to one telecaller. The server re-checks that this
+  /// mobile is actually in the caller's team, so it is a scope, not a hint.
+  final String? agentMobile;
+  final String? agentName;
+
+  /// Window pre-selected by the roster, so the rows here match the count that
+  /// was on the agent's card.
+  final CallDateFilter initialDateFilter;
+  final DateTimeRange? initialCustomRange;
+
+  const TelecallerCallHistoryScreen({
+    super.key,
+    this.teamMode = false,
+    this.agentMobile,
+    this.agentName,
+    this.initialDateFilter = CallDateFilter.all,
+    this.initialCustomRange,
+  });
 
   @override
   State<TelecallerCallHistoryScreen> createState() => _TelecallerCallHistoryScreenState();
 }
 
-/// Date filter presets for call history.
-enum _DateFilter { all, today, yesterday, week, month, custom }
-
-const _dateFilterLabels = <_DateFilter, String>{
-  _DateFilter.all: 'All time',
-  _DateFilter.today: 'Today',
-  _DateFilter.yesterday: 'Yesterday',
-  _DateFilter.week: 'Last 7 days',
-  _DateFilter.month: 'Last 30 days',
-  _DateFilter.custom: 'Custom range',
-};
-
 class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScreen> {
   bool _loading = true;
   List<Map<String, dynamic>> _items = [];
   String _query = '';
-  _DateFilter _dateFilter = _DateFilter.all;
+  late CallDateFilter _dateFilter;
   DateTimeRange? _customRange;
   String? _outcomeFilter;
   /// null = all, 'knowlarity' = cloud calls, 'manual' = manually-logged calls.
@@ -49,16 +61,23 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
   /// Team mode only: null = whole team, else one agent's employee_mobile.
   String? _employeeFilter;
 
+  /// True when this screen is showing exactly one telecaller — the Agent
+  /// filter would only ever have one option, so it is hidden.
+  bool get _singleAgent => (widget.agentMobile ?? '').isNotEmpty;
+
   @override
   void initState() {
     super.initState();
+    _dateFilter = widget.initialDateFilter;
+    _customRange = widget.initialCustomRange;
     _load();
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     final items = widget.teamMode
-        ? await ApiService.getTeamCallHistory()
+        ? await ApiService.getTeamCallHistory(
+            mobile: _singleAgent ? widget.agentMobile : null)
         : await ApiService.getTelecallerCallHistory();
     if (!mounted) return;
     setState(() {
@@ -95,36 +114,12 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
   }
 
   bool get _hasActiveFilter =>
-      _dateFilter != _DateFilter.all || _outcomeFilter != null || _sourceFilter != null || _employeeFilter != null;
+      _dateFilter != CallDateFilter.all || _outcomeFilter != null || _sourceFilter != null || _employeeFilter != null;
 
-  bool _matchesDate(String? iso) {
-    if (_dateFilter == _DateFilter.all) return true;
-    final dt = iso == null || iso.isEmpty ? null : DateTime.tryParse(iso)?.toLocal();
-    if (dt == null) return false;
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final day = DateTime(dt.year, dt.month, dt.day);
-    switch (_dateFilter) {
-      case _DateFilter.today:
-        return day == today;
-      case _DateFilter.yesterday:
-        return day == today.subtract(const Duration(days: 1));
-      case _DateFilter.week:
-        return !day.isBefore(today.subtract(const Duration(days: 6)));
-      case _DateFilter.month:
-        return !day.isBefore(today.subtract(const Duration(days: 29)));
-      case _DateFilter.custom:
-        if (_customRange == null) return true;
-        final start = DateTime(_customRange!.start.year, _customRange!.start.month, _customRange!.start.day);
-        final end = DateTime(_customRange!.end.year, _customRange!.end.month, _customRange!.end.day);
-        return !day.isBefore(start) && !day.isAfter(end);
-      case _DateFilter.all:
-        return true;
-    }
-  }
+  bool _matchesDate(String? iso) => callDateMatches(_dateFilter, _customRange, iso);
 
   Future<void> _openFilterSheet() async {
-    _DateFilter tempDate = _dateFilter;
+    CallDateFilter tempDate = _dateFilter;
     DateTimeRange? tempRange = _customRange;
     String? tempOutcome = _outcomeFilter;
     String? tempEmployee = _employeeFilter;
@@ -150,15 +145,15 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      children: _DateFilter.values.map((f) {
+                      children: CallDateFilter.values.map((f) {
                         final selected = tempDate == f;
                         return ChoiceChip(
-                          label: Text(_dateFilterLabels[f]!),
+                          label: Text(callDateFilterLabels[f]!),
                           selected: selected,
                           selectedColor: kGold.withValues(alpha: 0.25),
                           labelStyle: TextStyle(fontSize: 12, color: selected ? kGoldDark : Colors.black87, fontWeight: FontWeight.w600),
                           onSelected: (_) async {
-                            if (f == _DateFilter.custom) {
+                            if (f == CallDateFilter.custom) {
                               final now = DateTime.now();
                               final picked = await showDateRangePicker(
                                 context: ctx,
@@ -206,7 +201,7 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                         }),
                       ],
                     ),
-                    if (widget.teamMode && _teamAgents.isNotEmpty) ...[
+                    if (widget.teamMode && !_singleAgent && _teamAgents.isNotEmpty) ...[
                       const SizedBox(height: 16),
                       const Text('Agent', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.black54)),
                       const SizedBox(height: 8),
@@ -241,7 +236,7 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                           child: OutlinedButton(
                             onPressed: () {
                               setSheetState(() {
-                                tempDate = _DateFilter.all;
+                                tempDate = CallDateFilter.all;
                                 tempRange = null;
                                 tempOutcome = null;
                                 tempEmployee = null;
@@ -257,7 +252,7 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                             onPressed: () {
                               setState(() {
                                 _dateFilter = tempDate;
-                                _customRange = tempDate == _DateFilter.custom ? tempRange : null;
+                                _customRange = tempDate == CallDateFilter.custom ? tempRange : null;
                                 _outcomeFilter = tempOutcome;
                                 _employeeFilter = tempEmployee;
                               });
@@ -300,7 +295,18 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
     return Scaffold(
       backgroundColor: kBg,
       appBar: AppBar(
-        title: Text(widget.teamMode ? 'Team Call History' : 'Call History'),
+        title: _singleAgent
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('${widget.agentName?.isNotEmpty == true ? widget.agentName : widget.agentMobile}',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  Text('${items.length} of ${_items.length} calls',
+                      style: const TextStyle(fontSize: 11, color: Colors.white70)),
+                ],
+              )
+            : Text(widget.teamMode ? 'Team Call History' : 'Call History'),
         backgroundColor: kGold,
         foregroundColor: Colors.white,
         actions: [IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load)],
@@ -315,7 +321,7 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                   child: TextField(
                     onChanged: (v) => setState(() => _query = v),
                     decoration: InputDecoration(
-                      hintText: widget.teamMode
+                      hintText: widget.teamMode && !_singleAgent
                           ? 'Search by name, number, or agent…'
                           : 'Search by name or number…',
                       prefixIcon: const Icon(Icons.search_rounded, color: kGoldDark),
@@ -365,13 +371,11 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                   spacing: 6,
                   runSpacing: 6,
                   children: [
-                    if (_dateFilter != _DateFilter.all)
+                    if (_dateFilter != CallDateFilter.all)
                       _activeFilterChip(
-                        _dateFilter == _DateFilter.custom && _customRange != null
-                            ? '${_fmtDate(_customRange!.start)} - ${_fmtDate(_customRange!.end)}'
-                            : _dateFilterLabels[_dateFilter]!,
+                        callDateChipLabel(_dateFilter, _customRange),
                         () => setState(() {
-                          _dateFilter = _DateFilter.all;
+                          _dateFilter = CallDateFilter.all;
                           _customRange = null;
                         }),
                       ),
@@ -417,8 +421,6 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
       ),
     );
   }
-
-  String _fmtDate(DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
   static const _months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
@@ -557,7 +559,9 @@ class _TelecallerCallHistoryScreenState extends State<TelecallerCallHistoryScree
                         ],
                       ],
                     ),
-                    if (widget.teamMode && '${h['employee_name'] ?? ''}'.isNotEmpty) ...[
+                    // Redundant when the whole screen is already one agent —
+                    // the app bar names them.
+                    if (widget.teamMode && !_singleAgent && '${h['employee_name'] ?? ''}'.isNotEmpty) ...[
                       const SizedBox(height: 3),
                       Row(
                         children: [

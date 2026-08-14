@@ -46,6 +46,8 @@ import '../screens/telecaller/verify_pincode_detail_screen.dart';
 import '../screens/telecaller/telecaller_call_screen.dart';
 import '../screens/telecaller/telecaller_dashboard_screen.dart';
 import '../screens/telecaller/telecaller_callbacks_screen.dart';
+import '../screens/telecaller/call_date_filter.dart';
+import '../screens/telecaller/team_call_agents_screen.dart';
 import '../screens/telecaller/telecaller_call_history_screen.dart';
 import '../screens/telecaller/order_list_screen.dart';
 import '../screens/telecaller/telecaller_worklist_screen.dart';
@@ -323,9 +325,29 @@ final appRouter = GoRouter(
       path: '/telecaller/call-history',
       builder: (context, state) => const TelecallerCallHistoryScreen(),
     ),
+    // Team Call History opens on the telecaller roster; the two leaf routes are
+    // the per-agent drill-in and the "everyone merged" view the module used to
+    // land on directly.
     GoRoute(
       path: '/team-call-history',
+      builder: (context, state) => const TeamCallAgentsScreen(),
+    ),
+    GoRoute(
+      path: '/team-call-history/all',
       builder: (context, state) => const TelecallerCallHistoryScreen(teamMode: true),
+    ),
+    GoRoute(
+      path: '/team-call-history/agent',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? {};
+        return TelecallerCallHistoryScreen(
+          teamMode: true,
+          agentMobile: extra['mobile'] as String? ?? '',
+          agentName: extra['name'] as String? ?? '',
+          initialDateFilter: extra['dateFilter'] as CallDateFilter? ?? CallDateFilter.all,
+          initialCustomRange: extra['customRange'] as DateTimeRange?,
+        );
+      },
     ),
     GoRoute(
       path: '/orders-list',

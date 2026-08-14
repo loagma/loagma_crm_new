@@ -127,16 +127,19 @@ Route::prefix('admin/attendance')->group(function () {
 // ---------------------------------------------------------------------------
 // Tracking (Phase 1: salesman GPS ping ingest only; admin views land in later phases)
 // ---------------------------------------------------------------------------
+// Admin views are limited to the SALESMAN hierarchy's seniors (admin → manager
+// → head/zonal/area incharge). Teleadmin sits on the telecaller branch and owns
+// no salesmen, so it is deliberately NOT in this list.
 Route::prefix('tracking')->middleware('jwtauth')->group(function () {
     Route::post('/ping', [TrackingController::class, 'ping']);
     Route::get('/live', [TrackingController::class, 'live'])
-        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin');
+        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge');
     Route::get('/live-route', [TrackingController::class, 'liveRoute'])
-        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin');
+        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge');
     Route::get('/route', [TrackingController::class, 'route'])
-        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin');
+        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge');
     Route::get('/roster', [TrackingController::class, 'roster'])
-        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin');
+        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge');
 });
 
 // ---------------------------------------------------------------------------
@@ -197,10 +200,19 @@ Route::prefix('telecaller')->group(function () {
     Route::get('/callbacks',    [TelecallerController::class, 'callbacks']);
     Route::get('/call-history', [TelecallerController::class, 'callHistory']);
     // Hierarchy-scoped: admin sees everyone, a teleadmin/incharge sees their
-    // own descendants — never a flat unscoped dump. Same role list as the
-    // tracking module's admin-view routes.
+    // own descendants — never a flat unscoped dump.
+    //
+    // Limited to the TELECALLER hierarchy's seniors (admin → manager →
+    // head/zonal incharge → teleadmin). area_incharge owns salesmen only and is
+    // deliberately NOT in this list — the mirror image of the tracking routes
+    // above, which exclude teleadmin. head_incharge/zonal_incharge sit above
+    // BOTH branches, so they keep access to both modules.
     Route::get('/team-call-history', [TelecallerController::class, 'teamCallHistory'])
-        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin');
+        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,teleadmin');
+    // Roster that fronts the module: the working telecallers under this viewer
+    // with their call stats. Same scope + same role list as team-call-history.
+    Route::get('/team-agents', [TelecallerController::class, 'teamAgents'])
+        ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,teleadmin');
     Route::get('/call-status/{id}', [TelecallerController::class, 'callStatus']);
     // Not role-restricted at the route level: serves both a telecaller's own
     // recordings and a senior's team view — canAccessCallLog() inside does the

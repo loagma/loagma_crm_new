@@ -973,6 +973,39 @@ class ApiService {
     return [];
   }
 
+  /// The working telecallers this senior may view, each with call stats —
+  /// the roster that fronts Team Call History. Same hierarchy scope as
+  /// [getTeamCallHistory]: admin gets every telecaller, a teleadmin/incharge
+  /// only their own descendants.
+  ///
+  /// [from]/[to] are `Y-m-d` local days that narrow the per-agent counts to the
+  /// same window the roster's date filter shows; [includeLocked] brings
+  /// disabled staff back into the list.
+  static Future<List<Map<String, dynamic>>> getTeamCallAgents({
+    String? from,
+    String? to,
+    bool includeLocked = false,
+  }) async {
+    final query = <String, String>{
+      'from': ?from,
+      'to': ?to,
+      if (includeLocked) 'include_locked': '1',
+    };
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/team-agents')
+        .replace(queryParameters: query.isEmpty ? null : query);
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return ((decoded['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+      }
+      print('getTeamCallAgents failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getTeamCallAgents error: $e');
+    }
+    return [];
+  }
+
   /// Fetches a call recording's raw audio bytes through the authenticated
   /// backend proxy - the underlying Knowlarity URL 401s without the server's
   /// own API credentials, which no player/browser can attach directly.
