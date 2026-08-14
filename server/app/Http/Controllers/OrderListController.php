@@ -204,6 +204,13 @@ class OrderListController extends Controller
                 'qty_delivered' => $row->qty_delivered !== null ? (int) $row->qty_delivered : 0,
                 'item_price'   => (float) $row->item_price,
                 'item_total'   => (float) $row->item_total,
+                // Exposed so a client editing this order's items (PUT
+                // /orders/{id}/items) can round-trip these back instead of
+                // them silently resetting to 0 on the next save.
+                'unit'          => $pinfo['unit'] ?? 'PCS',
+                'tax_percent'   => (float) ($pinfo['tax_percent'] ?? 0),
+                'sgst_percent'  => (float) ($pinfo['sgst_percent'] ?? 0),
+                'cgst_percent'  => (float) ($pinfo['cgst_percent'] ?? 0),
             ];
         })->values();
 

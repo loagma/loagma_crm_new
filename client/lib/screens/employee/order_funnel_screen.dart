@@ -6,8 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_config.dart';
 import '../../services/api_service.dart';
 import '../../widgets/account_map_screen.dart';
+import '../../widgets/create_sales_order_sheet.dart';
 import '../telecaller/telecaller_mock_data.dart' show kComplaintCategories;
-import 'create_sales_order_screen.dart';
 
 class OrderFunnelScreen extends StatefulWidget {
   final String accountId;
@@ -359,40 +359,48 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     );
   }
 
-  // A real Sales Order can only be created for a registered customer
-  // (SalesOrderController::store requires buyer_userid to match a `user`
-  // row) — a lead account's id doesn't correspond to one, so the server
-  // rejects it outright. Catching that here up front instead of letting
-  // every attempt round-trip to a 422.
+  // Same "Create Sales Order" sheet used from the telecaller's account
+  // profile (CreateSalesOrderSheet, shared via widgets/create_sales_order_sheet.dart)
+  // — it already knows a real Sales Order can only be created for a
+  // registered customer (SalesOrderController::store requires buyer_userid
+  // to match a `user` row) and falls back to a local-only draft with a clear
+  // banner for a lead account, so no separate guard is needed here.
   Future<void> _takeOrder() async {
     final accountType = (_acc['account_type'] as String?) ?? 'lead';
-    if (accountType != 'customer') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('This is a lead account — convert it to a customer before taking an order.'),
-        ),
-      );
-      return;
-    }
+    final address = (_acc['address'] as String?) ?? '';
+    final lat = (_acc['latitude'] as num?)?.toDouble();
+    final lng = (_acc['longitude'] as num?)?.toDouble();
+    final deliveryAddress = (address.isNotEmpty || (lat != null && lng != null))
+        ? {'address': address, 'latitude': lat, 'longitude': lng}
+        : null;
 
-    await Navigator.push<String>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => CreateSalesOrderScreen(
-          buyerUserId: widget.accountId,
-          shopName: (_acc['businessName'] as String?) ?? '',
-          ownerName: (_acc['personName'] as String?) ?? '',
-          address: (_acc['address'] as String?) ?? '',
-          latitude: (_acc['latitude'] as num?)?.toDouble(),
-          longitude: (_acc['longitude'] as num?)?.toDouble(),
-          areaName: _acc['area'] as String?,
-        ),
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => CreateSalesOrderSheet(
+        name: (_acc['businessName'] as String?) ?? '',
+        accountId: widget.accountId,
+        accountType: accountType,
+        deliveryAddress: deliveryAddress,
+        areaName: _acc['area'] as String?,
+        onSave: (items, amt, status, pay, realOrderId) {
+          if (!mounted) return;
+          // Unlike the telecaller flow, this screen has no local order list to
+          // append a draft to (its "Order History" tab is a static placeholder)
+          // — so for a lead account nothing is actually persisted here. Say so
+          // honestly rather than claiming it was "saved".
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(realOrderId != null
+                  ? 'Sales order #$realOrderId created — ₹$amt'
+                  : 'Not saved — this account is a lead, not a registered customer yet. Convert it to a customer to create a real order.'),
+              backgroundColor: realOrderId != null ? _green : null,
+            ),
+          );
+        },
       ),
     );
-    // The confirmation toast is shown by CreateSalesOrderScreen itself
-    // before it pops — nothing else to reconcile here. (This screen's
-    // "Order History" tab is a static placeholder, not a real order list,
-    // so there's no local list to refresh after a successful order.)
   }
 
   String _fmt(Duration d) {

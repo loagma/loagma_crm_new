@@ -63,11 +63,16 @@ class SalesOrderController extends Controller
         }
 
         // Validate every item references a real, non-deleted product — orders_item.product_id is NOT NULL.
+        // Also the single source of truth for GST rate: tax_percent/sgst_percent/
+        // cgst_percent are derived from product.gst_percent here, never trusted
+        // from the client — a stale cache or buggy client shouldn't be able to
+        // write an arbitrary tax rate onto a real order.
         $productIds = collect($items)->pluck('product_id')->filter()->unique()->values();
         $products = DB::table('product')
             ->whereIn('product_id', $productIds)
             ->where('is_deleted', 0)
-            ->pluck('name', 'product_id');
+            ->get(['product_id', 'name', 'gst_percent'])
+            ->keyBy('product_id');
 
         foreach ($items as $item) {
             $pid = $item['product_id'] ?? null;
@@ -143,8 +148,13 @@ class SalesOrderController extends Controller
 
             $itemId = $nextItemId;
             foreach ($items as $item) {
-                $qty   = (float) $item['quantity'];
-                $price = (float) ($item['item_price'] ?? 0);
+                $qty        = (float) $item['quantity'];
+                $price      = (float) ($item['item_price'] ?? 0);
+                // Tax rate is authoritative from the product row, not the client —
+                // see the note at $products above.
+                $taxPercent  = (float) ($products->get((int) $item['product_id'])->gst_percent ?? 0);
+                $sgstPercent = round($taxPercent / 2, 2);
+                $cgstPercent = round($taxPercent / 2, 2);
                 DB::table('orders_item')->insert([
                     'order_id'   => $nextOrderId,
                     'item_id'    => $itemId,
@@ -153,7 +163,9 @@ class SalesOrderController extends Controller
                         'unit'                  => $item['unit'] ?? 'PCS',
                         'price_inclusive'       => true,
                         'unit_price_inclusive'  => $price,
-                        'tax_percent'           => 0,
+                        'tax_percent'           => $taxPercent,
+                        'sgst_percent'          => $sgstPercent,
+                        'cgst_percent'          => $cgstPercent,
                         'discount_percent'      => 0,
                     ]),
                     'quantity'   => (int) round($qty),
@@ -220,11 +232,14 @@ class SalesOrderController extends Controller
             ], 422);
         }
 
+        // Tax rate is authoritative from the product row, not the client — see
+        // the matching note in store().
         $productIds = collect($items)->pluck('product_id')->filter()->unique()->values();
         $products = DB::table('product')
             ->whereIn('product_id', $productIds)
             ->where('is_deleted', 0)
-            ->pluck('name', 'product_id');
+            ->get(['product_id', 'name', 'gst_percent'])
+            ->keyBy('product_id');
 
         foreach ($items as $item) {
             $pid = $item['product_id'] ?? null;
@@ -238,7 +253,7 @@ class SalesOrderController extends Controller
 
         $result = null;
 
-        DB::transaction(function () use ($orderId, $items, &$result) {
+        DB::transaction(function () use ($orderId, $items, $products, &$result) {
             $order = DB::table('orders')->where('order_id', $orderId)->lockForUpdate()->first(['order_id', 'order_state', 'discount', 'delivery_charge']);
 
             if (!$order) {
@@ -266,6 +281,9 @@ class SalesOrderController extends Controller
                 $lineTotal = round($qty * $price, 2);
                 $beforeDiscount += $lineTotal;
 
+                $taxPercent  = (float) ($products->get((int) $item['product_id'])->gst_percent ?? 0);
+                $sgstPercent = round($taxPercent / 2, 2);
+                $cgstPercent = round($taxPercent / 2, 2);
                 DB::table('orders_item')->insert([
                     'order_id'   => $orderId,
                     'item_id'    => $itemId,
@@ -274,7 +292,9 @@ class SalesOrderController extends Controller
                         'unit'                  => $item['unit'] ?? 'PCS',
                         'price_inclusive'       => true,
                         'unit_price_inclusive'  => $price,
-                        'tax_percent'           => 0,
+                        'tax_percent'           => $taxPercent,
+                        'sgst_percent'          => $sgstPercent,
+                        'cgst_percent'          => $cgstPercent,
                         'discount_percent'      => 0,
                     ]),
                     'quantity'   => (int) round($qty),

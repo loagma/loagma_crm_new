@@ -20,7 +20,7 @@ class ProductController extends Controller
 
         $query = DB::table('product')
             ->where('is_deleted', 0)
-            ->select(['product_id', 'name', 'hsn_code']);
+            ->select(['product_id', 'name', 'hsn_code', 'gst_percent']);
 
         if ($q !== '') {
             // `product.name` is collated utf8mb4_bin (case-sensitive) on this
@@ -37,9 +37,10 @@ class ProductController extends Controller
         return response()->json([
             'success' => true,
             'data' => $rows->map(fn ($r) => [
-                'product_id' => (string) $r->product_id,
-                'name'       => $r->name,
-                'hsn_code'   => $r->hsn_code,
+                'product_id'  => (string) $r->product_id,
+                'name'        => $r->name,
+                'hsn_code'    => $r->hsn_code,
+                'gst_percent' => (float) $r->gst_percent,
             ]),
         ]);
     }
