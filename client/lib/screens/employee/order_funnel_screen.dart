@@ -299,6 +299,34 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     ));
   }
 
+  // Outside the geofence, the salesman is asked to confirm rather than being
+  // blocked outright — GPS drift or an inaccurate shop pin can put a genuine
+  // visit outside the fence.
+  Future<bool> _confirmFarVisit(double metres) async {
+    if (!mounted) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Not at shop location'),
+        content: Text(
+            'You are about ${metres.round()} m away from the shop '
+            '(outside the ${_geofenceMeters.round()} m range). '
+            'Do you still want to Visit In?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yes'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
   Future<void> _startVisit() async {
     double? anchorLat;
     double? anchorLng;
@@ -331,10 +359,8 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
       final metres = Geolocator.distanceBetween(
           _shopLat!, _shopLng!, pos.latitude, pos.longitude);
       if (metres > _geofenceMeters) {
-        _visitError(
-            'You are not at the shop location — about ${metres.round()} m away. '
-            'Move within ${_geofenceMeters.round()} m to Visit In.');
-        return;
+        final proceed = await _confirmFarVisit(metres);
+        if (!mounted || !proceed) return;
       }
 
       // Measure the auto-close fence from the shop itself, since we now know

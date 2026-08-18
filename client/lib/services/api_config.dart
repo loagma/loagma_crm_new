@@ -9,7 +9,7 @@ class ApiConfig {
   /// To switch: change to `true` for prod, `false` for local
   static const bool useProduction = true;
 
-  /// Optional override for local testing, for example:
+  /// Optional override for local testing, for example: 
   /// `--dart-define=API_BASE_URL=http://192.168.1.10:8000`
   static const String _baseUrlOverride =
       String.fromEnvironment('API_BASE_URL', defaultValue: '');
