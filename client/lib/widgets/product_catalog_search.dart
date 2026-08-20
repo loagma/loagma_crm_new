@@ -190,6 +190,11 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
     item.unitPrice.text = price.toStringAsFixed(2);
     widget.onAdd(item);
     Fluttertoast.showToast(msg: 'Added ${item.product.text.trim()}', backgroundColor: kGold, textColor: Colors.white);
+    // Each Add always creates its own separate cart line (never merges into a
+    // previous one, even for the same product/pack) — reset the stepper back
+    // to 1 so switching packs and adding again starts from a clean qty each
+    // time, instead of silently carrying over whatever was left on screen.
+    setState(() => _qty = 1);
   }
 
   // Pack labels from `packs` are free text like "1 kg" / "500 gm" — the order
@@ -242,21 +247,21 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
     return GestureDetector(
       onTap: () => setState(() => _selectedPackId = pack['id'] as String?),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
           color: selected ? kGold : const Color(0xFFF6F6F7),
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(color: selected ? kGold : const Color(0xFFE7E7E7)),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(label, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: selected ? Colors.white : const Color(0xFF20242B))),
-          const SizedBox(width: 5),
+          Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: selected ? Colors.white : const Color(0xFF20242B))),
+          const SizedBox(width: 4),
           if (mrp > price) ...[
             Text('₹${mrp.toStringAsFixed(0)}',
-                style: TextStyle(fontSize: 10.5, decoration: TextDecoration.lineThrough, color: selected ? Colors.white70 : Colors.grey.shade400)),
-            const SizedBox(width: 3),
+                style: TextStyle(fontSize: 9, decoration: TextDecoration.lineThrough, color: selected ? Colors.white70 : Colors.grey.shade400)),
+            const SizedBox(width: 2),
           ],
-          Text('₹${price.toStringAsFixed(0)}', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: selected ? Colors.white : kGoldDark)),
+          Text('₹${price.toStringAsFixed(0)}', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: selected ? Colors.white : kGoldDark)),
         ]),
       ),
     );
@@ -284,6 +289,18 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
   Widget build(BuildContext context) {
     final name = (widget.product['name'] as String?)?.trim() ?? '';
     final productId = (widget.product['product_id'] as String?) ?? '';
+    // "Code: " + vendor-product-category-subcategory, e.g. "Code: 108-555-35-42".
+    // vendor_id is null when the request had no/invalid auth token (see
+    // ProductController::currentVendorAdminId) — shown as "-" rather than
+    // silently dropping a segment, so the format stays 4 parts either way.
+    String idSeg(dynamic v) => (v == null || v.toString().isEmpty) ? '-' : v.toString();
+    final ids = [
+      idSeg(widget.product['vendor_id']),
+      idSeg(productId),
+      idSeg(widget.product['cat_id']),
+      idSeg(widget.product['subcat_id']),
+    ].join('-');
+    final code = 'Code: $ids';
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -310,7 +327,7 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 3),
-                Text('LOAGMA Code: $productId', style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500)),
+                Text(code, style: const TextStyle(fontSize: 10.5, color: Colors.black)),
               ]),
             ),
           ]),
@@ -320,7 +337,7 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
           else if (_packs.length > 1) ...[
             _packSummaryLine(),
             const SizedBox(height: 8),
-            Wrap(spacing: 8, runSpacing: 8, children: _packs.map(_packChip).toList()),
+            Wrap(spacing: 6, runSpacing: 6, children: _packs.map(_packChip).toList()),
           ] else
             // No vendor_products row for this vendor+product — price is
             // never typed in by hand, so there's genuinely nothing to sell

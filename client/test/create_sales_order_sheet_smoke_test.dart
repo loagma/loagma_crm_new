@@ -4,16 +4,15 @@
 // wildly wrong hit-test coordinates under the test harness — a harness
 // quirk, not a bug in the widget) so we can still verify the catalog-first
 // screen renders correctly along with its two secondary panels: Customer &
-// Dates (an inline toggle panel behind the product panel's pencil button —
-// not a modal, so it never blocks search/Add/mic underneath it) and Review
-// Order (a modal sheet behind the bottom cart bar).
+// Dates (a centered showDialog opened from the product panel's pencil
+// button) and Review Order (a modal bottom sheet behind the cart bar).
 //
 // Navigation is driven by invoking each button's onTap directly (via
 // `tester.widget<GestureDetector>(...).onTap!()`) rather than `tester.tap()`
-// — a modal-bottom-sheet-over-a-directly-pumped-widget reports unreliable
-// hit-test offsets under this test binding (same class of quirk noted
-// above), so this exercises the identical code path — real user taps land
-// on the same GestureDetector — without depending on exact on-screen
+// — a dialog/modal-sheet stacked over a directly-pumped widget reports
+// unreliable hit-test offsets under this test binding (same class of quirk
+// noted above), so this exercises the identical code path — real user taps
+// land on the same GestureDetector — without depending on exact on-screen
 // geometry.
 
 import 'package:flutter/material.dart';
@@ -45,22 +44,21 @@ void main() {
       expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget, reason: 'mic button ($accountType)');
       expect(find.text('No items yet'), findsOneWidget, reason: 'empty cart bar ($accountType)');
 
-      // ── Customer & Dates panel (pencil button, inline — not a modal) ──
-      expect(find.text('Customer & Dates'), findsNothing, reason: 'panel starts closed ($accountType)');
+      // ── Customer & Dates dialog (pencil button, centered) ──
+      expect(find.text('Customer & Dates'), findsNothing, reason: 'dialog starts closed ($accountType)');
       tester.widget<GestureDetector>(find.byKey(const Key('pencilEditBtn'))).onTap!();
       // pumpAndSettle() would hang here — the voucher box's CircularProgressIndicator
       // spins forever while the (test-harness-blocked) network call never resolves —
-      // so settle the AnimatedContainer/AnimatedSwitcher transition with a bounded pump instead.
+      // so settle the dialog route's transition with a bounded pump instead.
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('Customer & Dates'), findsOneWidget, reason: 'panel opened ($accountType)');
+      expect(find.byType(Dialog), findsOneWidget, reason: 'opens as a Dialog, not a sheet/panel ($accountType)');
+      expect(find.text('Customer & Dates'), findsOneWidget, reason: 'dialog opened ($accountType)');
       // _label() uppercases field labels — "Document Date *" renders as "DOCUMENT DATE *".
-      expect(find.text('DOCUMENT DATE *'), findsOneWidget, reason: 'panel fields ($accountType)');
-      // Product search stays interactive regardless — the whole point of an inline
-      // panel instead of a modal is that it never blocks the product side.
-      expect(find.text('Search products…'), findsOneWidget, reason: 'search still present while panel open ($accountType)');
+      expect(find.text('DOCUMENT DATE *'), findsOneWidget, reason: 'dialog fields ($accountType)');
       tester.widget<GestureDetector>(find.byKey(const Key('customerDatesCloseBtn'))).onTap!();
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('Customer & Dates'), findsNothing, reason: 'panel closed ($accountType)');
+      expect(find.text('Customer & Dates'), findsNothing, reason: 'dialog closed ($accountType)');
+      expect(find.byType(Dialog), findsNothing, reason: 'dialog route popped ($accountType)');
 
       // ── Review Order sheet (cart bar) ──
       tester.widget<GestureDetector>(find.byKey(const Key('cartBar'))).onTap!();

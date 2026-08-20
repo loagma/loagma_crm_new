@@ -13,12 +13,15 @@ import 'unit_picker_sheet.dart';
 /// screen growing its own slightly-different version.
 ///
 /// Catalog-first layout: the sheet opens straight onto product search/browse
-/// (ProductCatalogSearch) — Customer & Dates lives behind the header's pencil
-/// button, and the cart (line items / addons / totals / Save) lives behind
-/// the bottom "Review & Save" bar. Both open as their own modal sheets built
-/// from the same state this widget already owns, kept in sync via a
-/// StatefulBuilder + [_bump] so edits inside a nested sheet show up
-/// immediately without waiting for the sheet to close.
+/// (ProductCatalogSearch) — Customer & Dates opens as a centered dialog from
+/// the product panel's own pencil button (never a blocking presence on its
+/// own; only while the user has deliberately opened it), and the cart (line
+/// items / addons / totals / Save) lives behind the bottom "Review & Save"
+/// bar as a modal sheet. Both are built from the same state this widget
+/// already owns; the Review sheet stays in sync via a StatefulBuilder +
+/// [_bump] so edits inside it show up immediately without waiting for the
+/// sheet to close — the Customer & Dates dialog doesn't need that since nothing
+/// else on screen needs to react live while it's open.
 class OrderLineItem {
   final product = TextEditingController();
   final qty = TextEditingController(text: '1');
@@ -113,9 +116,9 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   final List<OrderLineItem> _lineItems = [OrderLineItem()];
   final List<OrderAddon> _addons = [];
   bool _saving = false;
-  // Toggled by the pencil button on the product panel's own header — the
-  // Customer & Dates panel is NOT a modal here (unlike Review Order), so
-  // toggling it never blocks search/Add/mic on the product side.
+  // True only while the Customer & Dates dialog is on screen — purely so the
+  // pencil button can show a brighter border while its dialog is open; the
+  // dialog's own visibility is otherwise managed by showDialog/Navigator.
   bool _customerPanelOpen = false;
 
   bool get _isCustomer => widget.accountType == 'customer';
@@ -424,16 +427,33 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     nav.pop();
   }
 
-  // ── Customer & Dates (toggled by the product panel's pencil button) ──────
-  // Not a modal — an inline panel so it never blocks the product side (search,
-  // Add, mic all keep working underneath/alongside it regardless of whether
-  // this is open). Closing it (X, Cancel, or Save) is the same action in all
-  // three cases: every field here is already live-bound to shared state via
-  // controllers or immediate setState, so there's nothing separate to persist.
+  // ── Customer & Dates (opens centered, from the product panel's pencil
+  // button) ──────────────────────────────────────────────────────────────
+  // A real (centered) dialog rather than a bottom sheet or side panel — it
+  // still never blocks the product side just by existing, because it's only
+  // on screen while the user deliberately has it open; closing it (X,
+  // Cancel, or Save) is the same action in all three cases, since every
+  // field here is already live-bound to shared state via controllers or
+  // immediate setState, so there's nothing separate to persist.
+  Future<void> _openCustomerDatesDialog() async {
+    setState(() => _customerPanelOpen = true);
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.4),
+      builder: (dialogCtx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 440, maxHeight: 680),
+          child: _customerDatesPanel(onClose: () => Navigator.of(dialogCtx).pop()),
+        ),
+      ),
+    );
+    if (mounted) setState(() => _customerPanelOpen = false);
+  }
 
-  void _closeCustomerPanel() => setState(() => _customerPanelOpen = false);
-
-  Widget _customerDatesPanel() {
+  Widget _customerDatesPanel({required VoidCallback onClose}) {
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
       decoration: BoxDecoration(
@@ -445,6 +465,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         ],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -464,7 +485,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
             ),
             GestureDetector(
               key: const Key('customerDatesCloseBtn'),
-              onTap: _closeCustomerPanel,
+              onTap: onClose,
               behavior: HitTestBehavior.opaque,
               child: Icon(Icons.close_rounded, size: 20, color: Colors.grey.shade500),
             ),
@@ -475,7 +496,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
           Row(children: [
             Expanded(
               child: OutlinedButton(
-                onPressed: _closeCustomerPanel,
+                onPressed: onClose,
                 style: OutlinedButton.styleFrom(
                   side: BorderSide(color: Colors.grey.shade300),
                   padding: const EdgeInsets.symmetric(vertical: 13),
@@ -487,7 +508,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
             const SizedBox(width: 10),
             Expanded(
               child: ElevatedButton(
-                onPressed: _closeCustomerPanel,
+                onPressed: onClose,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: kGold,
                   foregroundColor: Colors.white,
@@ -1044,7 +1065,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         const SizedBox(width: 8),
         GestureDetector(
           key: const Key('pencilEditBtn'),
-          onTap: () => setState(() => _customerPanelOpen = !_customerPanelOpen),
+          onTap: _openCustomerDatesDialog,
           behavior: HitTestBehavior.opaque,
           child: Container(
             padding: const EdgeInsets.all(8),
@@ -1115,62 +1136,6 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     );
   }
 
-  // Wide viewports (tablet/web/desktop) get the two-column layout literally —
-  // a fixed-width left panel that expands/collapses next to an always-present
-  // right panel. Phone-width viewports can't fit both side by side, so the
-  // same panel becomes a left-anchored overlay with a dismiss scrim instead;
-  // either way the product panel (search/Add/mic) is never blocked by it.
-  static const _wideBreakpoint = 640.0;
-
-  Widget _customerDatesArea({required bool wide}) {
-    if (wide) {
-      return AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeInOut,
-        width: _customerPanelOpen ? 340 : 0,
-        margin: EdgeInsets.only(right: _customerPanelOpen ? 14 : 0),
-        clipBehavior: Clip.antiAlias,
-        decoration: const BoxDecoration(),
-        // A plain SizedBox(width: 340) doesn't protect the panel's content
-        // from the OUTER width while it's mid-animation — a narrower incoming
-        // constraint still clamps it, which is what caused real RenderFlex
-        // overflow during the resize (not just a lint, an actual paint
-        // glitch). OverflowBox forces the child to lay out at a constant 340
-        // regardless of the animating incoming width; the AnimatedContainer's
-        // own clipBehavior trims the excess, giving a clean reveal instead.
-        child: _customerPanelOpen
-            ? OverflowBox(minWidth: 340, maxWidth: 340, alignment: Alignment.centerLeft, child: _customerDatesPanel())
-            : null,
-      );
-    }
-    // AnimatedSwitcher (not AnimatedOpacity) so the closed state is actually
-    // unmounted, not just invisible — otherwise the voucher box's network
-    // call and its CircularProgressIndicator would keep running forever
-    // behind the scenes even while the panel is "closed".
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 200),
-      child: _customerPanelOpen
-          ? Stack(
-              key: const ValueKey('customerOverlayOpen'),
-              children: [
-                GestureDetector(
-                  onTap: _closeCustomerPanel,
-                  child: Container(color: Colors.black.withValues(alpha: 0.35)),
-                ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FractionallySizedBox(
-                    widthFactor: 0.86,
-                    heightFactor: 1,
-                    child: _customerDatesPanel(),
-                  ),
-                ),
-              ],
-            )
-          : const SizedBox.shrink(key: ValueKey('customerOverlayClosed')),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1183,28 +1148,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
           _sheetHandle(),
           _header(),
           const SizedBox(height: 14),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final wide = constraints.maxWidth >= _wideBreakpoint;
-                if (wide) {
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _customerDatesArea(wide: true),
-                      Expanded(child: _productPanel()),
-                    ],
-                  );
-                }
-                return Stack(
-                  children: [
-                    _productPanel(),
-                    _customerDatesArea(wide: false),
-                  ],
-                );
-              },
-            ),
-          ),
+          Expanded(child: _productPanel()),
           _cartBar(),
         ],
       ),

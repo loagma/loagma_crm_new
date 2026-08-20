@@ -33,7 +33,7 @@ class ProductController extends Controller
 
         $query = DB::table('product')
             ->where('is_deleted', 0)
-            ->select(['product_id', 'name', 'hsn_code', 'stock_uom']);
+            ->select(['product_id', 'name', 'hsn_code', 'stock_uom', 'cat_id', 'parent_cat_id']);
 
         if ($q !== '') {
             // `product.name`/`short_name`/`keywords` are collated utf8mb4_bin
@@ -83,7 +83,7 @@ class ProductController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $rows->map(function ($r) use ($taxes, $vendorProducts) {
+            'data' => $rows->map(function ($r) use ($taxes, $vendorProducts, $adminId) {
                 $tax = $taxes[(int) $r->product_id];
                 $vp = $vendorProducts->get((int) $r->product_id);
                 return [
@@ -94,6 +94,14 @@ class ProductController extends Controller
                     'sgst_percent'    => $tax['sgst_percent'],
                     'cgst_percent'    => $tax['cgst_percent'],
                     'stock_uom'       => $r->stock_uom,
+                    // On `product`, confusingly, `parent_cat_id` is the
+                    // top-level category and `cat_id` is the more specific
+                    // subcategory (verified against `categories.parent_cat_id`
+                    // — a category row with parent_cat_id=0 is top-level, and
+                    // product.parent_cat_id always resolves to one of those).
+                    'vendor_id'       => $adminId,
+                    'cat_id'          => $r->parent_cat_id,
+                    'subcat_id'       => $r->cat_id,
                     'default_pack_id' => $vp->default_pack_id ?? null,
                     'packs'           => $vp ? self::parsePacks($vp->packs, $vp->default_pack_id) : [],
                 ];
