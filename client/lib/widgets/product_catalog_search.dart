@@ -84,52 +84,65 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
       return;
     }
 
-    if (!_speechReady) {
-      final available = await _speech.initialize(
-        onStatus: (status) {
-          if ((status == 'done' || status == 'notListening') && mounted) {
-            setState(() => _listening = false);
-          }
-        },
-        onError: (error) {
-          if (mounted) setState(() => _listening = false);
+    try {
+      if (!_speechReady) {
+        final available = await _speech.initialize(
+          onStatus: (status) {
+            if ((status == 'done' || status == 'notListening') && mounted) {
+              setState(() => _listening = false);
+            }
+          },
+          onError: (error) {
+            if (mounted) setState(() => _listening = false);
+            Fluttertoast.showToast(
+              msg: 'Voice search error: ${error.errorMsg}',
+              backgroundColor: Colors.red,
+              textColor: Colors.white,
+            );
+          },
+        );
+        if (!mounted) return;
+        if (!available) {
           Fluttertoast.showToast(
-            msg: 'Voice search error: ${error.errorMsg}',
+            msg:
+                'Voice search isn\'t available on this device — check microphone/speech permissions.',
             backgroundColor: Colors.red,
             textColor: Colors.white,
           );
-        },
-      );
-      if (!mounted) return;
-      if (!available) {
-        Fluttertoast.showToast(
-          msg:
-              'Voice search isn\'t available on this device — check microphone/speech permissions.',
-          backgroundColor: Colors.red,
-          textColor: Colors.white,
-        );
-        return;
+          return;
+        }
+        _speechReady = true;
       }
-      _speechReady = true;
-    }
 
-    setState(() => _listening = true);
-    await _speech.listen(
-      onResult: (result) {
-        if (!mounted) return;
-        setState(() {
-          _searchCtrl.text = result.recognizedWords;
-          _searchCtrl.selection = TextSelection.collapsed(
-            offset: _searchCtrl.text.length,
-          );
-        });
-        _onChanged(result.recognizedWords);
-      },
-      listenOptions: stt.SpeechListenOptions(
-        cancelOnError: true,
-        partialResults: true,
-      ),
-    );
+      setState(() => _listening = true);
+      await _speech.listen(
+        onResult: (result) {
+          if (!mounted) return;
+          setState(() {
+            _searchCtrl.text = result.recognizedWords;
+            _searchCtrl.selection = TextSelection.collapsed(
+              offset: _searchCtrl.text.length,
+            );
+          });
+          _onChanged(result.recognizedWords);
+        },
+        listenOptions: stt.SpeechListenOptions(
+          cancelOnError: true,
+          partialResults: true,
+        ),
+      );
+    } catch (e) {
+      // Without this, a native-side failure (missing plugin registration,
+      // OS-level mic permission blocked outright, etc.) throws *after* the
+      // tap's synchronous gesture context — Flutter logs it to the console
+      // and the button silently does nothing from the user's perspective.
+      if (mounted) setState(() => _listening = false);
+      Fluttertoast.showToast(
+        msg: 'Voice search failed to start: $e',
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+    }
   }
 
   Future<void> _search(String q) async {
