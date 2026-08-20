@@ -1081,27 +1081,12 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     );
   }
 
+  // Voice search (mic button + speech-to-text) lives inside ProductCatalogSearch
+  // itself now, since it needs direct access to the search controller/debounce —
+  // this panel just hosts it.
   Widget _productPanel() {
-    return Stack(
-      children: [
-        ProductCatalogSearch(onAdd: _addFromCatalog, secondaryHeader: _productPanelHeader()),
-        Positioned(bottom: 4, right: 4, child: _micButton()),
-      ],
-    );
+    return ProductCatalogSearch(onAdd: _addFromCatalog, secondaryHeader: _productPanelHeader());
   }
-
-  Widget _micButton() => GestureDetector(
-        onTap: () => Fluttertoast.showToast(msg: 'Voice search coming soon', backgroundColor: kGold, textColor: Colors.white),
-        child: Container(
-          width: 52, height: 52,
-          decoration: BoxDecoration(
-            color: kGold,
-            shape: BoxShape.circle,
-            boxShadow: [BoxShadow(color: kGold.withValues(alpha: 0.45), blurRadius: 14, offset: const Offset(0, 6))],
-          ),
-          child: const Icon(Icons.mic_none_rounded, color: Colors.white, size: 24),
-        ),
-      );
 
   Widget _cartBar() {
     final count = _itemCount;

@@ -78,7 +78,7 @@ class ProductController extends Controller
                 ->where('admin_vendor_id', $adminId)
                 ->where('status', '1')
                 ->whereIn('product_id', $productIds)
-                ->get(['product_id', 'packs', 'default_pack_id'])
+                ->get(['id', 'product_id', 'packs', 'default_pack_id'])
                 ->keyBy('product_id');
 
         return response()->json([
@@ -102,6 +102,11 @@ class ProductController extends Controller
                     'vendor_id'       => $adminId,
                     'cat_id'          => $r->parent_cat_id,
                     'subcat_id'       => $r->cat_id,
+                    // The row id of this product's vendor-specific listing in
+                    // `vendor_products` — i.e. this vendor's own id for the
+                    // product. Null when the vendor has no listing for it at
+                    // all (same case where packs is empty).
+                    'vendor_product_id' => $vp->id ?? null,
                     'default_pack_id' => $vp->default_pack_id ?? null,
                     'packs'           => $vp ? self::parsePacks($vp->packs, $vp->default_pack_id) : [],
                 ];

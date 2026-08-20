@@ -53,5 +53,9 @@
 	<array>
 		<string>location</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Loagma CRM uses your microphone for voice search when creating a sales order.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Loagma CRM uses speech recognition to turn your voice into a product search.</string>
 </dict>
 </plist>
