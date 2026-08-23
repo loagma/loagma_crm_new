@@ -89,23 +89,51 @@ class KnowlarityService
      * webhook missed (confirmed unreliable for C2C calls in this account).
      * start_time/end_time are query params, NOT headers - sending them as
      * headers (the original bug here) gets a silent 500 from Knowlarity.
+     *
+     * Paginates at 20 records/page (confirmed live: a window with
+     * total_count=80 only returns 20 `objects` on page one) - a window wider
+     * than the default hourly 2h sweep silently dropped everything past page
+     * one before this loop existed. `meta.next` is NOT usable here: it points
+     * at a different Knowlarity API host/path that 403s under our SR API
+     * credentials, so pages are walked via `offset`/`limit` on this same
+     * `/calllog` endpoint instead (confirmed to work).
      */
     public function getCallLogs(string $startTime, string $endTime): array
     {
-        $response = Http::withHeaders($this->headers())
-            ->get("{$this->baseUrl}/calllog", [
-                'start_time' => $startTime, // format: 2026-07-01 00:00:00+05:30
-                'end_time'   => $endTime,
-            ]);
+        $limit = 20;
+        $offset = 0;
+        $allObjects = [];
 
-        if ($response->failed()) {
-            Log::error('Knowlarity getCallLogs failed', [
-                'status' => $response->status(),
-                'body'   => $response->body(),
-            ]);
+        // Hard cap so a malformed/missing total_count can't loop forever.
+        for ($page = 0; $page < 100; $page++) {
+            $response = Http::withHeaders($this->headers())
+                ->get("{$this->baseUrl}/calllog", [
+                    'start_time' => $startTime, // format: 2026-07-01 00:00:00+05:30
+                    'end_time'   => $endTime,
+                    'limit'      => $limit,
+                    'offset'     => $offset,
+                ]);
+
+            if ($response->failed()) {
+                Log::error('Knowlarity getCallLogs failed', [
+                    'status' => $response->status(),
+                    'body'   => $response->body(),
+                ]);
+                break;
+            }
+
+            $body = $response->json() ?? [];
+            $objects = $body['objects'] ?? $body['data'] ?? [];
+            $allObjects = array_merge($allObjects, $objects);
+
+            $totalCount = $body['meta']['total_count'] ?? null;
+            $offset += $limit;
+            if ($totalCount === null || $offset >= $totalCount || empty($objects)) {
+                break;
+            }
         }
 
-        return $response->json() ?? [];
+        return ['objects' => $allObjects];
     }
 
     /**
