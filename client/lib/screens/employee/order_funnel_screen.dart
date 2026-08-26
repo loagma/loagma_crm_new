@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_config.dart';
@@ -44,17 +43,6 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
   Timer?    _timer;
   Duration  _elapsed = Duration.zero;
 
-  // Geofence anchor — the salesman's position when he punched in.
-  double? _anchorLat;
-  double? _anchorLng;
-
-  // 50m, not the 10m first suggested: phone GPS drifts 5-20m while standing
-  // still, so a tighter fence closes visits the salesman is still attending.
-  static const double _geofenceMeters = 50;
-
-  StreamSubscription<Position>? _geoSub;
-  bool _leftGeofence = false;
-  bool _verifyingLocation = false;
 
   int _tab = 1; // 0 = History, 1 = Funnel, 2 = Transaction
 
@@ -120,14 +108,11 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     final open = await OpenVisitStore.load(widget.accountId);
     if (!mounted || open == null) return;
     setState(() {
-      _visitedIn  = true;
-      _visitInAt  = open.visitInAt;
-      _elapsed    = DateTime.now().difference(open.visitInAt);
-      _anchorLat  = open.lat;
-      _anchorLng  = open.lng;
+      _visitedIn = true;
+      _visitInAt = open.visitInAt;
+      _elapsed   = DateTime.now().difference(open.visitInAt);
     });
     _startTicker();
-    _startGeofenceWatch();
   }
 
   void _startTicker() {
@@ -140,46 +125,9 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     });
   }
 
-  // Watches distance from the punch-in point for as long as this screen is
-  // open. Leaving the fence ends the visit if a funnel stage was already
-  // chosen; otherwise the visit stays open and the salesman is warned, since
-  // the server (rightly) won't accept a visit with no stage and inventing one
-  // would put a reason on record that he never gave.
-  void _startGeofenceWatch() {
-    if (_anchorLat == null || _anchorLng == null) return;
-    _geoSub?.cancel();
-    _geoSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
-      ),
-    ).listen(_onGeofencePosition, onError: (_) {});
-  }
-
-  void _onGeofencePosition(Position pos) {
-    if (!mounted || !_visitedIn || _visitedOut) return;
-    if (_anchorLat == null || _anchorLng == null) return;
-
-    final metres = Geolocator.distanceBetween(
-        _anchorLat!, _anchorLng!, pos.latitude, pos.longitude);
-
-    if (metres <= _geofenceMeters) {
-      if (_leftGeofence) setState(() => _leftGeofence = false);
-      return;
-    }
-
-    if (_selectedSlug != null && !_persisting) {
-      _geoSub?.cancel();
-      _endVisit();
-      return;
-    }
-    if (!_leftGeofence) setState(() => _leftGeofence = true);
-  }
-
   @override
   void dispose() {
     _timer?.cancel();
-    _geoSub?.cancel();
     _ordersPoll?.cancel();
     _notesCtrl.dispose();
     super.dispose();
@@ -261,121 +209,15 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
 
   // ── Visit lifecycle ───────────────────────────────────────────────────────
 
-  double? get _shopLat => (_acc['latitude'] as num?)?.toDouble();
-  double? get _shopLng => (_acc['longitude'] as num?)?.toDouble();
-
-  /// Plenty of accounts still carry 0,0 rather than a real fix, and 0,0 is a
-  /// point in the Atlantic — treating it as the shop would put every salesman
-  /// thousands of km "away" and lock them out of those accounts entirely.
-  bool get _hasShopLocation {
-    final lat = _shopLat, lng = _shopLng;
-    return lat != null && lng != null && !(lat == 0 && lng == 0);
-  }
-
-  Future<bool> _ensureLocationPermission() async {
-    if (!await Geolocator.isLocationServiceEnabled()) return false;
-    LocationPermission permission = LocationPermission.denied;
-    try {
-      permission = await Geolocator.checkPermission();
-    } catch (_) {}
-    if (permission != LocationPermission.always &&
-        permission != LocationPermission.whileInUse) {
-      try {
-        permission = await Geolocator.requestPermission();
-      } catch (_) {
-        return false;
-      }
-    }
-    return permission == LocationPermission.always ||
-        permission == LocationPermission.whileInUse;
-  }
-
-  void _visitError(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: const Color(0xFFC0584C),
-      duration: const Duration(seconds: 4),
-    ));
-  }
-
-  // Outside the geofence, the salesman is asked to confirm rather than being
-  // blocked outright — GPS drift or an inaccurate shop pin can put a genuine
-  // visit outside the fence.
-  Future<bool> _confirmFarVisit(double metres) async {
-    if (!mounted) return false;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Not at shop location'),
-        content: Text(
-            'You are about ${metres.round()} m away from the shop '
-            '(outside the ${_geofenceMeters.round()} m range). '
-            'Do you still want to Visit In?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('No'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Yes'),
-          ),
-        ],
-      ),
-    );
-    return confirmed ?? false;
-  }
-
+  // Visit In and Visit Out are deliberately location-free: no GPS fix, no
+  // permission prompt, no proximity check and no confirmation. The salesman
+  // punches in and out purely by tapping.
   Future<void> _startVisit() async {
-    double? anchorLat;
-    double? anchorLng;
-
-    // A salesman may only punch in while he is actually at the shop. This is
-    // only enforceable when the account has real coordinates to measure
-    // against — see _hasShopLocation.
-    if (_hasShopLocation) {
-      setState(() => _verifyingLocation = true);
-
-      Position? pos;
-      if (await _ensureLocationPermission()) {
-        try {
-          pos = await Geolocator.getCurrentPosition(
-            locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-          ).timeout(const Duration(seconds: 15));
-        } catch (_) {}
-      }
-
-      if (!mounted) return;
-      setState(() => _verifyingLocation = false);
-
-      // No fix means the check can't be performed. Letting the visit through
-      // here would make the rule opt-out by simply switching GPS off.
-      if (pos == null) {
-        _visitError('Could not read your location. Turn on GPS/location permission and try again.');
-        return;
-      }
-
-      final metres = Geolocator.distanceBetween(
-          _shopLat!, _shopLng!, pos.latitude, pos.longitude);
-      if (metres > _geofenceMeters) {
-        final proceed = await _confirmFarVisit(metres);
-        if (!mounted || !proceed) return;
-      }
-
-      // Measure the auto-close fence from the shop itself, since we now know
-      // he started at it.
-      anchorLat = _shopLat;
-      anchorLng = _shopLng;
-    }
-
     final startedAt = DateTime.now();
     setState(() {
       _visitedIn = true;
       _visitInAt = startedAt;
       _elapsed   = Duration.zero;
-      _anchorLat = anchorLat;
-      _anchorLng = anchorLng;
     });
     _startTicker();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -384,38 +226,8 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
 
     // Persist immediately so a back-press right after punching in can't lose
     // the visit.
-    await OpenVisitStore.save(OpenVisit(
-      accountId: widget.accountId,
-      visitInAt: startedAt,
-      lat: anchorLat,
-      lng: anchorLng,
-    ));
-
-    if (anchorLat != null) {
-      _startGeofenceWatch();
-      return;
-    }
-
-    // Shop coordinates unknown, so fall back to wherever he punched in as the
-    // auto-close anchor — the visit still can't be left open indefinitely.
-    Position? pos;
-    try {
-      pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-      ).timeout(const Duration(seconds: 10));
-    } catch (_) {}
-    if (pos == null || !mounted) return;
-    setState(() {
-      _anchorLat = pos!.latitude;
-      _anchorLng = pos.longitude;
-    });
-    _startGeofenceWatch();
-    await OpenVisitStore.save(OpenVisit(
-      accountId: widget.accountId,
-      visitInAt: startedAt,
-      lat: pos.latitude,
-      lng: pos.longitude,
-    ));
+    await OpenVisitStore.save(
+        OpenVisit(accountId: widget.accountId, visitInAt: startedAt));
   }
 
   Future<void> _endVisit() async {
@@ -789,9 +601,9 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                       const SizedBox(width: 8),
                       // Visit In
                       _VisitBtn(
-                        label: _verifyingLocation ? 'Checking…' : 'Visit In',
-                        active: !_visitedIn && !_verifyingLocation,
-                        onTap: (_visitedIn || _verifyingLocation) ? null : _startVisit,
+                        label: 'Visit In',
+                        active: !_visitedIn,
+                        onTap: _visitedIn ? null : _startVisit,
                       ),
                       const SizedBox(width: 6),
                       // Visit Out
@@ -802,39 +614,6 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                       ),
                     ],
                   ),
-
-                  // Walked out of the fence without choosing a stage — the
-                  // visit is still running and still his to close.
-                  if (_leftGeofence && _editable) ...[
-                    const SizedBox(height: 10),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFC0584C).withValues(alpha: 0.10),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                            color: const Color(0xFFC0584C).withValues(alpha: 0.45)),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.location_off_rounded,
-                              size: 17, color: Color(0xFFC0584C)),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'You have left this shop and the visit is still open. '
-                              'Pick a funnel stage, then tap Visit Out to close it.',
-                              style: TextStyle(
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.red.shade900),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
 
                   // Visit timer
                   if (_visitedIn) ...[

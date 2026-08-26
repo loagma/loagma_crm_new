@@ -9,21 +9,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// state: navigating back destroyed it and the screen reopened as though the
 /// visit had never started. Persisting it here keeps the visit — and its
 /// running timer — alive across navigation and app restarts.
+///
+/// Deliberately holds no location: punching in and out is location-free.
 class OpenVisit {
   final String accountId;
   final DateTime visitInAt;
 
-  /// Salesman's own position at Visit In, used as the geofence anchor. Null
-  /// when the fix wasn't available — the visit still opens, it just can't be
-  /// auto-closed on distance.
-  final double? lat;
-  final double? lng;
-
   const OpenVisit({
     required this.accountId,
     required this.visitInAt,
-    this.lat,
-    this.lng,
   });
 
   Map<String, dynamic> toJson() => {
@@ -31,20 +25,13 @@ class OpenVisit {
         // Stored as UTC so a device timezone change can't retroactively move
         // the punch-in and corrupt the elapsed time.
         'visit_in_at': visitInAt.toUtc().toIso8601String(),
-        'lat':         lat,
-        'lng':         lng,
       };
 
   static OpenVisit? fromJson(Map<String, dynamic> j) {
     final id = (j['account_id'] ?? '').toString();
     final at = DateTime.tryParse((j['visit_in_at'] ?? '').toString());
     if (id.isEmpty || at == null) return null;
-    return OpenVisit(
-      accountId: id,
-      visitInAt: at.toLocal(),
-      lat: (j['lat'] as num?)?.toDouble(),
-      lng: (j['lng'] as num?)?.toDouble(),
-    );
+    return OpenVisit(accountId: id, visitInAt: at.toLocal());
   }
 }
 
