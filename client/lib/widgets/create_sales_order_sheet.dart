@@ -28,6 +28,15 @@ class OrderLineItem {
   final unitPrice = TextEditingController(text: '0');
   String unit = 'PCS';
   String? productId; // real product_id once selected from search — required to submit a real order
+  // Which vendor_products.packs[] entry this line came from — identifies a
+  // single product+pack combo so the catalog's qty stepper can find and
+  // live-update this exact line instead of always appending a new one. Null
+  // for items picked via the plain ProductPickerSheet (no packs to choose).
+  String? packId;
+  // Live stock for the selected pack at the moment this item was added from
+  // the catalog (ProductController::parsePacks' 'stock') — null for items
+  // picked via the plain ProductPickerSheet, which carries no stock figure.
+  int? maxQty;
   // GST rate of the selected product (product.gst_percent) — the unit price above
   // is entered tax-inclusive, so tax is extracted back out of it, not added on top.
   double gstPercent = 0;
@@ -324,11 +333,42 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     }
   }
 
-  // Fed by ProductCatalogSearch's Add button — replaces the still-empty
-  // starter line item on the first add, then appends after that, so picking
-  // from the catalog doesn't leave a dangling blank "Item 1" behind it.
-  void _addFromCatalog(OrderLineItem item) {
+  // Current cart quantity for one product+pack — read by ProductCatalogSearch
+  // so a card's stepper reflects reality (e.g. re-opening the catalog after
+  // adding 3 of a pack shows "3", not a stepper reset back to 0).
+  int catalogQtyFor(String productId, String? packId) {
+    for (final i in _lineItems) {
+      if (i.productId == productId && i.packId == packId) return i.qtyNum.round();
+    }
+    return 0;
+  }
+
+  // Fed by the catalog card's qty stepper on every +/-/picker change — finds
+  // this exact product+pack's existing line and updates its quantity in
+  // place (a stepper represents *one* live cart line, not a repeatable
+  // one-shot "Add" action), creates one on the first increment from 0, and
+  // removes it entirely once qty drops back to 0.
+  void _setCatalogQty({
+    required String productId,
+    required String? packId,
+    required int qty,
+    required OrderLineItem Function() buildItem,
+  }) {
     setState(() {
+      final idx = _lineItems.indexWhere((i) => i.productId == productId && i.packId == packId);
+      if (qty <= 0) {
+        if (idx != -1) {
+          _lineItems[idx].dispose();
+          _lineItems.removeAt(idx);
+          if (_lineItems.isEmpty) _lineItems.add(OrderLineItem());
+        }
+        return;
+      }
+      if (idx != -1) {
+        _lineItems[idx].qty.text = '$qty';
+        return;
+      }
+      final item = buildItem()..qty.text = '$qty';
       if (_lineItems.length == 1 && _lineItems.first.product.text.trim().isEmpty) {
         _lineItems.first.dispose();
         _lineItems[0] = item;
@@ -336,7 +376,6 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         _lineItems.add(item);
       }
     });
-    Fluttertoast.showToast(msg: 'Added to order — $_itemCount item${_itemCount == 1 ? '' : 's'} in cart', backgroundColor: kGold, textColor: Colors.white);
   }
 
   // Nested sheets (Customer & Dates / Review Order) are separate routes, so a
@@ -766,7 +805,10 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                     ),
                     child: _saving
                         ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('Save', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700)),
+                        : Text(
+                            _isCustomer ? 'Place Order  |  ₹${_grandTotal.toStringAsFixed(0)}' : 'Save',
+                            style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700),
+                          ),
                   ),
                 ),
               ]),
@@ -829,7 +871,19 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       _label('Qty *'),
-                      TextField(controller: item.qty, keyboardType: TextInputType.number, onChanged: (_) => _bump(setModalState, () {}), decoration: _decor('')),
+                      TextField(
+                        controller: item.qty,
+                        keyboardType: TextInputType.number,
+                        onChanged: (v) => _bump(setModalState, () {
+                          final cap = item.maxQty;
+                          final n = int.tryParse(v.trim());
+                          if (cap != null && n != null && n > cap) {
+                            item.qty.text = '$cap';
+                            item.qty.selection = TextSelection.collapsed(offset: item.qty.text.length);
+                          }
+                        }),
+                        decoration: _decor('', hint: item.maxQty != null ? 'Max ${item.maxQty}' : null),
+                      ),
                     ]),
                   ),
                   const SizedBox(width: 10),
@@ -1085,38 +1139,60 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   // itself now, since it needs direct access to the search controller/debounce —
   // this panel just hosts it.
   Widget _productPanel() {
-    return ProductCatalogSearch(onAdd: _addFromCatalog, secondaryHeader: _productPanelHeader());
+    return ProductCatalogSearch(
+      onQtyChanged: _setCatalogQty,
+      qtyFor: catalogQtyFor,
+      secondaryHeader: _productPanelHeader(),
+    );
   }
 
-  Widget _cartBar() {
+  // Replaces the old full-width "Review & Save" bar with a compact
+  // floating cart button — a badge on it is enough to see there's
+  // something to review; the bar's own real estate was crowding the
+  // catalog list underneath it.
+  Widget _cartFab() {
     final count = _itemCount;
-    return GestureDetector(
-      key: const Key('cartBar'),
-      onTap: _openReviewSheet,
-      child: Container(
-        margin: const EdgeInsets.only(top: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: kGold,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: kGold.withValues(alpha: 0.4), blurRadius: 16, offset: const Offset(0, 6))],
-        ),
-        child: Row(children: [
-          const Icon(Icons.shopping_bag_outlined, color: Colors.white, size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              count == 0 ? 'No items yet' : '$count item${count == 1 ? '' : 's'}  ·  ₹${_grandTotal.toStringAsFixed(2)}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Colors.white),
-            ),
+    return Positioned(
+      right: 0,
+      bottom: 0,
+      child: GestureDetector(
+        key: const Key('cartBar'),
+        onTap: _openReviewSheet,
+        child: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: kGold,
+            shape: BoxShape.circle,
+            boxShadow: [BoxShadow(color: kGold.withValues(alpha: 0.45), blurRadius: 14, offset: const Offset(0, 6))],
           ),
-          const SizedBox(width: 8),
-          const Text('Review & Save', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Colors.white)),
-          const SizedBox(width: 4),
-          const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 16),
-        ]),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Icon(Icons.shopping_cart_outlined, color: Colors.white, size: 24),
+              if (count > 0)
+                Positioned(
+                  right: -8,
+                  top: -8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    constraints: const BoxConstraints(minWidth: 18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFC0584C),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white, width: 1.5),
+                    ),
+                    child: Text(
+                      '$count',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1132,9 +1208,15 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         children: [
           _sheetHandle(),
           _header(),
-          const SizedBox(height: 14),
-          Expanded(child: _productPanel()),
-          _cartBar(),
+          const SizedBox(height: 2),
+          Expanded(
+            child: Stack(
+              children: [
+                _productPanel(),
+                _cartFab(),
+              ],
+            ),
+          ),
         ],
       ),
     );

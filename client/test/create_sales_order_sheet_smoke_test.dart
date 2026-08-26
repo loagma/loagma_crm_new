@@ -42,7 +42,10 @@ void main() {
       expect(find.text('Search products…'), findsOneWidget, reason: 'search bar ($accountType)');
       expect(find.byKey(const Key('pencilEditBtn')), findsOneWidget, reason: 'pencil button ($accountType)');
       expect(find.byIcon(Icons.mic_none_rounded), findsOneWidget, reason: 'mic button ($accountType)');
-      expect(find.text('No items yet'), findsOneWidget, reason: 'empty cart bar ($accountType)');
+      // The full-width "Review & Save" bar was replaced by a compact cart FAB
+      // (no item-count badge while the cart's empty).
+      expect(find.byKey(const Key('cartBar')), findsOneWidget, reason: 'cart FAB ($accountType)');
+      expect(find.byIcon(Icons.shopping_cart_outlined), findsOneWidget, reason: 'cart FAB icon ($accountType)');
 
       // ── Customer & Dates dialog (pencil button, centered) ──
       expect(find.text('Customer & Dates'), findsNothing, reason: 'dialog starts closed ($accountType)');
@@ -74,7 +77,13 @@ void main() {
       expect(find.text('PRODUCT TOTAL'), findsOneWidget, reason: 'line totals ($accountType)');
       expect(find.text('Gross Amount'), findsOneWidget, reason: 'summary ($accountType)');
       expect(find.text('Cancel'), findsOneWidget, reason: 'footer ($accountType)');
-      expect(find.text('Save'), findsOneWidget, reason: 'footer ($accountType)');
+      // Customer footer's action button reads "Place Order | ₹<total>" (leads,
+      // which never create a real order, keep the plain "Save" label).
+      expect(
+        find.text(accountType == 'customer' ? 'Place Order  |  ₹0' : 'Save'),
+        findsOneWidget,
+        reason: 'footer ($accountType)',
+      );
 
       // No SGST/CGST rows before any product is picked (gstPercent starts at 0).
       expect(find.text('SGST'), findsNothing, reason: 'no product picked yet ($accountType)');

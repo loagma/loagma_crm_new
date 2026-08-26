@@ -132,15 +132,19 @@ class ProductController extends Controller
 
     /**
      * `vendor_products.packs` is a JSON object keyed by pack id — e.g.
-     * {"diGd":{"tx":"1 kg","op":90,"rp":60,"ps":"1","pu":"kg","pi":"diGd"}}
+     * {"diGd":{"tx":"1 kg","op":90,"rp":60,"ps":"1","pu":"kg","pi":"diGd","stk":42}}
      * where `tx` is the display label, `op` the MRP, `rp` the actual selling
      * price (same shape `product.packs` used before pricing moved to being
-     * vendor-scoped — see the class doc comment on search()). Most
-     * (product_id, vendor) pairs have no row at all, so callers must handle
-     * an empty result (no priced pack to pick) rather than assume every
-     * product has one.
+     * vendor-scoped — see the class doc comment on search()), and `stk` the
+     * available stock (per docs/SALES_MODULE.md §7, this is the authoritative
+     * stock figure for PACK_WISE products — the legacy stock-ledger mutation
+     * keeps every pack's `stk` in the same `vendor_products` row in sync with
+     * each other, so any one pack's `stk` already reflects the shared pool).
+     * Most (product_id, vendor) pairs have no row at all, so callers must
+     * handle an empty result (no priced pack to pick) rather than assume
+     * every product has one.
      *
-     * @return list<array{id: string, label: string, mrp: float, price: float, is_default: bool}>
+     * @return list<array{id: string, label: string, mrp: float, price: float, is_default: bool, stock: int}>
      */
     private static function parsePacks(?string $raw, ?string $defaultPackId): array
     {
@@ -161,6 +165,7 @@ class ProductController extends Controller
                 'mrp'        => (float) ($p['op'] ?? 0),
                 'price'      => (float) ($p['rp'] ?? ($p['op'] ?? 0)),
                 'is_default' => (string) $id === (string) $defaultPackId,
+                'stock'      => (int) ($p['stk'] ?? 0),
             ];
         }
         return $packs;

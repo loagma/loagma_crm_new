@@ -7,19 +7,34 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../screens/telecaller/telecaller_mock_data.dart' show kGold, kGoldDark;
 import '../services/api_service.dart';
 import 'create_sales_order_sheet.dart' show OrderLineItem;
+import 'quantity_picker_sheet.dart';
+
+// A card's stepper *is* the add-to-cart control — `qty` is the live quantity
+// for this exact product+pack, not a "how many to add next" staging value.
+typedef CatalogQtyChanged =
+    void Function({
+      required String productId,
+      required String? packId,
+      required int qty,
+      required OrderLineItem Function() buildItem,
+    });
 
 /// Search-and-browse product catalog for the Create Sales Order sheet —
 /// search bar + scrollable product cards (image placeholder, LOAGMA code,
-/// pack-price chips, qty stepper, Add). Feeds picked items straight into
-/// the sheet's line-item cart via [onAdd] instead of the old "tap to open a
-/// picker sheet, then type qty/price by hand" flow.
+/// pack-price chips, qty stepper). Each pack's stepper directly reflects
+/// (and edits) its own live cart line via [onQtyChanged]/[qtyFor] instead of
+/// the old "tap to open a picker sheet, then type qty/price by hand" flow.
 ///
 /// Price always comes from the selected pack — never typed in — so a
 /// product with no `vendor_products` row for the current vendor (see
 /// ProductController::search) simply can't be added yet; the card says so
-/// and disables Add instead of asking for a hand-typed price.
+/// and disables the stepper instead of asking for a hand-typed price.
 class ProductCatalogSearch extends StatefulWidget {
-  final void Function(OrderLineItem item) onAdd;
+  final CatalogQtyChanged onQtyChanged;
+  // How many of this product+pack are already in the cart — read on build so
+  // a card reflects reality (e.g. re-opening the catalog after adding 3 of a
+  // pack shows "3", not a stepper reset back to 0).
+  final int Function(String productId, String? packId) qtyFor;
   // Rendered between the search field and the results list — e.g. the
   // store-name/pencil-edit bar in CreateSalesOrderSheet's catalog-first
   // layout. Kept generic here rather than hardcoding that bar, so this
@@ -27,7 +42,8 @@ class ProductCatalogSearch extends StatefulWidget {
   final Widget? secondaryHeader;
   const ProductCatalogSearch({
     super.key,
-    required this.onAdd,
+    required this.onQtyChanged,
+    required this.qtyFor,
     this.secondaryHeader,
   });
 
@@ -163,142 +179,117 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
     });
   }
 
-  Widget _micButton() => GestureDetector(
-    onTap: _toggleListening,
-    child: Container(
-      width: 52,
-      height: 52,
-      decoration: BoxDecoration(
-        color: _listening ? const Color(0xFFC0584C) : kGold,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: (_listening ? const Color(0xFFC0584C) : kGold).withValues(
-              alpha: 0.45,
-            ),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Icon(
-        _listening ? Icons.mic_rounded : Icons.mic_none_rounded,
-        color: Colors.white,
-        size: 24,
-      ),
-    ),
-  );
-
   @override
   Widget build(BuildContext context) {
-    return Stack(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _searchCtrl,
-              onChanged: _onChanged,
-              decoration: InputDecoration(
-                hintText: _listening ? 'Listening…' : 'Search products…',
-                hintStyle: TextStyle(
-                  fontSize: 13,
-                  color: _listening
-                      ? const Color(0xFFC0584C)
-                      : Colors.grey.shade400,
-                ),
-                prefixIcon: const Icon(
-                  Icons.search_rounded,
-                  color: kGoldDark,
-                  size: 20,
-                ),
-                isDense: true,
-                filled: true,
-                fillColor: const Color(0xFFFAFAFA),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 12,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: kGold.withValues(alpha: 0.5)),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: kGold.withValues(alpha: 0.5)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: kGold, width: 1.4),
-                ),
+        TextField(
+          controller: _searchCtrl,
+          onChanged: _onChanged,
+          decoration: InputDecoration(
+            hintText: _listening ? 'Listening…' : 'Search products…',
+            hintStyle: TextStyle(
+              fontSize: 13,
+              color: _listening
+                  ? const Color(0xFFC0584C)
+                  : Colors.grey.shade400,
+            ),
+            prefixIcon: const Icon(
+              Icons.search_rounded,
+              color: kGoldDark,
+              size: 20,
+            ),
+            suffixIcon: GestureDetector(
+              onTap: _toggleListening,
+              child: Icon(
+                _listening ? Icons.mic_rounded : Icons.mic_none_rounded,
+                color: _listening ? const Color(0xFFC0584C) : kGoldDark,
+                size: 20,
               ),
             ),
-            if (widget.secondaryHeader != null) ...[
-              const SizedBox(height: 12),
-              widget.secondaryHeader!,
-            ],
-            const SizedBox(height: 12),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator(color: kGold))
-                  : _failed
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.wifi_off_rounded,
-                            size: 34,
-                            color: Colors.grey.shade300,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Could not load products.',
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              color: Colors.grey.shade500,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextButton.icon(
-                            onPressed: () => _search(_searchCtrl.text),
-                            icon: const Icon(
-                              Icons.refresh_rounded,
-                              size: 16,
-                              color: kGoldDark,
-                            ),
-                            label: const Text(
-                              'Retry',
-                              style: TextStyle(color: kGoldDark),
-                            ),
-                          ),
-                        ],
+            isDense: true,
+            filled: true,
+            fillColor: const Color(0xFFFAFAFA),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 12,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: kGold.withValues(alpha: 0.5)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: kGold.withValues(alpha: 0.5)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: kGold, width: 1.4),
+            ),
+          ),
+        ),
+        if (widget.secondaryHeader != null) ...[
+          const SizedBox(height: 12),
+          widget.secondaryHeader!,
+        ],
+        const SizedBox(height: 12),
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator(color: kGold))
+              : _failed
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.wifi_off_rounded,
+                        size: 34,
+                        color: Colors.grey.shade300,
                       ),
-                    )
-                  : _results.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No products found',
+                      const SizedBox(height: 8),
+                      Text(
+                        'Could not load products.',
                         style: TextStyle(
-                          fontSize: 13,
+                          fontSize: 12.5,
                           color: Colors.grey.shade500,
                         ),
                       ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.only(bottom: 76),
-                      itemCount: _results.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 10),
-                      itemBuilder: (context, i) => _ProductCatalogCard(
-                        key: ValueKey(_results[i]['product_id']),
-                        product: _results[i],
-                        onAdd: widget.onAdd,
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        onPressed: () => _search(_searchCtrl.text),
+                        icon: const Icon(
+                          Icons.refresh_rounded,
+                          size: 16,
+                          color: kGoldDark,
+                        ),
+                        label: const Text(
+                          'Retry',
+                          style: TextStyle(color: kGoldDark),
+                        ),
                       ),
-                    ),
-            ),
-          ],
+                    ],
+                  ),
+                )
+              : _results.isEmpty
+              ? Center(
+                  child: Text(
+                    'No products found',
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+                  ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.only(bottom: 76),
+                  itemCount: _results.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 10),
+                  itemBuilder: (context, i) => _ProductCatalogCard(
+                    key: ValueKey(_results[i]['product_id']),
+                    product: _results[i],
+                    onQtyChanged: widget.onQtyChanged,
+                    qtyFor: widget.qtyFor,
+                  ),
+                ),
         ),
-        Positioned(bottom: 4, right: 4, child: _micButton()),
       ],
     );
   }
@@ -306,11 +297,13 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
 
 class _ProductCatalogCard extends StatefulWidget {
   final Map<String, dynamic> product;
-  final void Function(OrderLineItem item) onAdd;
+  final CatalogQtyChanged onQtyChanged;
+  final int Function(String productId, String? packId) qtyFor;
   const _ProductCatalogCard({
     super.key,
     required this.product,
-    required this.onAdd,
+    required this.onQtyChanged,
+    required this.qtyFor,
   });
 
   @override
@@ -320,7 +313,7 @@ class _ProductCatalogCard extends StatefulWidget {
 class _ProductCatalogCardState extends State<_ProductCatalogCard> {
   late final List<Map<String, dynamic>> _packs;
   String? _selectedPackId;
-  int _qty = 1;
+  late int _qty;
   late final String _fallbackUnit;
 
   @override
@@ -334,7 +327,14 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
     _selectedPackId = defaultPack?['id'] as String?;
     final uom = (widget.product['stock_uom'] as String?)?.trim() ?? '';
     _fallbackUnit = uom.isEmpty ? 'PCS' : uom;
+    // Defaults to whatever's already in the cart for this pack (0 if
+    // nothing's been added yet) rather than always starting at 1 — the
+    // stepper IS the live cart quantity, not a separate "how many to add"
+    // staging value.
+    _qty = _productId == null ? 0 : widget.qtyFor(_productId!, _selectedPackId);
   }
+
+  String? get _productId => widget.product['product_id'] as String?;
 
   Map<String, dynamic>? _findPack(bool Function(Map<String, dynamic>) test) {
     for (final p in _packs) {
@@ -348,30 +348,52 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
 
   // Price is always taken from whichever pack is selected — never typed in —
   // so there's nothing to add without a real vendor price for this product.
-  bool get _canAdd => _selectedPack != null;
+  // `stock` (parsed from vendor_products.packs[].stk) is kept in sync across
+  // every pack of the same product server-side, so the selected pack's own
+  // figure already reflects the shared pool — see ProductController::parsePacks.
+  int get _stock => (_selectedPack?['stock'] as num?)?.toInt() ?? 0;
+  bool get _canAdd => _selectedPack != null && _stock > 0;
 
-  void _add() {
-    final pack = _selectedPack;
-    if (pack == null) return; // Add is disabled in this state — see _canAdd
-    final price = (pack['price'] as num?)?.toDouble() ?? 0;
-    final item = OrderLineItem();
-    item.product.text = (widget.product['name'] as String?) ?? '';
-    item.productId = widget.product['product_id'] as String?;
-    item.gstPercent = (widget.product['gst_percent'] as num?)?.toDouble() ?? 0;
-    item.qty.text = '$_qty';
-    item.unit = _shortUnit(pack['label'] as String? ?? _fallbackUnit);
-    item.unitPrice.text = price.toStringAsFixed(2);
-    widget.onAdd(item);
-    Fluttertoast.showToast(
-      msg: 'Added ${item.product.text.trim()}',
-      backgroundColor: kGold,
-      textColor: Colors.white,
+  Future<void> _openQtyPicker() async {
+    if (!_canAdd) return;
+    final picked = await showQuantityPickerSheet(
+      context,
+      productName: (widget.product['name'] as String?)?.trim() ?? '',
+      packLabel: (_selectedPack!['label'] as String?) ?? '',
+      currentQty: _qty == 0 ? 1 : _qty,
+      maxQty: _stock,
     );
-    // Each Add always creates its own separate cart line (never merges into a
-    // previous one, even for the same product/pack) — reset the stepper back
-    // to 1 so switching packs and adding again starts from a clean qty each
-    // time, instead of silently carrying over whatever was left on screen.
-    setState(() => _qty = 1);
+    if (picked != null) _changeQty(picked);
+  }
+
+  // Every +/-/picker change lands here — this pack's stepper *is* its live
+  // cart line, so each change immediately creates/updates/removes that line
+  // via onQtyChanged rather than staging a value behind a separate Add tap.
+  void _changeQty(int newQty) {
+    final pack = _selectedPack;
+    if (pack == null) return;
+    final clamped = newQty.clamp(0, _stock > 0 ? _stock : 0);
+    setState(() => _qty = clamped);
+    final productId = _productId;
+    if (productId == null) return;
+    widget.onQtyChanged(
+      productId: productId,
+      packId: _selectedPackId,
+      qty: clamped,
+      buildItem: () {
+        final price = (pack['price'] as num?)?.toDouble() ?? 0;
+        final item = OrderLineItem();
+        item.product.text = (widget.product['name'] as String?) ?? '';
+        item.productId = productId;
+        item.packId = _selectedPackId;
+        item.gstPercent =
+            (widget.product['gst_percent'] as num?)?.toDouble() ?? 0;
+        item.maxQty = _stock;
+        item.unit = _shortUnit(pack['label'] as String? ?? _fallbackUnit);
+        item.unitPrice.text = price.toStringAsFixed(2);
+        return item;
+      },
+    );
   }
 
   // Pack labels from `packs` are free text like "1 kg" / "500 gm" — the order
@@ -382,128 +404,113 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
     return parts.isNotEmpty ? parts.last : label;
   }
 
+  static const _chipGreen = Color(0xFF1EA37A);
+  static const _stepperOlive = Color(0xFF9C8A4E);
+
   // A single-pack product has nothing to choose between, so it gets a plain
   // read-only info box instead of a (misleadingly tappable-looking) chip.
-  Widget _singlePackBox(Map<String, dynamic> pack) {
-    final mrp = (pack['mrp'] as num?)?.toDouble() ?? 0;
-    final price = (pack['price'] as num?)?.toDouble() ?? 0;
-    final label = (pack['label'] as String?) ?? '';
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(11),
-        border: Border.all(color: const Color(0xFFE7E7E7)),
-      ),
-      child: Row(
-        children: [
-          Text(
-            '$label: ',
-            style: const TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF20242B),
-            ),
-          ),
-          if (mrp > price) ...[
-            Text(
-              '₹${mrp.toStringAsFixed(0)}',
-              style: TextStyle(
-                fontSize: 11.5,
-                decoration: TextDecoration.lineThrough,
-                color: Colors.grey.shade400,
-              ),
-            ),
-            const SizedBox(width: 4),
-          ],
-          Text(
-            '₹${price.toStringAsFixed(price == price.roundToDouble() ? 0 : 2)}',
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-              color: kGoldDark,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _singlePackBox(Map<String, dynamic> pack) =>
+      _priceBox(pack, selected: true);
 
   // Summary of the currently-selected pack, shown above the chip row so the
   // price stays visible even once the chips themselves scroll or wrap.
   Widget _packSummaryLine() {
     final pack = _selectedPack;
     if (pack == null) return const SizedBox.shrink();
+    return _priceBox(pack, selected: true);
+  }
+
+  // Bordered "label: ₹price" box — matches the crm-telecaller mockup's plain
+  // (non-gold, non-full-width) price pill shown above the pack chip row.
+  Widget _priceBox(Map<String, dynamic> pack, {required bool selected}) {
     final price = (pack['price'] as num?)?.toDouble() ?? 0;
     final label = (pack['label'] as String?) ?? '';
-    return Text.rich(
-      TextSpan(
-        children: [
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFE0E0E0)),
+        ),
+        child: Text.rich(
           TextSpan(
-            text: '$label: ',
-            style: const TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF20242B),
-            ),
+            children: [
+              TextSpan(
+                text: '$label: ',
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF20242B),
+                ),
+              ),
+              TextSpan(
+                text:
+                    '₹${price.toStringAsFixed(price == price.roundToDouble() ? 0 : 2)}',
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF20242B),
+                ),
+              ),
+            ],
           ),
-          TextSpan(
-            text:
-                '₹${price.toStringAsFixed(price == price.roundToDouble() ? 0 : 2)}',
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-              color: kGoldDark,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
+  // Green fill marks the *default* pack (vendor_products.default_pack_id,
+  // surfaced as `is_default` by ProductController::parsePacks) — a fixed,
+  // data-driven attribute that never moves just because the user tapped a
+  // different pack. Which pack is actively selected (drives price/qty/Add)
+  // is a separate, independent state shown via the gold border + check
+  // instead, so the two concepts don't get visually conflated.
   Widget _packChip(Map<String, dynamic> pack) {
     final selected = pack['id'] == _selectedPackId;
-    final mrp = (pack['mrp'] as num?)?.toDouble() ?? 0;
-    final price = (pack['price'] as num?)?.toDouble() ?? 0;
+    final isDefault = pack['is_default'] == true;
     final label = (pack['label'] as String?) ?? '';
     return GestureDetector(
-      onTap: () => setState(() => _selectedPackId = pack['id'] as String?),
+      onTap: () => setState(() {
+        _selectedPackId = pack['id'] as String?;
+        // Each pack is its own independent cart line — switching to it shows
+        // whatever's actually already in the cart for *that* pack (0 if
+        // nothing's been added), not whatever qty the previous pack had.
+        final productId = _productId;
+        _qty = productId == null
+            ? 0
+            : widget.qtyFor(productId, _selectedPackId);
+      }),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: selected ? kGold : const Color(0xFFF6F6F7),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: selected ? kGold : const Color(0xFFE7E7E7)),
+          color: isDefault ? _chipGreen : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected
+                ? kGoldDark
+                : (isDefault ? _chipGreen : const Color(0xFFE0E0E0)),
+            width: selected ? 1.6 : 1,
+          ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (selected) ...[
+              Icon(
+                Icons.check_circle_rounded,
+                size: 12,
+                color: isDefault ? Colors.white : kGoldDark,
+              ),
+              const SizedBox(width: 4),
+            ],
             Text(
               label,
               style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: selected ? Colors.white : const Color(0xFF20242B),
-              ),
-            ),
-            const SizedBox(width: 4),
-            if (mrp > price) ...[
-              Text(
-                '₹${mrp.toStringAsFixed(0)}',
-                style: TextStyle(
-                  fontSize: 9,
-                  decoration: TextDecoration.lineThrough,
-                  color: selected ? Colors.white70 : Colors.grey.shade400,
-                ),
-              ),
-              const SizedBox(width: 2),
-            ],
-            Text(
-              '₹${price.toStringAsFixed(0)}',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                color: selected ? Colors.white : kGoldDark,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: isDefault ? Colors.white : const Color(0xFF5B5B5B),
               ),
             ),
           ],
@@ -512,43 +519,84 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
     );
   }
 
-  Widget _qtyStepper() => Container(
-    decoration: BoxDecoration(
-      color: const Color(0xFFF6F6F7),
-      borderRadius: BorderRadius.circular(20),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GestureDetector(
-          onTap: () => setState(() => _qty = _qty > 1 ? _qty - 1 : 1),
-          child: const Padding(
-            padding: EdgeInsets.all(8),
-            child: Icon(
-              Icons.remove_rounded,
-              size: 15,
-              color: Color(0xFF20242B),
+  // At 0 there's nothing to decrement or number to show — a compact "ADD"
+  // pill takes the stepper's place; tapping it adds the first unit straight
+  // to the cart and the full −/qty/+ stepper takes over from there.
+  Widget _qtyStepper() {
+    if (_qty == 0) {
+      return GestureDetector(
+        onTap: () => _changeQty(1),
+        child: Container(
+          height: 30,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _stepperOlive,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: const Text(
+            'ADD',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
             ),
           ),
         ),
-        SizedBox(
-          width: 22,
-          child: Text(
-            '$_qty',
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+      );
+    }
+    return Container(
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: _stepperOlive,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: () => _changeQty(_qty - 1),
+            child: const Padding(
+              padding: EdgeInsets.all(6),
+              child: Icon(Icons.remove_rounded, size: 15, color: Colors.white),
+            ),
           ),
-        ),
-        GestureDetector(
-          onTap: () => setState(() => _qty += 1),
-          child: const Padding(
-            padding: EdgeInsets.all(8),
-            child: Icon(Icons.add_rounded, size: 15, color: Color(0xFF20242B)),
+          // Tapping the number itself opens the "Select Quantity" grid sheet —
+          // a single tap to jump straight to a specific quantity, capped at
+          // this pack's live stock, instead of repeatedly tapping +/-.
+          GestureDetector(
+            onTap: _openQtyPicker,
+            child: Container(
+              width: 24,
+              height: 24,
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+              child: Text(
+                '$_qty',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF20242B),
+                ),
+              ),
+            ),
           ),
-        ),
-      ],
-    ),
-  );
+          GestureDetector(
+            onTap: () => _changeQty(_qty + 1),
+            child: const Padding(
+              padding: EdgeInsets.all(6),
+              child: Icon(Icons.add_rounded, size: 15, color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -592,11 +640,11 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 52,
-                height: 52,
+                width: 72,
+                height: 72,
                 decoration: BoxDecoration(
                   color: const Color(0xFFF6F6F7),
-                  borderRadius: BorderRadius.circular(11),
+                  borderRadius: BorderRadius.circular(14),
                 ),
                 // No real product-photo hosting wired up yet (display_photo is a
                 // bare relative path with no known domain) — placeholder icon
@@ -604,7 +652,7 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
                 child: Icon(
                   Icons.inventory_2_outlined,
                   color: Colors.grey.shade400,
-                  size: 22,
+                  size: 28,
                 ),
               ),
               const SizedBox(width: 12),
@@ -674,31 +722,10 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
           const SizedBox(height: 10),
           Row(
             children: [
+              const Spacer(),
               Opacity(
                 opacity: _canAdd ? 1 : 0.4,
                 child: IgnorePointer(ignoring: !_canAdd, child: _qtyStepper()),
-              ),
-              const Spacer(),
-              GestureDetector(
-                onTap: _canAdd ? _add : null,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _canAdd ? kGold : Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(5),
-                  ),
-                  child: const Text(
-                    'Add',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w400,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
               ),
             ],
           ),
