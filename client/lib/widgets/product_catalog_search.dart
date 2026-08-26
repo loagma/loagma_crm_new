@@ -389,6 +389,7 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
         item.gstPercent =
             (widget.product['gst_percent'] as num?)?.toDouble() ?? 0;
         item.maxQty = _stock;
+        item.packLabel = pack['label'] as String?;
         item.unit = _shortUnit(pack['label'] as String? ?? _fallbackUnit);
         item.unitPrice.text = price.toStringAsFixed(2);
         return item;
@@ -428,19 +429,19 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(7),
           border: Border.all(color: const Color(0xFFE0E0E0)),
         ),
         child: Text.rich(
           TextSpan(
             children: [
               TextSpan(
-                text: '$label: ',
+                text: '$label : ',
                 style: const TextStyle(
-                  fontSize: 12.5,
+                  fontSize: 11,
                   fontWeight: FontWeight.w500,
                   color: Color(0xFF20242B),
                 ),
@@ -449,7 +450,7 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
                 text:
                     '₹${price.toStringAsFixed(price == price.roundToDouble() ? 0 : 2)}',
                 style: const TextStyle(
-                  fontSize: 12.5,
+                  fontSize: 11,
                   fontWeight: FontWeight.w800,
                   color: Color(0xFF20242B),
                 ),
@@ -682,16 +683,37 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           if (_packs.length == 1)
-            _singlePackBox(_packs.first)
+            // Indented to align under the name/code text column (image width
+            // + the 12px gap beside it), not flush with the card's own edge.
+            Padding(
+              padding: const EdgeInsets.only(left: 84),
+              child: _singlePackBox(_packs.first),
+            )
           else if (_packs.length > 1) ...[
-            _packSummaryLine(),
+            Padding(
+              padding: const EdgeInsets.only(left: 84),
+              child: _packSummaryLine(),
+            ),
             const SizedBox(height: 8),
+            // Pack chips and the qty stepper/ADD pill share one row (wrapping
+            // together, flush with the card's own left edge, under the image)
+            // rather than the stepper sitting on its own row below.
             Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: _packs.map(_packChip).toList(),
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                ..._packs.map(_packChip),
+                Opacity(
+                  opacity: _canAdd ? 1 : 0.4,
+                  child: IgnorePointer(
+                    ignoring: !_canAdd,
+                    child: _qtyStepper(),
+                  ),
+                ),
+              ],
             ),
           ] else
             // No vendor_products row for this vendor+product — price is
@@ -719,16 +741,23 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
                 ],
               ),
             ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              const Spacer(),
-              Opacity(
-                opacity: _canAdd ? 1 : 0.4,
-                child: IgnorePointer(ignoring: !_canAdd, child: _qtyStepper()),
-              ),
-            ],
-          ),
+          // Multi-pack already put the stepper/ADD pill inside the chip Wrap
+          // above — only single-pack and no-pack cards need it on its own row.
+          if (_packs.length <= 1) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Spacer(),
+                Opacity(
+                  opacity: _canAdd ? 1 : 0.4,
+                  child: IgnorePointer(
+                    ignoring: !_canAdd,
+                    child: _qtyStepper(),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
