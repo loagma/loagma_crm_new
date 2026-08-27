@@ -3,8 +3,8 @@ import 'package:fluttertoast/fluttertoast.dart';
 
 import '../screens/telecaller/telecaller_mock_data.dart' show kGold, kGoldDark;
 import '../services/api_service.dart';
+import 'catalog_product_picker.dart';
 import 'product_catalog_search.dart';
-import 'product_picker_sheet.dart';
 import 'unit_picker_sheet.dart';
 
 /// The "Create Sales Order" bottom sheet — originally built for the
@@ -32,16 +32,21 @@ class OrderLineItem {
   // Which vendor_products.packs[] entry this line came from — identifies a
   // single product+pack combo so the catalog's qty stepper can find and
   // live-update this exact line instead of always appending a new one. Null
-  // for items picked via the plain ProductPickerSheet (no packs to choose).
+  // Null only if this product had no vendor pack pricing at all — see
+  // ProductController::search.
   String? packId;
   // Full pack label as shown in the catalog (e.g. "1 Pack of 5 Kg @ 195/-")
   // — `unit` alone is just the trailing token off that label ("Kg"), not
   // enough to tell two packs of the same product apart in the cart. Null
-  // for items picked via the plain ProductPickerSheet (no packs to choose).
+  // Null only if this product had no vendor pack pricing at all — see
+  // ProductController::search.
   String? packLabel;
+  // product.hsn_code, carried along so a catalog pick still shows a real HSN
+  // in the item header instead of always falling back to "NA".
+  String? hsnCode;
   // Live stock for the selected pack at the moment this item was added from
-  // the catalog (ProductController::parsePacks' 'stock') — null for items
-  // picked via the plain ProductPickerSheet, which carries no stock figure.
+  // the catalog (ProductController::parsePacks' 'stock') — null only for a
+  // product with no vendor pack pricing at all.
   int? maxQty;
   // GST rate of the selected product (product.gst_percent) — the unit price above
   // is entered tax-inclusive, so tax is extracted back out of it, not added on top.
@@ -142,7 +147,10 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   DateTime _expectedDate = DateTime.now().add(const Duration(days: 1));
   final _narration = TextEditingController();
 
-  final List<OrderLineItem> _lineItems = [OrderLineItem()];
+  // Starts empty — items only ever arrive from the catalog's qty stepper
+  // (or, for a product with no vendor pack pricing, the manual product
+  // search inside _manualItemForm), never a blank line shown by default.
+  final List<OrderLineItem> _lineItems = [];
   final List<OrderAddon> _addons = [];
   bool _saving = false;
   // True only while the Customer & Dates dialog is on screen — purely so the
@@ -367,18 +375,23 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   }
 
   Future<void> _pickProduct(OrderLineItem item) async {
-    final picked = await showModalBottomSheet<Map<String, dynamic>>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const ProductPickerSheet(),
-    );
+    final picked = await showCatalogProductPicker(context);
     if (picked != null) {
       setState(() {
-        item.product.text = picked['name'] as String? ?? '';
-        item.productId = picked['product_id'] as String?;
-        item.gstPercent = (picked['gst_percent'] as num?)?.toDouble() ?? 0;
+        item.product.text = picked.product.text.trim();
+        item.productId = picked.productId;
+        item.packId = picked.packId;
+        item.packLabel = picked.packLabel;
+        item.hsnCode = picked.hsnCode;
+        item.maxQty = picked.maxQty;
+        item.gstPercent = picked.gstPercent;
+        // The catalog already knows a real qty/unit/price for this pack —
+        // carry them over instead of leaving the form's previous values sitting there mismatched.
+        item.qty.text = picked.qty.text;
+        item.unit = picked.unit;
+        item.unitPrice.text = picked.unitPrice.text;
       });
+      picked.dispose();
     }
   }
 
@@ -412,7 +425,6 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         if (idx != -1) {
           _lineItems[idx].dispose();
           _lineItems.removeAt(idx);
-          if (_lineItems.isEmpty) _lineItems.add(OrderLineItem());
         }
         return;
       }
@@ -420,14 +432,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         _lineItems[idx].qty.text = '$qty';
         return;
       }
-      final item = buildItem()..qty.text = '$qty';
-      if (_lineItems.length == 1 &&
-          _lineItems.first.product.text.trim().isEmpty) {
-        _lineItems.first.dispose();
-        _lineItems[0] = item;
-      } else {
-        _lineItems.add(item);
-      }
+      _lineItems.add(buildItem()..qty.text = '$qty');
     });
   }
 
@@ -497,6 +502,11 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
               'quantity': i.qtyNum,
               'item_price': i.priceNum,
               'unit': i.unit,
+              // Stored server-side into orders_item.pinfo['ps'] and surfaced
+              // back by OrderListController::getOrderDetail — so Order
+              // Details can show which pack was actually sold, not just a
+              // bare unit token.
+              'pack_size': i.packLabel,
             },
           )
           .toList(),
@@ -969,6 +979,10 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
               const SizedBox(height: 10),
               Expanded(
                 child: SingleChildScrollView(
+                  // Web/desktop draws its scrollbar as an overlay on the
+                  // right edge — without this, it sits right on top of each
+                  // cart row's qty stepper (the rightmost thing in the row).
+                  padding: const EdgeInsets.only(right: 10),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -985,10 +999,12 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                           ),
                           const Spacer(),
                           GestureDetector(
-                            onTap: () => _bump(
-                              setModalState,
-                              () => _lineItems.add(OrderLineItem()),
-                            ),
+                            // Real products (with real pack pricing) come from
+                            // the catalog, not a blank hand-typed form — so
+                            // "Add Item" just sends the telecaller back there
+                            // instead of dropping an empty manual-entry row
+                            // into the cart.
+                            onTap: () => Navigator.of(sheetCtx).pop(),
                             child: const Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -1012,20 +1028,35 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                         ],
                       ),
                       const SizedBox(height: 6),
-                      ..._lineItems.asMap().entries.map((entry) {
-                        final idx = entry.key;
-                        final item = entry.value;
-                        // Items added from the catalog already have a real
-                        // pack price/qty cap — shown as a compact cart row.
-                        // Anything else (manually picked via the plain product
-                        // search, which carries no pack pricing) still needs
-                        // the full editable form so a price can be typed in.
-                        final fromCatalog =
-                            item.productId != null && item.packId != null;
-                        return fromCatalog
-                            ? _cartItemRow(item, setModalState)
-                            : _manualItemForm(item, idx, setModalState);
-                      }),
+                      if (_lineItems.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 18),
+                          child: Center(
+                            child: Text(
+                              'Your cart is empty — go back and add products from the catalog.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                color: Colors.grey.shade500,
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        ..._lineItems.asMap().entries.map((entry) {
+                          final idx = entry.key;
+                          final item = entry.value;
+                          // Items added from the catalog already have a real
+                          // pack price/qty cap — shown as a compact cart row.
+                          // Anything else (manually picked via the plain product
+                          // search, which carries no pack pricing) still needs
+                          // the full editable form so a price can be typed in.
+                          final fromCatalog =
+                              item.productId != null && item.packId != null;
+                          return fromCatalog
+                              ? _cartItemRow(item, setModalState)
+                              : _manualItemForm(item, idx, setModalState);
+                        }),
                       const SizedBox(height: 2),
                       _addChargesSection(setModalState),
                       const SizedBox(height: 10),
@@ -1086,7 +1117,10 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
 
   // Items added straight from the catalog already carry a real pack price —
   // this full editable form only fires for items with no pack behind them
-  // (picked via the plain ProductPickerSheet), which need a hand-typed price.
+  // (a product with no vendor pack pricing at all), which need a hand-typed
+  // price. Its own "Product" search still opens the same catalog picker
+  // (see _pickProduct/showCatalogProductPicker) — packId only stays null
+  // here because that particular product genuinely has no pack to attach.
   Widget _manualItemForm(
     OrderLineItem item,
     int idx,
@@ -1543,13 +1577,19 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   void _changeCartQty(OrderLineItem item, int newQty) {
     final cap = item.maxQty;
     var clamped = newQty < 0 ? 0 : newQty;
-    if (cap != null && clamped > cap) clamped = cap;
+    if (cap != null && clamped > cap) {
+      clamped = cap;
+      Fluttertoast.showToast(
+        msg: 'Only $cap in stock',
+        backgroundColor: const Color(0xFFC0584C),
+        textColor: Colors.white,
+      );
+    }
     if (clamped <= 0) {
       final idx = _lineItems.indexOf(item);
       if (idx != -1) {
         item.dispose();
         _lineItems.removeAt(idx);
-        if (_lineItems.isEmpty) _lineItems.add(OrderLineItem());
       }
       return;
     }

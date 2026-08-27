@@ -135,27 +135,17 @@ void main() {
           findsOneWidget,
           reason: 'delivery banner ($accountType)',
         );
-        // The still-blank starter line has no productId/packId, so it renders
-        // through the manual (catalog-less) item form, not the compact cart row.
+        // The cart starts empty — items only ever arrive via the catalog's qty
+        // stepper (no blank starter line/form shown by default any more).
+        expect(
+          find.textContaining('Your cart is empty'),
+          findsOneWidget,
+          reason: 'empty cart message ($accountType)',
+        );
         expect(
           find.text('Item 1  |  HSN: NA'),
-          findsOneWidget,
-          reason: 'item header ($accountType)',
-        );
-        expect(
-          find.text('GROSS AMOUNT'),
-          findsOneWidget,
-          reason: 'line totals ($accountType)',
-        );
-        expect(
-          find.text('TOTAL TAX'),
-          findsOneWidget,
-          reason: 'line totals ($accountType)',
-        );
-        expect(
-          find.text('PRODUCT TOTAL'),
-          findsOneWidget,
-          reason: 'line totals ($accountType)',
+          findsNothing,
+          reason: 'no blank manual-entry form ($accountType)',
         );
         expect(
           find.text('Bill Details'),

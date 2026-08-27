@@ -346,12 +346,33 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
   Map<String, dynamic>? get _selectedPack =>
       _findPack((p) => p['id'] == _selectedPackId);
 
+  int _rawStock(Map<String, dynamic> pack) =>
+      (pack['stock'] as num?)?.toInt() ?? 0;
+
+  // Every pack of a product draws from the same physical stock pool — the
+  // server keeps each pack's raw `stock` figure in sync (see
+  // ProductController::parsePacks), but that's only true for what's actually
+  // *sold*. Locally, quantities already picked for this product's *other*
+  // packs (in this cart draft, not yet submitted) also have to come off
+  // what's left, so picking 5 of "1 kg" here leaves only stock-5 available
+  // for "500 g" of the same product, not the full raw figure for both.
+  int _availableStock(Map<String, dynamic> pack) {
+    final productId = _productId;
+    final raw = _rawStock(pack);
+    if (productId == null) return raw;
+    final packId = pack['id'] as String?;
+    var reservedByOtherPacks = 0;
+    for (final p in _packs) {
+      if (p['id'] == packId) continue;
+      reservedByOtherPacks += widget.qtyFor(productId, p['id'] as String?);
+    }
+    final avail = raw - reservedByOtherPacks;
+    return avail > 0 ? avail : 0;
+  }
+
   // Price is always taken from whichever pack is selected — never typed in —
   // so there's nothing to add without a real vendor price for this product.
-  // `stock` (parsed from vendor_products.packs[].stk) is kept in sync across
-  // every pack of the same product server-side, so the selected pack's own
-  // figure already reflects the shared pool — see ProductController::parsePacks.
-  int get _stock => (_selectedPack?['stock'] as num?)?.toInt() ?? 0;
+  int get _stock => _selectedPack == null ? 0 : _availableStock(_selectedPack!);
   bool get _canAdd => _selectedPack != null && _stock > 0;
 
   Future<void> _openQtyPicker() async {
@@ -372,7 +393,15 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
   void _changeQty(int newQty) {
     final pack = _selectedPack;
     if (pack == null) return;
-    final clamped = newQty.clamp(0, _stock > 0 ? _stock : 0);
+    final cap = _stock > 0 ? _stock : 0;
+    final clamped = newQty.clamp(0, cap);
+    if (newQty > cap) {
+      Fluttertoast.showToast(
+        msg: 'Only $cap in stock',
+        backgroundColor: const Color(0xFFC0584C),
+        textColor: Colors.white,
+      );
+    }
     setState(() => _qty = clamped);
     final productId = _productId;
     if (productId == null) return;
@@ -390,6 +419,7 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
             (widget.product['gst_percent'] as num?)?.toDouble() ?? 0;
         item.maxQty = _stock;
         item.packLabel = pack['label'] as String?;
+        item.hsnCode = widget.product['hsn_code'] as String?;
         item.unit = _shortUnit(pack['label'] as String? ?? _fallbackUnit);
         item.unitPrice.text = price.toStringAsFixed(2);
         return item;
@@ -697,23 +727,14 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
               child: _packSummaryLine(),
             ),
             const SizedBox(height: 8),
-            // Pack chips and the qty stepper/ADD pill share one row (wrapping
-            // together, flush with the card's own left edge, under the image)
-            // rather than the stepper sitting on its own row below.
+            // Chips wrap on their own — however many rows that takes — so
+            // the qty stepper below always lands in the same fixed spot
+            // (right-aligned) instead of drifting wherever the last chip
+            // happened to end.
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                ..._packs.map(_packChip),
-                Opacity(
-                  opacity: _canAdd ? 1 : 0.4,
-                  child: IgnorePointer(
-                    ignoring: !_canAdd,
-                    child: _qtyStepper(),
-                  ),
-                ),
-              ],
+              children: _packs.map(_packChip).toList(),
             ),
           ] else
             // No vendor_products row for this vendor+product — price is
@@ -741,23 +762,16 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
                 ],
               ),
             ),
-          // Multi-pack already put the stepper/ADD pill inside the chip Wrap
-          // above — only single-pack and no-pack cards need it on its own row.
-          if (_packs.length <= 1) ...[
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const Spacer(),
-                Opacity(
-                  opacity: _canAdd ? 1 : 0.4,
-                  child: IgnorePointer(
-                    ignoring: !_canAdd,
-                    child: _qtyStepper(),
-                  ),
-                ),
-              ],
-            ),
-          ],
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Spacer(),
+              Opacity(
+                opacity: _canAdd ? 1 : 0.4,
+                child: IgnorePointer(ignoring: !_canAdd, child: _qtyStepper()),
+              ),
+            ],
+          ),
         ],
       ),
     );

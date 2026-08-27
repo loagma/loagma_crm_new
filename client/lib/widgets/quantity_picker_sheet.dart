@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 
 /// Quantity picker for a catalog pack — a grid of tappable numbers (1..N)
 /// plus a custom-entry field for anything larger, capped at [maxQty] (the
@@ -47,7 +48,10 @@ class _QuantityPickerSheetState extends State<_QuantityPickerSheet> {
   static const _gold = Color(0xFFD7BE69);
   static const _ink = Color(0xFF20242B);
 
-  late final int _selected = widget.currentQty.clamp(1, widget.maxQty > 0 ? widget.maxQty : 1);
+  late final int _selected = widget.currentQty.clamp(
+    1,
+    widget.maxQty > 0 ? widget.maxQty : 1,
+  );
   late final _customCtrl = TextEditingController();
 
   // A fixed grid up to 20 covers the overwhelming majority of real orders;
@@ -66,6 +70,13 @@ class _QuantityPickerSheetState extends State<_QuantityPickerSheet> {
   void _confirmCustom() {
     final v = int.tryParse(_customCtrl.text.trim());
     if (v == null || v < 1) return;
+    if (v > widget.maxQty) {
+      Fluttertoast.showToast(
+        msg: 'Only ${widget.maxQty} in stock',
+        backgroundColor: const Color(0xFFC0584C),
+        textColor: Colors.white,
+      );
+    }
     Navigator.of(context).pop(v.clamp(1, widget.maxQty));
   }
 
@@ -74,8 +85,15 @@ class _QuantityPickerSheetState extends State<_QuantityPickerSheet> {
     final gridCount = widget.maxQty > 0 ? widget.maxQty.clamp(1, _gridMax) : 0;
 
     return Container(
-      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.75),
-      padding: EdgeInsets.fromLTRB(18, 8, 18, 16 + MediaQuery.of(context).padding.bottom),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.75,
+      ),
+      padding: EdgeInsets.fromLTRB(
+        18,
+        8,
+        18,
+        16 + MediaQuery.of(context).padding.bottom,
+      ),
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -89,16 +107,34 @@ class _QuantityPickerSheetState extends State<_QuantityPickerSheet> {
               width: 42,
               height: 4,
               margin: const EdgeInsets.only(top: 8, bottom: 16),
-              decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(3)),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(3),
+              ),
             ),
           ),
-          const Text('Select Quantity', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _ink)),
+          const Text(
+            'Select Quantity',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: _ink,
+            ),
+          ),
           const SizedBox(height: 4),
           Text.rich(
-            TextSpan(children: [
-              TextSpan(text: '${widget.productName}\n', style: const TextStyle(fontWeight: FontWeight.w600, color: _ink)),
-              TextSpan(text: 'Pack: ${widget.packLabel}'),
-            ]),
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '${widget.productName}\n',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: _ink,
+                  ),
+                ),
+                TextSpan(text: 'Pack: ${widget.packLabel}'),
+              ],
+            ),
             style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
           ),
           const SizedBox(height: 4),
@@ -107,7 +143,9 @@ class _QuantityPickerSheetState extends State<_QuantityPickerSheet> {
             style: TextStyle(
               fontSize: 11.5,
               fontWeight: FontWeight.w700,
-              color: _outOfStock ? const Color(0xFFC0584C) : const Color(0xFF2F9E57),
+              color: _outOfStock
+                  ? const Color(0xFFC0584C)
+                  : const Color(0xFF2F9E57),
             ),
           ),
           const SizedBox(height: 14),
@@ -115,8 +153,10 @@ class _QuantityPickerSheetState extends State<_QuantityPickerSheet> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 20),
               child: Center(
-                child: Text('No stock available for this pack right now.',
-                    style: TextStyle(fontSize: 12.5, color: Colors.grey.shade500)),
+                child: Text(
+                  'No stock available for this pack right now.',
+                  style: TextStyle(fontSize: 12.5, color: Colors.grey.shade500),
+                ),
               ),
             )
           else ...[
@@ -142,7 +182,9 @@ class _QuantityPickerSheetState extends State<_QuantityPickerSheet> {
                         decoration: BoxDecoration(
                           color: isSelected ? _gold : const Color(0xFFF6F6F7),
                           borderRadius: BorderRadius.circular(9),
-                          border: Border.all(color: isSelected ? _gold : const Color(0xFFE7E7E7)),
+                          border: Border.all(
+                            color: isSelected ? _gold : const Color(0xFFE7E7E7),
+                          ),
                         ),
                         child: Text(
                           '$n',
@@ -160,41 +202,75 @@ class _QuantityPickerSheetState extends State<_QuantityPickerSheet> {
             ),
             if (widget.maxQty > _gridMax) ...[
               const SizedBox(height: 14),
-              Text('Or enter a quantity up to ${widget.maxQty}',
-                  style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500)),
+              Text(
+                'Or enter a quantity up to ${widget.maxQty}',
+                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500),
+              ),
               const SizedBox(height: 8),
-              Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: _customCtrl,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    onSubmitted: (_) => _confirmCustom(),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      filled: true,
-                      fillColor: const Color(0xFFFAFAFA),
-                      hintText: 'e.g. ${_gridMax + 1}',
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: Color(0xFFE7E7E7))),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: Color(0xFFE7E7E7))),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: _gold, width: 1.4)),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _customCtrl,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      onSubmitted: (_) => _confirmCustom(),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        filled: true,
+                        fillColor: const Color(0xFFFAFAFA),
+                        hintText: 'e.g. ${_gridMax + 1}',
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(11),
+                          borderSide: const BorderSide(
+                            color: Color(0xFFE7E7E7),
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(11),
+                          borderSide: const BorderSide(
+                            color: Color(0xFFE7E7E7),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(11),
+                          borderSide: const BorderSide(
+                            color: _gold,
+                            width: 1.4,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                ElevatedButton(
-                  onPressed: _confirmCustom,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _gold,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
+                  const SizedBox(width: 10),
+                  ElevatedButton(
+                    onPressed: _confirmCustom,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _gold,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 14,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                    ),
+                    child: const Text(
+                      'OK',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
-                  child: const Text('OK', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                ),
-              ]),
+                ],
+              ),
             ],
           ],
         ],

@@ -163,6 +163,11 @@ class SalesOrderController extends Controller
                     'product_id' => (int) $item['product_id'],
                     'pinfo'      => json_encode([
                         'unit'                  => $item['unit'] ?? 'PCS',
+                        // The catalog pack's own label (e.g. "1 Pack of 5 Kg
+                        // @ 195/-"), if the client sent one — surfaced back as
+                        // OrderListController::getOrderDetail's 'pack_size' so
+                        // the order screen can show which pack was actually sold.
+                        'ps'                    => $item['pack_size'] ?? null,
                         'price_inclusive'       => true,
                         'unit_price_inclusive'  => $price,
                         'tax_percent'           => $taxPercent,
@@ -294,6 +299,7 @@ class SalesOrderController extends Controller
                     'product_id' => (int) $item['product_id'],
                     'pinfo'      => json_encode([
                         'unit'                  => $item['unit'] ?? 'PCS',
+                        'ps'                    => $item['pack_size'] ?? null,
                         'price_inclusive'       => true,
                         'unit_price_inclusive'  => $price,
                         'tax_percent'           => $taxPercent,
