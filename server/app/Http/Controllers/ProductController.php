@@ -33,6 +33,7 @@ class ProductController extends Controller
 
         $query = DB::table('product')
             ->where('is_deleted', 0)
+            ->where('is_published', 1)
             ->select(['product_id', 'name', 'hsn_code', 'stock_uom', 'cat_id', 'parent_cat_id']);
 
         if ($q !== '') {
