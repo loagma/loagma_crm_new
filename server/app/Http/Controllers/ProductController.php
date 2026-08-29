@@ -30,11 +30,26 @@ class ProductController extends Controller
     public function search(): JsonResponse
     {
         $q = trim((string) request()->query('q', ''));
+        $adminId = self::currentVendorAdminId();
 
         $query = DB::table('product')
             ->where('is_deleted', 0)
             ->where('is_published', 1)
             ->select(['product_id', 'name', 'hsn_code', 'stock_uom', 'cat_id', 'parent_cat_id']);
+
+        // Only show products this vendor actually carries — a `product` row
+        // with no `vendor_products` listing for the logged-in staff's
+        // admin_id isn't sellable by them, so it shouldn't appear in their
+        // catalog at all (previously it could still surface with no pricing).
+        if ($adminId !== null) {
+            $query->whereExists(function ($w) use ($adminId) {
+                $w->select(DB::raw(1))
+                    ->from('vendor_products')
+                    ->whereColumn('vendor_products.product_id', 'product.product_id')
+                    ->where('vendor_products.admin_vendor_id', $adminId)
+                    ->where('vendor_products.status', '1');
+            });
+        }
 
         if ($q !== '') {
             // `product.name`/`short_name`/`keywords` are collated utf8mb4_bin
@@ -72,7 +87,6 @@ class ProductController extends Controller
         // the resolver.
         $taxes = ProductTaxResolver::forProducts($productIds);
 
-        $adminId = self::currentVendorAdminId();
         $vendorProducts = $adminId === null
             ? collect()
             : DB::table('vendor_products')
