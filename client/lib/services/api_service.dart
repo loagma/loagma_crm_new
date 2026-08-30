@@ -447,6 +447,74 @@ class ApiService {
     }
   }
 
+  /// Persisted Create-Sales-Order cart for one real customer account (the
+  /// `cart` table — see CartController). Leads have no `user` row, so this is
+  /// never called for a lead; the sheet keeps their cart local-only.
+  static Future<List<Map<String, dynamic>>> getCart(String userId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/cart').replace(queryParameters: {'user_id': userId});
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {
+        final raw = decoded['data'];
+        if (raw is List) return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      }
+      print('getCart failed: ${decoded['message'] ?? response.body}');
+    } catch (e) {
+      print('getCart error: $e');
+    }
+    return [];
+  }
+
+  /// Add/update/remove one cart line (quantity <= 0 removes it). Fire-and-forget
+  /// from the catalog's qty stepper — a failure here just means the next app
+  /// open won't show this particular change; it never blocks the UI.
+  static Future<bool> upsertCart({
+    required String userId,
+    required String productId,
+    String? vendorProductId,
+    required String packId,
+    required int quantity,
+    required double unitPrice,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/cart');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({
+            'user_id':            userId,
+            'product_id':         productId,
+            'vendor_product_id':  vendorProductId,
+            'pack_id':            packId,
+            'quantity':           quantity,
+            'unit_price':         unitPrice,
+          }))
+          .timeout(const Duration(seconds: 15));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {
+        return true;
+      }
+      print('upsertCart failed: ${decoded['message'] ?? response.body}');
+    } catch (e) {
+      print('upsertCart error: $e');
+    }
+    return false;
+  }
+
+  /// Wipes the persisted cart for one customer — called once a sales order is
+  /// actually created from it, so the same items don't keep re-appearing.
+  static Future<bool> clearCart(String userId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/cart/clear');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'user_id': userId}))
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('clearCart error: $e');
+      return false;
+    }
+  }
+
   /// Non-authoritative preview of the order_id the next Sales Order would get
   /// (not reserved — the real id is assigned at create time).
   static Future<int?> getNextSalesOrderId() async {

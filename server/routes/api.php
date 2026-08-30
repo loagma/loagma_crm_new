@@ -10,6 +10,7 @@ use App\Http\Controllers\AreaAssignController;
 use App\Http\Controllers\InchargeAssignController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\BeatPlanController;
+use App\Http\Controllers\CartController;
 use App\Http\Controllers\CallLogController;
 use App\Http\Controllers\ComplaintController;
 use App\Http\Controllers\KnowlarityCallController;
@@ -66,6 +67,11 @@ Route::get('/sales-orders/next-order-id', [SalesOrderController::class, 'nextOrd
 Route::post('/sales-orders', [SalesOrderController::class, 'store']);
 Route::put('/orders/{orderId}/items', [SalesOrderController::class, 'updateItems']); // edit items on an existing pending order
 Route::get('/products/search', [ProductController::class, 'search']);
+
+// Persisted cart (real customers only — see CartController)
+Route::get('/cart',        [CartController::class, 'index']);
+Route::post('/cart',       [CartController::class, 'upsert']);
+Route::post('/cart/clear', [CartController::class, 'clear']);
 
 Route::prefix('lead-accounts')->group(function () {
     Route::get('/',                [LeadsAccountController::class, 'index']);

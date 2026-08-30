@@ -161,7 +161,7 @@ class ProductController extends Controller
      *
      * @return list<array{id: string, label: string, mrp: float, price: float, is_default: bool, stock: int}>
      */
-    private static function parsePacks(?string $raw, ?string $defaultPackId): array
+    public static function parsePacks(?string $raw, ?string $defaultPackId): array
     {
         if ($raw === null || $raw === '' || $raw === '[]') {
             return [];

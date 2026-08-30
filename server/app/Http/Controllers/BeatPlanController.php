@@ -96,6 +96,10 @@ class BeatPlanController extends Controller
             'gstNumber'     => $user->gst_no ?? '',
             'latitude'      => $primary['latitude']  ?? null,
             'longitude'     => $primary['longitude'] ?? null,
+            // A real `user` account has no separate stage field — it's always
+            // a converted customer, matching TelecallerController::worklist()'s
+            // hardcoded 'customer' stage for the same table.
+            'customerStage' => 'customer',
         ];
     }
 
@@ -263,6 +267,9 @@ class BeatPlanController extends Controller
                     'pincode'       => $lead->pincode,
                     'latitude'      => $lead->latitude,
                     'longitude'     => $lead->longitude,
+                    // Same stage source telecaller worklist uses, so the pill
+                    // reads the same on both screens for the same lead.
+                    'customerStage' => $lead->customerStage,
                 ] : null;
             }
 

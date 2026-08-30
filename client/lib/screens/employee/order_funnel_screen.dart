@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_config.dart';
@@ -9,6 +10,7 @@ import '../../services/open_visit_store.dart';
 import '../../widgets/account_map_screen.dart';
 import '../../widgets/create_sales_order_sheet.dart';
 import '../telecaller/order_detail_screen.dart';
+import '../telecaller/telecaller_actions.dart' show launchEmail;
 import '../telecaller/telecaller_mock_data.dart' show kComplaintCategories, kOrderStatusColors;
 
 class OrderFunnelScreen extends StatefulWidget {
@@ -529,8 +531,10 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     final shop    = _acc['businessName']  as String? ?? '—';
     final address = _acc['address']       as String? ?? '';
     final phone   = _acc['contactNumber'] as String? ?? '';
+    final email   = _acc['email']         as String? ?? '';
     final lat     = _acc['latitude'];
     final lng     = _acc['longitude'];
+    final accountType = (_acc['account_type'] as String?) ?? 'lead';
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
@@ -654,10 +658,31 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                         onTap: phone.isNotEmpty ? () => _launch('tel:$phone') : null,
                       ),
                       const SizedBox(width: 10),
+                      // Cloud call — same Knowlarity click-to-call bridge used
+                      // on the telecaller side (allotted_customer_accounts_
+                      // screen.dart's _cloudCall), so a salesman can place a
+                      // logged/recorded call without leaving this screen.
+                      _ActionBtn(
+                        icon: Icons.ring_volume_rounded,
+                        color: const Color(0xFF8E24AA),
+                        onTap: phone.isNotEmpty
+                            ? () => context.push('/telecaller/call',
+                                extra: {'account': _acc, 'accountType': accountType})
+                            : null,
+                      ),
+                      const SizedBox(width: 10),
                       _ActionBtn(
                         faIcon: FontAwesomeIcons.whatsapp,
                         color: const Color(0xFF25D366),
                         onTap: phone.isNotEmpty ? () => _whatsapp(phone) : null,
+                      ),
+                      const SizedBox(width: 10),
+                      _ActionBtn(
+                        icon: Icons.mail_rounded,
+                        color: const Color(0xFF3B6FD4),
+                        onTap: email.isNotEmpty
+                            ? () => launchEmail(email, subject: shop)
+                            : null,
                       ),
                       const SizedBox(width: 10),
                       _ActionBtn(
@@ -689,23 +714,6 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                   Row(
                     children: [
                       Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _editable ? _raiseComplaint : null,
-                          icon: const Icon(Icons.report_problem_rounded, size: 16),
-                          label: const Text('Raise Complaint',
-                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.red.shade600,
-                            side: BorderSide(
-                                color: _editable ? Colors.red.shade300 : Colors.grey.shade300),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
                         child: ElevatedButton.icon(
                           onPressed: _editable ? _takeOrder : null,
                           icon: const Icon(Icons.shopping_cart_rounded, size: 16),
@@ -716,6 +724,23 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                             foregroundColor: Colors.white,
                             disabledBackgroundColor: _gold.withValues(alpha: 0.35),
                             disabledForegroundColor: Colors.white70,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _editable ? _raiseComplaint : null,
+                          icon: const Icon(Icons.report_problem_rounded, size: 16),
+                          label: const Text('Raise Complaint',
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red.shade600,
+                            side: BorderSide(
+                                color: _editable ? Colors.red.shade300 : Colors.grey.shade300),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10)),
                             padding: const EdgeInsets.symmetric(vertical: 10),

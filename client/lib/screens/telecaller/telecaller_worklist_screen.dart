@@ -563,17 +563,28 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
                 ],
               ),
               const SizedBox(height: 6),
-              // Name + owner row — matches Beat Plan's name+person layout
-              // (business name expanded on the left, owner right-aligned)
-              // instead of stacking owner into a subtitle line underneath.
+              // Name + owner + Proceed row — matches Beat Plan's name+person+
+              // Proceed layout (business name expanded on the left, owner and
+              // the CTA stacked on the right) instead of just an inline owner
+              // label with no explicit call-to-action.
               Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Expanded(
                   child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800), maxLines: 1, overflow: TextOverflow.ellipsis),
                 ),
-                if (owner.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  Text(owner, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
-                ],
+                const SizedBox(width: 8),
+                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  if (owner.isNotEmpty)
+                    Text(owner, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 6),
+                  GestureDetector(
+                    onTap: () => _openProfile(w),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                      decoration: BoxDecoration(color: kGold, borderRadius: BorderRadius.circular(20)),
+                      child: const Text('Proceed', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)),
+                    ),
+                  ),
+                ]),
               ]),
               const SizedBox(height: 7),
               Wrap(spacing: 5, runSpacing: 5, children: [

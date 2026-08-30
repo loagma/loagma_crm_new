@@ -41,6 +41,10 @@ class OrderLineItem {
   // Null only if this product had no vendor pack pricing at all — see
   // ProductController::search.
   String? packLabel;
+  // vendor_products.id for this product+vendor — carried along purely so a
+  // persisted cart line (CartController) records which vendor listing priced
+  // it; null for a product with no vendor pack pricing (same case as packId).
+  String? vendorProductId;
   // product.hsn_code, carried along so a catalog pick still shows a real HSN
   // in the item header instead of always falling back to "NA".
   String? hsnCode;
@@ -169,6 +173,30 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     super.initState();
     _loadVoucherPreview();
     _loadUnits();
+    if (_isCustomer) _loadPersistedCart();
+  }
+
+  // Restores a real customer's in-progress cart from the `cart` table so
+  // closing/crashing the app mid-order doesn't lose it — leads never call
+  // this (no `user` row, see CartController), so their cart stays local-only.
+  Future<void> _loadPersistedCart() async {
+    final rows = await ApiService.getCart(widget.accountId);
+    if (!mounted || rows.isEmpty) return;
+    setState(() {
+      for (final r in rows) {
+        final item = OrderLineItem();
+        item.product.text     = (r['name'] as String?) ?? '';
+        item.productId         = r['product_id'] as String?;
+        item.packId            = r['pack_id'] as String?;
+        item.vendorProductId   = r['vendor_product_id']?.toString();
+        item.packLabel         = r['pack_label'] as String?;
+        item.hsnCode           = r['hsn_code'] as String?;
+        item.gstPercent        = (r['gst_percent'] as num?)?.toDouble() ?? 0;
+        item.unitPrice.text    = ((r['unit_price'] as num?) ?? 0).toStringAsFixed(2);
+        item.qty.text          = '${(r['quantity'] as num?) ?? 0}';
+        _lineItems.add(item);
+      }
+    });
   }
 
   Future<void> _loadVoucherPreview() async {
@@ -417,23 +445,32 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     required int qty,
     required OrderLineItem Function() buildItem,
   }) {
+    OrderLineItem? changed;
     setState(() {
       final idx = _lineItems.indexWhere(
         (i) => i.productId == productId && i.packId == packId,
       );
       if (qty <= 0) {
         if (idx != -1) {
-          _lineItems[idx].dispose();
+          changed = _lineItems[idx];
           _lineItems.removeAt(idx);
         }
-        return;
-      }
-      if (idx != -1) {
+      } else if (idx != -1) {
         _lineItems[idx].qty.text = '$qty';
-        return;
+        changed = _lineItems[idx];
+      } else {
+        final item = buildItem()..qty.text = '$qty';
+        _lineItems.add(item);
+        changed = item;
       }
-      _lineItems.add(buildItem()..qty.text = '$qty');
     });
+    // Persist to the real `cart` table so this survives an app close/crash —
+    // real customers only (leads have no `user` row — see CartController).
+    // Fire-and-forget: a failed sync never blocks the on-screen cart, it just
+    // means the next app open won't reflect this particular change. Reads
+    // whatever it needs off `changed` before dispose() below runs.
+    if (changed != null) _syncCartQty(changed!, qty);
+    if (qty <= 0 && changed != null) changed!.dispose();
   }
 
   // Nested sheets (Customer & Dates / Review Order) are separate routes, so a
@@ -543,6 +580,9 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
 
     final realOrderId = result['order_id']?.toString();
     final savedTotal = ((result['order_total'] as num?) ?? _grandTotal).round();
+    // The order now owns these items — drop them from the persisted cart so
+    // they don't keep re-appearing next time this customer's cart loads.
+    ApiService.clearCart(widget.accountId);
     widget.onSave(itemsSummary, savedTotal, 'Pending', 'Not Paid', realOrderId);
     _closeAfterSave();
   }
@@ -1588,12 +1628,31 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     if (clamped <= 0) {
       final idx = _lineItems.indexOf(item);
       if (idx != -1) {
-        item.dispose();
         _lineItems.removeAt(idx);
       }
+      _syncCartQty(item, 0);
+      item.dispose();
       return;
     }
     item.qty.text = '$clamped';
+    _syncCartQty(item, clamped);
+  }
+
+  // Shared by both qty-mutation paths (catalog card stepper and this review-
+  // sheet stepper) — pushes the new quantity to the persisted `cart` table
+  // for a real customer. Manual-entry items (no vendor pack — packId/
+  // productId null) can't be represented in `cart`'s schema, so those stay
+  // session-only, same as before this table existed.
+  void _syncCartQty(OrderLineItem item, int qty) {
+    if (!_isCustomer || item.productId == null || item.packId == null) return;
+    ApiService.upsertCart(
+      userId: widget.accountId,
+      productId: item.productId!,
+      vendorProductId: item.vendorProductId,
+      packId: item.packId!,
+      quantity: qty,
+      unitPrice: item.priceNum,
+    );
   }
 
   // Real data only — no fabricated "free delivery above ₹X" threshold, since

@@ -415,6 +415,7 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
         item.product.text = (widget.product['name'] as String?) ?? '';
         item.productId = productId;
         item.packId = _selectedPackId;
+        item.vendorProductId = widget.product['vendor_product_id'] as String?;
         item.gstPercent =
             (widget.product['gst_percent'] as num?)?.toDouble() ?? 0;
         item.maxQty = _stock;

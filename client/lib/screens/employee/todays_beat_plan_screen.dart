@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../widgets/account_map_screen.dart';
+import '../telecaller/telecaller_mock_data.dart' show stageStyle, priorityForStage;
 
 class TodaysBeatPlanScreen extends StatefulWidget {
   const TodaysBeatPlanScreen({super.key});
@@ -226,6 +227,19 @@ class _CustomerCard extends StatelessWidget {
     }
   }
 
+  Widget _stagePill(({String text, Color color}) st) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+        decoration: BoxDecoration(color: st.color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(width: 6, height: 6, decoration: BoxDecoration(color: st.color, shape: BoxShape.circle)),
+            const SizedBox(width: 5),
+            Text(st.text, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: st.color)),
+          ],
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     final acc        = _account;
@@ -244,6 +258,9 @@ class _CustomerCard extends StatelessWidget {
     final days       = item['days']         as List?;
     final visited    = item['visited_today'] == true;
     final accountType = item['account_type'] as String? ?? 'lead';
+    final stage      = acc['customerStage'] as String? ?? accountType;
+    final st         = stageStyle(stage);
+    final prio       = priorityForStage(stage);
 
     return GestureDetector(
       onTap: () {
@@ -358,6 +375,11 @@ class _CustomerCard extends StatelessWidget {
                     ),
                   ),
               ]),
+            ]),
+            const SizedBox(height: 7),
+            Wrap(spacing: 5, runSpacing: 5, children: [
+              _stagePill(st),
+              _Tag(label: prio.text, bg: prio.color.withValues(alpha: 0.12), fg: prio.color),
             ]),
             const SizedBox(height: 4),
             if (addresses.length > 1)
