@@ -89,7 +89,38 @@ class OrderListController extends Controller
             ->forPage($page, $perPage)
             ->get();
 
-        $data = $rows->map(function ($row) {
+        // Line items for this page's orders — name, pack, qty, price — so the
+        // list card can show each item on its own row instead of just a
+        // count. One query for the whole page rather than a per-row
+        // correlated subquery, since each item now needs several fields.
+        // Same name-resolution as show(): product.name, falling back to the
+        // pinfo snapshot for a product since deleted/renamed.
+        $orderIds = $rows->pluck('order_id')->all();
+        $itemsByOrder = [];
+        if (!empty($orderIds)) {
+            $itemRows = DB::table('orders_item')
+                ->leftJoin('product', 'orders_item.product_id', '=', 'product.product_id')
+                ->whereIn('orders_item.order_id', $orderIds)
+                ->select([
+                    'orders_item.order_id',
+                    'orders_item.pinfo',
+                    'orders_item.quantity',
+                    'orders_item.item_price',
+                    'product.name as product_name',
+                ])
+                ->get();
+            foreach ($itemRows as $ir) {
+                $pinfo = json_decode((string) $ir->pinfo, true) ?: [];
+                $itemsByOrder[$ir->order_id][] = [
+                    'name'       => $ir->product_name ?: ($pinfo['tx'] ?? 'Item'),
+                    'pack_size'  => $pinfo['ps'] ?? null,
+                    'quantity'   => (int) $ir->quantity,
+                    'item_price' => (float) $ir->item_price,
+                ];
+            }
+        }
+
+        $data = $rows->map(function ($row) use ($itemsByOrder) {
             $delivery = json_decode((string) $row->delivery_info, true) ?: [];
             $realItemsCount = (int) $row->real_items_count;
 
@@ -100,6 +131,7 @@ class OrderListController extends Controller
                 'payment_status'  => $row->payment_status,
                 'payment_method'  => $row->payment_method,
                 'items_count'     => $realItemsCount,
+                'items'           => $itemsByOrder[$row->order_id] ?? [],
                 // orders.order_total has no meaning once the real orders_item
                 // rows are gone (see #212226/#212429 — stale legacy total with
                 // 0 matching item rows) — show it as having no derivable value

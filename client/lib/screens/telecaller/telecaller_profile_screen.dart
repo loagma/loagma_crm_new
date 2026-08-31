@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
 import '../../services/notification_service.dart';
+import '../../widgets/address_picker_dialog.dart';
 import '../../widgets/create_sales_order_sheet.dart';
 import 'order_detail_screen.dart';
 import 'telecaller_actions.dart';
@@ -61,22 +62,7 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
   // Saved addresses (customers can have several, via user_addresses); falls
   // back to the single flat `address` string (leads, or customers with no
   // address book entries) so callers always get a uniform list to work with.
-  List<Map<String, dynamic>> get _addressOptions {
-    final raw = (_acc['addresses'] as List?) ?? [];
-    final list = raw.map((a) => Map<String, dynamic>.from(a as Map)).toList();
-    if (list.isEmpty) {
-      final addr = ('${_acc['address'] ?? ''}').trim();
-      if (addr.isNotEmpty) {
-        list.add({
-          'address': addr,
-          'type': null,
-          'latitude': _acc['latitude'],
-          'longitude': _acc['longitude'],
-        });
-      }
-    }
-    return list;
-  }
+  List<Map<String, dynamic>> get _addressOptions => addressOptionsFrom(_acc);
 
   @override
   void initState() {
@@ -155,11 +141,17 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
         ..clear()
         ..addAll(raw.map((o) {
           final m = Map<String, dynamic>.from(o as Map);
+          // Structured line items — name, pack, qty, price — one per row.
+          // Empty on legacy orders with no traceable line items — fall back
+          // to just the count then.
+          final lineItems = ((m['items'] as List?) ?? [])
+              .map((e) => Map<String, dynamic>.from(e as Map)).toList();
           return {
             'order_id': m['order_id']?.toString(),
             'inv':    'Order #${m['order_id']}',
             'date':   m['order_datetime'] ?? '',
-            'items':  '${m['items_count'] ?? 0} item(s)',
+            'items':  lineItems,
+            'items_fallback': '${m['items_count'] ?? 0} item(s)',
             'amt':    ((m['order_total'] as num?) ?? 0).round(),
             'status': _titleCase((m['order_state'] ?? '').toString()),
             'pay':    _titleCase((m['payment_status'] ?? '').toString()),
@@ -673,6 +665,9 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
     final pay = '${o['pay'] ?? ''}';
     final sc = kOrderStatusColors[status] ?? const Color(0xFF5A6472);
     final orderId = o['order_id'] as String?;
+    final lineItems = ((o['items'] as List?) ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    final itemsFallback = '${o['items_fallback'] ?? ''}'.trim();
     return GestureDetector(
       onTap: orderId == null
           ? () => _toast('This is a local draft — no real order to open yet')
@@ -705,12 +700,26 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('${o['inv'] ?? 'Order'}', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
-                if ('${o['items'] ?? ''}'.trim().isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Text('${o['date'] ?? ''}',
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500)),
+                ),
+                if (lineItems.isEmpty && itemsFallback.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.only(top: 1),
-                    child: Text('${o['items']} · ${o['date'] ?? ''}',
-                        maxLines: 2, overflow: TextOverflow.ellipsis,
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(itemsFallback,
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500)),
+                  )
+                else if (lineItems.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: lineItems.map(_itemRow).toList(),
+                    ),
                   ),
                 const SizedBox(height: 6),
                 Wrap(spacing: 5, runSpacing: 4, children: [
@@ -816,15 +825,8 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
     // If the account has more than one saved address, ask which one this
     // order should ship to before opening the order drawer at all.
     final options = _addressOptions;
-    Map<String, dynamic>? selectedAddress = options.length == 1 ? options.first : null;
-
-    if (options.length > 1) {
-      selectedAddress = await showDialog<Map<String, dynamic>>(
-        context: context,
-        builder: (_) => _AddressPickerDialog(addresses: options),
-      );
-      if (selectedAddress == null) return; // cancelled — don't open the order drawer
-    }
+    final selectedAddress = await resolveDeliveryAddress(context, _acc);
+    if (options.length > 1 && selectedAddress == null) return; // cancelled — don't open the order drawer
     if (!mounted) return;
 
     showModalBottomSheet<void>(
@@ -852,12 +854,17 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
             return;
           }
           // Lead draft — no backend row exists to refetch, keep it local-only.
+          // `items` here is CreateSalesOrderSheet's own ', '-joined name
+          // summary — no pack/qty/price breakdown is available for a draft,
+          // so each line item carries just a name.
           final now = DateTime.now();
           setState(() {
             _orders.insert(0, {
               'inv': 'INV-${20601 + _orders.length}',
               'date': '${now.day} ${_months[now.month - 1]} ${now.year}',
-              'items': items,
+              'items': items.split(', ')
+                  .map((n) => n.trim()).where((n) => n.isNotEmpty)
+                  .map((n) => {'name': n}).toList(),
               'amt': amt,
               'status': status,
               'pay': pay,
@@ -1008,6 +1015,36 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
           ],
         ),
       );
+
+  // One line item: name (+ pack size, if any) on the left, qty × price on
+  // the right when known (a local draft has only a name — no pack/qty/price).
+  Widget _itemRow(Map<String, dynamic> it) {
+    final name  = (it['name'] ?? 'Item').toString();
+    final pack  = (it['pack_size'] ?? '').toString().trim();
+    final qty   = it['quantity'] as num?;
+    final price = it['item_price'] as num?;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              pack.isEmpty ? '• $name' : '• $name ($pack)',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
+            ),
+          ),
+          if (qty != null && price != null) ...[
+            const SizedBox(width: 6),
+            Text('${qty.toInt()} × ₹${price.round()}',
+                style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500, fontWeight: FontWeight.w600)),
+          ],
+        ],
+      ),
+    );
+  }
 
   Widget _pill(String text, Color color) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
@@ -1403,67 +1440,3 @@ class _ScheduleFollowUpState extends State<_ScheduleFollowUp> {
 
 // Shown before the order drawer opens when the account has more than one
 // saved address — picks which one this order should ship to.
-class _AddressPickerDialog extends StatefulWidget {
-  final List<Map<String, dynamic>> addresses;
-  const _AddressPickerDialog({required this.addresses});
-
-  @override
-  State<_AddressPickerDialog> createState() => _AddressPickerDialogState();
-}
-
-class _AddressPickerDialogState extends State<_AddressPickerDialog> {
-  late int _selected;
-
-  @override
-  void initState() {
-    super.initState();
-    final defaultIndex = widget.addresses.indexWhere((a) => a['is_default'] == true);
-    _selected = defaultIndex >= 0 ? defaultIndex : 0;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      title: const Text('Select Delivery Address',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: ListView.builder(
-          shrinkWrap: true,
-          itemCount: widget.addresses.length,
-          itemBuilder: (_, i) {
-            final a = widget.addresses[i];
-            final type = ('${a['type'] ?? ''}').trim();
-            final label = type.isNotEmpty ? 'Address ${i + 1} ($type)' : 'Address ${i + 1}';
-            return RadioListTile<int>(
-              value: i,
-              groupValue: _selected,
-              activeColor: kGold,
-              contentPadding: EdgeInsets.zero,
-              title: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-              subtitle: Text('${a['address'] ?? ''}', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-              onChanged: (v) => setState(() => _selected = v ?? 0),
-            );
-          },
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: kGold,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          ),
-          onPressed: () => Navigator.pop(context, widget.addresses[_selected]),
-          child: const Text('OK'),
-        ),
-      ],
-    );
-  }
-}
-

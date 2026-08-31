@@ -184,14 +184,25 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     if (!mounted || rows.isEmpty) return;
     setState(() {
       for (final r in rows) {
+        final productId = r['product_id'] as String?;
+        final packId = r['pack_id'] as String?;
+        // This GET is fired at initState and can still be in flight once the
+        // user starts tapping catalog cards, so a line for this exact
+        // product+pack may already exist by the time the response lands —
+        // skip it rather than adding a duplicate row on top of the live one.
+        final alreadyPresent = _lineItems.any(
+          (i) => i.productId == productId && i.packId == packId,
+        );
+        if (alreadyPresent) continue;
         final item = OrderLineItem();
         item.product.text     = (r['name'] as String?) ?? '';
-        item.productId         = r['product_id'] as String?;
-        item.packId            = r['pack_id'] as String?;
+        item.productId         = productId;
+        item.packId            = packId;
         item.vendorProductId   = r['vendor_product_id']?.toString();
         item.packLabel         = r['pack_label'] as String?;
         item.hsnCode           = r['hsn_code'] as String?;
         item.gstPercent        = (r['gst_percent'] as num?)?.toDouble() ?? 0;
+        item.maxQty            = (r['max_qty'] as num?)?.toInt();
         item.unitPrice.text    = ((r['unit_price'] as num?) ?? 0).toStringAsFixed(2);
         item.qty.text          = '${(r['quantity'] as num?) ?? 0}';
         _lineItems.add(item);
@@ -410,6 +421,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         item.productId = picked.productId;
         item.packId = picked.packId;
         item.packLabel = picked.packLabel;
+        item.vendorProductId = picked.vendorProductId;
         item.hsnCode = picked.hsnCode;
         item.maxQty = picked.maxQty;
         item.gstPercent = picked.gstPercent;
@@ -420,6 +432,11 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         item.unitPrice.text = picked.unitPrice.text;
       });
       picked.dispose();
+      // The catalog picker's own pick never goes through _setCatalogQty (this
+      // is a search-and-replace onto an existing manual-entry line, not a
+      // catalog card's stepper), so it never reaches the persisted cart on
+      // its own — sync it now rather than waiting for the next qty tap.
+      _syncCartQty(item, item.qtyNum.round());
     }
   }
 

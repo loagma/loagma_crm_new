@@ -22,6 +22,24 @@ class _MyAssignedAreasScreenState extends State<MyAssignedAreasScreen> {
 
   final Set<int> _expanded = {};
 
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _query = '';
+
+  // Area name, a pincode inside it, or (for an incharge) any salesman
+  // covering it — so typing any of the three finds the right area.
+  List<Map<String, dynamic>> get _filteredAreas {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return _myAreas;
+    return _myAreas.where((a) {
+      final name = (a['name'] as String? ?? '').toLowerCase();
+      if (name.contains(q)) return true;
+      final pincodes = (a['pincodes'] as List?) ?? [];
+      if (pincodes.any((p) => p.toString().toLowerCase().contains(q))) return true;
+      final staff = _salesmen[a['id'] as int] ?? [];
+      return staff.any((s) => (s['name'] as String? ?? '').toLowerCase().contains(q));
+    }).toList();
+  }
+
   bool get _isIncharge =>
       (UserService.currentRole ?? '').toLowerCase() == 'incharge';
 
@@ -29,6 +47,12 @@ class _MyAssignedAreasScreenState extends State<MyAssignedAreasScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -62,12 +86,26 @@ class _MyAssignedAreasScreenState extends State<MyAssignedAreasScreen> {
         }
       }
 
+      // Pincodes per area, so the search bar can match a pincode too — a
+      // handful of areas at most (there are only ~25 in the whole system),
+      // so fetching them all up front is cheap and avoids a per-tap fetch.
+      final pincodesById = <int, List<String>>{};
+      if (myAreaIds.isNotEmpty) {
+        final details = await Future.wait(myAreaIds.map(ApiService.getArea));
+        if (!mounted) return;
+        for (var i = 0; i < myAreaIds.length; i++) {
+          final raw = details[i]?['pincodes'];
+          pincodesById[myAreaIds[i]] = raw is List ? raw.map((e) => e.toString()).toList() : [];
+        }
+      }
+
       // Build area cards with names
       final areas = <Map<String, dynamic>>[];
       for (var i = 0; i < myAreaIds.length; i++) {
         areas.add({
-          'id':   myAreaIds[i],
-          'name': i < myAreaNames.length ? myAreaNames[i] : 'Area ${myAreaIds[i]}',
+          'id':       myAreaIds[i],
+          'name':     i < myAreaNames.length ? myAreaNames[i] : 'Area ${myAreaIds[i]}',
+          'pincodes': pincodesById[myAreaIds[i]] ?? <String>[],
         });
       }
 
@@ -133,35 +171,87 @@ class _MyAssignedAreasScreenState extends State<MyAssignedAreasScreen> {
           IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator(color: gold))
-          : _error.isNotEmpty
-              ? Center(child: Text(_error, style: const TextStyle(color: Colors.red)))
-              : _myAreas.isEmpty
-                  ? _emptyState()
-                  : RefreshIndicator(
-                      onRefresh: _load,
-                      child: ListView.separated(
-                        padding: const EdgeInsets.all(14),
-                        itemCount: _myAreas.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (ctx, i) => _AreaCard(
-                          area: _myAreas[i],
-                          salesmen: _salesmen[_myAreas[i]['id'] as int] ?? [],
-                          isIncharge: _isIncharge,
-                          expanded: _expanded.contains(_myAreas[i]['id']),
-                          onToggle: () => setState(() {
-                            final id = _myAreas[i]['id'] as int;
-                            if (_expanded.contains(id)) {
-                              _expanded.remove(id);
-                            } else {
-                              _expanded.add(id);
-                            }
-                          }),
-                          onTap: () => _showPincodes(context, _myAreas[i]),
-                        ),
-                      ),
-                    ),
+      body: Column(
+        children: [
+          if (!_loading && _error.isEmpty && _myAreas.isNotEmpty) _searchBar(),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(color: gold))
+                : _error.isNotEmpty
+                    ? Center(child: Text(_error, style: const TextStyle(color: Colors.red)))
+                    : _myAreas.isEmpty
+                        ? _emptyState()
+                        : _buildList(_filteredAreas),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _searchBar() => Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+        child: TextField(
+          controller: _searchCtrl,
+          onChanged: (v) => setState(() => _query = v),
+          decoration: InputDecoration(
+            hintText: 'Search area, pincode or salesman',
+            prefixIcon: const Icon(Icons.search_rounded, size: 20),
+            suffixIcon: _query.isEmpty
+                ? null
+                : IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    onPressed: () => setState(() {
+                      _searchCtrl.clear();
+                      _query = '';
+                    }),
+                  ),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 14),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+      );
+
+  Widget _buildList(List<Map<String, dynamic>> areas) {
+    if (areas.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.search_off_rounded, size: 64, color: Colors.grey.shade300),
+            const SizedBox(height: 12),
+            Text('No areas match "$_query"',
+                style: TextStyle(fontSize: 15, color: Colors.grey.shade500)),
+          ],
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.separated(
+        padding: const EdgeInsets.all(14),
+        itemCount: areas.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 10),
+        itemBuilder: (ctx, i) => _AreaCard(
+          area: areas[i],
+          salesmen: _salesmen[areas[i]['id'] as int] ?? [],
+          isIncharge: _isIncharge,
+          expanded: _expanded.contains(areas[i]['id']),
+          onToggle: () => setState(() {
+            final id = areas[i]['id'] as int;
+            if (_expanded.contains(id)) {
+              _expanded.remove(id);
+            } else {
+              _expanded.add(id);
+            }
+          }),
+          onTap: () => _showPincodes(context, areas[i]),
+        ),
+      ),
     );
   }
 

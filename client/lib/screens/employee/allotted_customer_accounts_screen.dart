@@ -349,7 +349,7 @@ class _AllottedCustomerAccountsScreenState
     final accountIds = _groups
         .expand((g) => (g['accounts'] as List<Map<String, dynamic>>))
         .where((a) => _selected.contains(_key(a)))
-        .map((a) => a['id'] as String? ?? '')
+        .map((a) => '${a['id'] ?? ''}')
         .where((id) => id.isNotEmpty)
         .toList();
 
@@ -408,7 +408,7 @@ class _AllottedCustomerAccountsScreenState
     for (final g in _groups) {
       for (final a in (g['accounts'] as List<Map<String, dynamic>>)) {
         if (_selected.contains(_key(a))) {
-          final id = a['id'] as String? ?? '';
+          final id = '${a['id'] ?? ''}';
           if (id.isNotEmpty && _beatPlans.containsKey(id)) {
             final plan = _beatPlans[id];
             // Only add if plan has a valid frequency (not null/empty)

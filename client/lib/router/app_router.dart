@@ -21,6 +21,8 @@ import '../screens/admin/route_history_screen.dart';
 import '../screens/admin/route_view_screen.dart';
 import '../screens/admin/history_roster_screen.dart';
 import '../screens/admin/admin_notifications_screen.dart';
+import '../screens/admin/admin_target_screen.dart';
+import '../screens/admin/admin_reports_screen.dart';
 import '../screens/lead/pending_leads_screen.dart';
 import '../screens/complaints/complaints_screen.dart';
 import '../screens/admin/admin_incharge_assign_screen.dart';
@@ -228,6 +230,14 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/admin-notifications',
       builder: (context, state) => const AdminNotificationsScreen(),
+    ),
+    GoRoute(
+      path: '/admin/target',
+      builder: (context, state) => const AdminTargetScreen(),
+    ),
+    GoRoute(
+      path: '/admin/reports',
+      builder: (context, state) => const AdminReportsScreen(),
     ),
     GoRoute(
       path: '/pending-leads',

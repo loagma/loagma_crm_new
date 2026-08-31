@@ -334,6 +334,25 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
     _qty = _productId == null ? 0 : widget.qtyFor(_productId!, _selectedPackId);
   }
 
+  // The stepper's qty is only read from `widget.qtyFor` above, in initState —
+  // this card's own taps then keep it in sync locally (_updateQty sets _qty
+  // directly). But the cart can also change from OUTSIDE this exact card: the
+  // persisted-cart load resolves after the catalog has already rendered (an
+  // async GET, not guaranteed to beat this card's first build), and the
+  // Review sheet's own qty stepper edits the same line item independently.
+  // Neither of those triggers this card's initState again, so without this
+  // the stepper would keep showing a stale (often 0) qty even though the
+  // item genuinely is in the cart. `qtyFor` always reads live off the real
+  // cart state, so it's safe to resync from it on every rebuild.
+  @override
+  void didUpdateWidget(covariant _ProductCatalogCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final productId = _productId;
+    if (productId == null) return;
+    final external = widget.qtyFor(productId, _selectedPackId);
+    if (external != _qty) setState(() => _qty = external);
+  }
+
   String? get _productId => widget.product['product_id'] as String?;
 
   Map<String, dynamic>? _findPack(bool Function(Map<String, dynamic>) test) {

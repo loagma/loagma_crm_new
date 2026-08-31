@@ -170,8 +170,11 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
 
                               return GestureDetector(
                                 onTap: () {
-                                  final id = acc['id'] as String?;
-                                  if (id != null && id.isNotEmpty) {
+                                  // acc['id'] is numeric (int) from the API — a
+                                  // straight `as String?` cast throws instead of
+                                  // returning null on that mismatch.
+                                  final id = '${acc['id'] ?? ''}';
+                                  if (id.isNotEmpty) {
                                     context.push('/lead-accounts/$id', extra: acc);
                                   }
                                 },

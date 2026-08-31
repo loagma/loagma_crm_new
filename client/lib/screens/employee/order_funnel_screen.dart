@@ -8,6 +8,7 @@ import '../../services/api_config.dart';
 import '../../services/api_service.dart';
 import '../../services/open_visit_store.dart';
 import '../../widgets/account_map_screen.dart';
+import '../../widgets/address_picker_dialog.dart';
 import '../../widgets/create_sales_order_sheet.dart';
 import '../telecaller/order_detail_screen.dart';
 import '../telecaller/telecaller_actions.dart' show launchEmail;
@@ -214,7 +215,23 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
   // Visit In and Visit Out are deliberately location-free: no GPS fix, no
   // permission prompt, no proximity check and no confirmation. The salesman
   // punches in and out purely by tapping.
+  //
+  // A salesman can only be mid-visit at one customer at a time — this is the
+  // last line of defense for that rule (todays_beat_plan_screen.dart already
+  // blocks navigating here while another visit is open; this catches it too
+  // in case this screen is ever reached another way).
   Future<void> _startVisit() async {
+    final other = await OpenVisitStore.findOtherOpen(widget.accountId);
+    if (other != null) {
+      if (!mounted) return;
+      final label = other.accountName?.isNotEmpty == true ? other.accountName! : 'another customer';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('You have an open visit at $label — Visit Out there first.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
+
     final startedAt = DateTime.now();
     setState(() {
       _visitedIn = true;
@@ -222,14 +239,19 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
       _elapsed   = Duration.zero;
     });
     _startTicker();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Visit started')),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Visit started')),
+      );
+    }
 
     // Persist immediately so a back-press right after punching in can't lose
     // the visit.
-    await OpenVisitStore.save(
-        OpenVisit(accountId: widget.accountId, visitInAt: startedAt));
+    await OpenVisitStore.save(OpenVisit(
+      accountId: widget.accountId,
+      visitInAt: startedAt,
+      accountName: _acc['businessName'] as String?,
+    ));
   }
 
   Future<void> _endVisit() async {
@@ -470,14 +492,18 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
   // registered customer (SalesOrderController::store requires buyer_userid
   // to match a `user` row) and falls back to a local-only draft with a clear
   // banner for a lead account, so no separate guard is needed here.
+  //
+  // Delivery address is resolved the same way telecaller_profile_screen's
+  // _openOrderSheet does (shared via widgets/address_picker_dialog.dart): a
+  // customer with more than one saved address is asked which one this order
+  // ships to, instead of always silently defaulting to the account's primary
+  // address the way this screen used to.
   Future<void> _takeOrder() async {
     final accountType = (_acc['account_type'] as String?) ?? 'lead';
-    final address = (_acc['address'] as String?) ?? '';
-    final lat = (_acc['latitude'] as num?)?.toDouble();
-    final lng = (_acc['longitude'] as num?)?.toDouble();
-    final deliveryAddress = (address.isNotEmpty || (lat != null && lng != null))
-        ? {'address': address, 'latitude': lat, 'longitude': lng}
-        : null;
+    final options = addressOptionsFrom(_acc);
+    final deliveryAddress = await resolveDeliveryAddress(context, _acc);
+    if (options.length > 1 && deliveryAddress == null) return; // cancelled — don't open the order sheet
+    if (!mounted) return;
 
     showModalBottomSheet<void>(
       context: context,
@@ -992,6 +1018,9 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
     final state   = _titleCase((o['order_state'] ?? '').toString());
     final pay     = _titleCase((o['payment_status'] ?? '').toString());
     final items   = (o['items_count'] as num?)?.toInt() ?? 0;
+    // Structured line items — name, pack, qty, price — one per row below.
+    final lineItems = ((o['items'] as List?) ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map)).toList();
     final total   = (o['order_total'] as num?)?.toDouble() ?? 0;
     final when    = (o['order_datetime'] ?? '').toString();
     final sc      = kOrderStatusColors[state] ?? const Color(0xFF5A6472);
@@ -1057,6 +1086,13 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
                     style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
               ],
             ),
+            if (lineItems.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: lineItems.map(_itemRow).toList(),
+              ),
+            ],
             const SizedBox(height: 10),
             Wrap(
               spacing: 6,
@@ -1069,6 +1105,34 @@ class _OrderFunnelScreenState extends State<OrderFunnelScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // One line item: name (+ pack size, if any) on the left, qty × price on
+  // the right — a plain single row per item, no extra chrome.
+  Widget _itemRow(Map<String, dynamic> it) {
+    final name  = (it['name'] ?? 'Item').toString();
+    final pack  = (it['pack_size'] ?? '').toString().trim();
+    final qty   = (it['quantity'] as num?)?.toInt() ?? 0;
+    final price = (it['item_price'] as num?)?.toDouble() ?? 0;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              pack.isEmpty ? '• $name' : '• $name ($pack)',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text('$qty × ₹${price.round()}',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
+        ],
       ),
     );
   }

@@ -103,6 +103,20 @@ class AppDrawer extends StatelessWidget {
             'subtitle': 'Calls & recordings',
           },
           {
+            'title': 'Target',
+            'icon': Icons.flag_rounded,
+            'route': '/admin/target',
+            'color': const Color(0xFFEC407A),
+            'subtitle': 'Goals vs achievement',
+          },
+          {
+            'title': 'Reports',
+            'icon': Icons.bar_chart_rounded,
+            'route': '/admin/reports',
+            'color': const Color(0xFF5C6BC0),
+            'subtitle': 'KPIs & trends',
+          },
+          {
             'title': 'Settings',
             'icon': Icons.settings_rounded,
             'route': '/admin/settings',

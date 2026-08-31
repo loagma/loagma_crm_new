@@ -86,6 +86,7 @@ class CartController extends Controller
                 'pack_id'           => $r->pack_id,
                 'pack_label'        => $pack['label'] ?? null,
                 'unit_price'        => $pack['price']  ?? ($r->quantity > 0 ? round($r->total / $r->quantity, 2) : 0),
+                'max_qty'           => $pack['stock']  ?? null,
                 'quantity'          => (int) $r->quantity,
                 'total'             => (float) $r->total,
             ];
