@@ -28,10 +28,45 @@ class _MyInchargesScreenState extends State<MyInchargesScreen> {
   // Direct children of the logged-in user, each a fully-expanded subtree.
   List<_Node> _roots = [];
 
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  // ── Search ────────────────────────────────────────────────────────────────
+  // Matches a person on every field the screen shows: name, mobile, role
+  // (raw + label), specialty badge, area names and pincodes.
+  bool _nodeMatches(_Node n, String q) {
+    final hay = <String>[
+      n.name,
+      n.mobile,
+      n.role,
+      _roleStyle(n.role).label,
+      n.specialty.label ?? '',
+      for (final a in n.areas) ...[a.name, ...a.pincodes],
+    ].join(' ').toLowerCase();
+    return q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).every(hay.contains);
+  }
+
+  /// Every person in the whole tree that matches the query, each with the
+  /// chain of managers above them (for the "under …" context line).
+  List<_Match> _collectMatches(List<_Node> nodes, String q, List<_Node> chain) {
+    final out = <_Match>[];
+    for (final n in nodes) {
+      if (_nodeMatches(n, q)) out.add(_Match(n, chain));
+      out.addAll(_collectMatches(n.children, q, [...chain, n]));
+    }
+    return out;
   }
 
   Future<void> _load() async {
@@ -194,14 +229,104 @@ class _MyInchargesScreenState extends State<MyInchargesScreen> {
                         ],
                       ),
                     )
-                  : RefreshIndicator(
-                      onRefresh: _load,
-                      child: ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-                        itemCount: _roots.length,
-                        itemBuilder: (ctx, i) => _NodeTile(node: _roots[i], depth: 0),
-                      ),
-                    ),
+                  : _buildTeam(),
+    );
+  }
+
+  Widget _buildTeam() {
+    final q = _query.toLowerCase().trim();
+
+    return Column(
+      children: [
+        _buildSearchBar(),
+        Expanded(
+          child: q.isEmpty
+              ? RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                    itemCount: _roots.length,
+                    itemBuilder: (ctx, i) => _NodeTile(node: _roots[i], depth: 0),
+                  ),
+                )
+              : _buildResults(q),
+        ),
+      ],
+    );
+  }
+
+  // Flat list of everyone matching the query, wherever they sit in the tree.
+  Widget _buildResults(String q) {
+    final matches = _collectMatches(_roots, q, const []);
+
+    if (matches.isEmpty) {
+      return ListView(
+        children: [
+          const SizedBox(height: 80),
+          Center(child: Icon(Icons.search_off_rounded, size: 56, color: Colors.grey.shade300)),
+          const SizedBox(height: 12),
+          Center(
+            child: Text('No match for "$_query"',
+                style: TextStyle(fontSize: 14, color: Colors.grey.shade500)),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+          child: Text('${matches.length} result${matches.length == 1 ? '' : 's'}',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.w600)),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+            itemCount: matches.length,
+            itemBuilder: (ctx, i) => _ResultCard(match: matches[i], query: q),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      child: TextField(
+        controller: _searchCtrl,
+        onChanged: (v) => setState(() => _query = v),
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          hintText: 'Search name, mobile, role, area, pincode…',
+          hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+          prefixIcon: const Icon(Icons.search_rounded, color: gold),
+          suffixIcon: _query.isEmpty
+              ? null
+              : IconButton(
+                  icon: Icon(Icons.clear_rounded, size: 18, color: Colors.grey.shade500),
+                  onPressed: () {
+                    _searchCtrl.clear();
+                    setState(() => _query = '');
+                    FocusScope.of(context).unfocus();
+                  },
+                ),
+          filled: true,
+          fillColor: Colors.white,
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(vertical: 12),
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+          enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(color: Colors.grey.shade200)),
+          focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: gold, width: 1.5)),
+        ),
+      ),
     );
   }
 }
@@ -256,6 +381,130 @@ class _Node {
         light: const Color(0xFFEDE7F6),
         label: role.isEmpty ? 'Staff' : role[0].toUpperCase() + role.substring(1),
       );
+  }
+}
+
+/// A person that matched the search, plus the managers above them.
+class _Match {
+  final _Node node;
+  final List<_Node> chain; // top-most … immediate manager
+  const _Match(this.node, this.chain);
+}
+
+/// Splits [text] on [query] terms and bolds the matched spans.
+List<TextSpan> _highlight(String text, String query, TextStyle base) {
+  final terms = query
+      .split(RegExp(r'\s+'))
+      .where((t) => t.isNotEmpty)
+      .map((t) => RegExp.escape(t))
+      .toList();
+  if (terms.isEmpty) return [TextSpan(text: text, style: base)];
+
+  final re = RegExp('(${terms.join('|')})', caseSensitive: false);
+  final spans = <TextSpan>[];
+  var i = 0;
+  for (final m in re.allMatches(text)) {
+    if (m.start > i) spans.add(TextSpan(text: text.substring(i, m.start), style: base));
+    spans.add(TextSpan(
+      text: text.substring(m.start, m.end),
+      style: base.copyWith(
+        fontWeight: FontWeight.w800,
+        color: const Color(0xFF4A3A0C),
+        backgroundColor: const Color(0x99C09E3E),
+      ),
+    ));
+    i = m.end;
+  }
+  if (i < text.length) spans.add(TextSpan(text: text.substring(i), style: base));
+  return spans;
+}
+
+/// One search hit: person card with a "under …" breadcrumb of their managers.
+class _ResultCard extends StatelessWidget {
+  final _Match match;
+  final String query;
+
+  const _ResultCard({required this.match, required this.query});
+
+  String _initials(String name) {
+    final parts = name.trim().split(' ').where((p) => p.isNotEmpty).toList();
+    if (parts.length >= 2) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    return name.isNotEmpty ? name[0].toUpperCase() : '?';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final n = match.node;
+    final style = _roleStyle(n.role);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        elevation: 1,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 4,
+                height: 40,
+                margin: const EdgeInsets.only(right: 10, top: 1),
+                decoration: BoxDecoration(color: style.color, borderRadius: BorderRadius.circular(4)),
+              ),
+              CircleAvatar(
+                radius: 19,
+                backgroundColor: style.light,
+                child: Text(_initials(n.name),
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: style.color)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text.rich(
+                            TextSpan(children: _highlight(n.name, query,
+                                const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.black87))),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(color: style.light, borderRadius: BorderRadius.circular(20)),
+                          child: Text(style.label,
+                              style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: style.color)),
+                        ),
+                      ],
+                    ),
+                    if (n.mobile.isNotEmpty)
+                      Text.rich(
+                        TextSpan(children: _highlight(n.mobile, query,
+                            TextStyle(fontSize: 11, color: Colors.grey.shade600))),
+                      ),
+                    if (match.chain.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        'under ${match.chain.map((c) => c.name).join(' › ')}',
+                        style: TextStyle(fontSize: 10.5, color: Colors.grey.shade400),
+                      ),
+                    ],
+                    if (n.areas.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      ...n.areas.map((a) => _AreaBlock(area: a, color: style.color)),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

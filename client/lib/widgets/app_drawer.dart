@@ -9,6 +9,7 @@ import 'package:geolocator/geolocator.dart';
 import '../services/api_service.dart';
 import '../services/notification_service.dart';
 import '../services/tracking_service.dart';
+import '../services/user_service.dart';
 
 class AppDrawer extends StatelessWidget {
   final String role;
@@ -276,14 +277,14 @@ class AppDrawer extends StatelessWidget {
         ];
       case 'salesman':
         return [
+          // {
+          //   'title': 'Create Lead Accounts',
+          //   'icon': Icons.account_balance_wallet_rounded,
+          //   'route': '/lead-accounts',
+          //   'color': const Color(0xFF42A5F5),
+          // },
           {
-            'title': 'Create Lead Accounts',
-            'icon': Icons.account_balance_wallet_rounded,
-            'route': '/lead-accounts',
-            'color': const Color(0xFF42A5F5),
-          },
-          {
-            'title': 'My Areas',
+            'title': 'Area',
             'icon': Icons.location_on_rounded,
             'route': '/my-areas',
             'color': const Color(0xFFEF5350),
@@ -309,7 +310,7 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF5C6BC0),
           },
           {
-            'title': 'My Complaints',
+            'title': 'Notes / Complaints',
             'icon': Icons.report_problem_rounded,
             'route': '/complaints',
             'color': const Color(0xFFE53935),
@@ -331,21 +332,21 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFFD7BE69),
             'subtitle': 'Live numbers & charts',
           },
+          // {
+          //   'title': 'Create Lead Accounts',
+          //   'icon': Icons.people_alt_rounded,
+          //   'route': '/lead-account',
+          //   'color': const Color(0xFF42A5F5),
+          // },
           {
-            'title': 'Create Lead Accounts',
-            'icon': Icons.people_alt_rounded,
-            'route': '/lead-account',
-            'color': const Color(0xFF42A5F5),
-          },
-          {
-            'title': 'My Area',
+            'title': 'Area',
             'icon': Icons.location_on_rounded,
             'route': '/my-areas',
             'color': const Color.fromARGB(255, 140, 33, 157),
             'subtitle': 'Assigned areas',
           },
           {
-            'title': 'Allotted Customer Accounts',
+            'title': 'Allotted Customer',
             'icon': Icons.assignment_ind_rounded,
             'route': '/allotted-customer-accounts',
             'color': const Color(0xFF26A69A),
@@ -387,7 +388,7 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF3F51B5),
           },
           {
-            'title': 'My Complaints',
+            'title': 'Notes / Complaints',
             'icon': Icons.report_problem_rounded,
             'route': '/complaints',
             'color': const Color(0xFFE53935),
@@ -409,6 +410,13 @@ class AppDrawer extends StatelessWidget {
         r == 'head_incharge' ||
         r == 'zonal_incharge' ||
         r == 'area_incharge';
+  }
+
+  // Everyone except the admin (top of the tree) has a reporting line worth
+  // showing — salesman/telecaller up to head_incharge.
+  bool get _showHierarchy {
+    final r = role.toLowerCase().trim();
+    return r.isNotEmpty && r != 'admin';
   }
 
   @override
@@ -523,10 +531,21 @@ class AppDrawer extends StatelessWidget {
               ),
             ),
 
-            // ── Attendance card (salesman / telecaller only) ───────────────
-            if (_showAttendance) const _AttendanceDrawerCard(),
-
-            const Spacer(),
+            // ── Scrollable body: attendance + reporting hierarchy ──────────
+            if (_showAttendance || _showHierarchy)
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Column(
+                    children: [
+                      if (_showAttendance) const _AttendanceDrawerCard(),
+                      if (_showHierarchy) _SeniorHierarchyCard(role: role),
+                    ],
+                  ),
+                ),
+              )
+            else
+              const Spacer(),
 
             // ── Footer ────────────────────────────────────────────────────
             Padding(
@@ -1868,6 +1887,307 @@ class _BreakBtn extends StatelessWidget {
               fontWeight: FontWeight.w500,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reporting Hierarchy Card — walks the incharge-assign map UPWARD from the
+// logged-in user to list every senior above them, each with role + name.
+//
+//   Salesman   → Area Incharge → Zonal Incharge → Head Incharge
+//   Telecaller → Teleadmin     → Zonal Incharge → Head Incharge
+//
+// The map (parent mobile-id → child mobile-ids) is the same one the admin
+// "Assign" flow and My Team screen use; here it's inverted (child → parent)
+// and followed to the top.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _Senior {
+  final String name;
+  final String mobile;
+  final String role;
+  const _Senior({required this.name, required this.mobile, required this.role});
+}
+
+class _SeniorHierarchyCard extends StatefulWidget {
+  final String role;
+  const _SeniorHierarchyCard({required this.role});
+
+  @override
+  State<_SeniorHierarchyCard> createState() => _SeniorHierarchyCardState();
+}
+
+class _SeniorHierarchyCardState extends State<_SeniorHierarchyCard> {
+  bool _loading = true;
+  String? _error;
+  // Ordered immediate-manager → … → top-most senior.
+  List<_Senior> _seniors = [];
+
+  // Process-lifetime cache so re-opening the drawer doesn't refetch the
+  // whole employee list every time.
+  static List<_Senior>? _cache;
+  static DateTime? _cacheAt;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load({bool force = false}) async {
+    if (!force &&
+        _cache != null &&
+        _cacheAt != null &&
+        DateTime.now().difference(_cacheAt!) < const Duration(minutes: 5)) {
+      setState(() {
+        _seniors = _cache!;
+        _loading = false;
+        _error = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final myMobile = (UserService.currentMobile ?? '').trim();
+    if (myMobile.isEmpty) {
+      setState(() {
+        _loading = false;
+        _error = 'Not signed in';
+      });
+      return;
+    }
+
+    try {
+      final results = await Future.wait([
+        ApiService.getAllInchargeAssigns(),
+        ApiService.getEmployees(perPage: 1000),
+      ]);
+      if (!mounted) return;
+
+      final assigns = results[0];
+      final staff = results[1];
+
+      // child mobile-id → parent mobile-id
+      final parentOf = <String, String>{};
+      for (final a in assigns) {
+        final parentId = (a['head_incharge_id'] ?? '').toString().trim();
+        if (parentId.isEmpty || parentId == '0') continue;
+        final ids = a['incharge_ids'];
+        if (ids is! List) continue;
+        for (final c in ids) {
+          final cid = c.toString().trim();
+          if (cid.isEmpty || cid == '0') continue;
+          parentOf[cid] = parentId;
+        }
+      }
+
+      // employee lookup keyed by both mobile and deli_id (the assign map
+      // uses whichever was available when the assignment was saved)
+      final empByKey = <String, Map<String, dynamic>>{};
+      for (final e in staff) {
+        final mob = (e['mobile'] ?? '').toString().trim();
+        final deli = (e['deli_id'] ?? '').toString().trim();
+        if (mob.isNotEmpty) empByKey[mob] = e;
+        if (deli.isNotEmpty) empByKey[deli] = e;
+      }
+
+      String? parentKeyOf(String key, Map<String, dynamic>? emp) {
+        final direct = parentOf[key];
+        if (direct != null) return direct;
+        final deli = (emp?['deli_id'] ?? '').toString().trim();
+        if (deli.isNotEmpty) return parentOf[deli];
+        return null;
+      }
+
+      final chain = <_Senior>[];
+      final visited = <String>{myMobile};
+
+      var cur = parentKeyOf(myMobile, empByKey[myMobile]);
+      while (cur != null && cur.isNotEmpty && !visited.contains(cur)) {
+        visited.add(cur);
+        final emp = empByKey[cur];
+        chain.add(
+          _Senior(
+            name: (emp?['name'] ?? 'Unknown').toString(),
+            mobile: (emp?['mobile'] ?? cur).toString(),
+            role: (emp?['role'] ?? '').toString().toLowerCase().trim(),
+          ),
+        );
+        cur = parentKeyOf(cur, emp);
+      }
+
+      _cache = chain;
+      _cacheAt = DateTime.now();
+      if (mounted) {
+        setState(() {
+          _seniors = chain;
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Could not load hierarchy';
+        });
+      }
+    }
+  }
+
+  ({String label, Color color}) _roleStyle(String role) {
+    switch (role) {
+      case 'head_incharge':
+        return (label: 'Head Incharge', color: const Color(0xFFAB47BC));
+      case 'zonal_incharge':
+        return (label: 'Zonal Incharge', color: const Color(0xFF42A5F5));
+      case 'area_incharge':
+        return (label: 'Area Incharge', color: const Color(0xFFFF7043));
+      case 'teleadmin':
+        return (label: 'Teleadmin', color: const Color(0xFF5E35B1));
+      case 'telecaller':
+        return (label: 'Telecaller', color: const Color(0xFF00838F));
+      case 'salesman':
+        return (label: 'Salesman', color: const Color(0xFF43A047));
+      case 'admin':
+        return (label: 'Admin', color: const Color(0xFF5C6BC0));
+      case 'manager':
+        return (label: 'Manager', color: const Color(0xFF26A69A));
+      default:
+        return (
+          label: role.isEmpty
+              ? 'Staff'
+              : role[0].toUpperCase() + role.substring(1).replaceAll('_', ' '),
+          color: const Color(0xFF7B68AA),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(10, 10, 10, 0),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 2)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Your Seniors',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black54,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: _loading ? null : () => _load(force: true),
+                child: _loading
+                    ? const SizedBox(
+                        width: 13,
+                        height: 13,
+                        child: CircularProgressIndicator(strokeWidth: 1.5),
+                      )
+                    : Icon(
+                        Icons.refresh_rounded,
+                        size: 15,
+                        color: Colors.grey.shade400,
+                      ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (_loading && _seniors.isEmpty)
+            Text(
+              'Loading…',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+            )
+          else if (_error != null)
+            Text(
+              _error!,
+              style: const TextStyle(fontSize: 11, color: Colors.redAccent),
+            )
+          else if (_seniors.isEmpty)
+            Text(
+              widget.role.toLowerCase().trim() == 'head_incharge'
+                  ? 'You are at the top.'
+                  : 'No senior assigned yet.',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+            )
+          else
+            // Top-most senior first, down to the immediate manager.
+            for (final s in _seniors.reversed)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      margin: const EdgeInsets.only(right: 8, top: 4),
+                      decoration: BoxDecoration(
+                        color: _roleStyle(s.role).color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 1),
+                      child: Text(
+                        _roleStyle(s.role).label,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            s.name,
+                            textAlign: TextAlign.right,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          if (s.mobile.isNotEmpty)
+                            Text(
+                              s.mobile,
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.grey.shade500,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
         ],
       ),
     );
