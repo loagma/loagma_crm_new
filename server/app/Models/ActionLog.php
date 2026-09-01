@@ -32,6 +32,7 @@ class ActionLog extends Model
         'status',
         'outcome_slug',
         'outcome_name',
+        'order_no',
         'general_notes',
         'notes_related_to',
         'images',

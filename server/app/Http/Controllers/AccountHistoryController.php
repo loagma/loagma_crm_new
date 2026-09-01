@@ -62,6 +62,7 @@ class AccountHistoryController extends Controller
             'status'             => $r->status,
             'outcome_slug'       => $r->outcome_slug,
             'outcome_name'       => $r->outcome_name,
+            'order_no'           => $r->order_no,
             'general_notes'      => $r->general_notes,
             'notes_related_to'   => $r->notes_related_to,
             'images'             => $r->images ?? [],

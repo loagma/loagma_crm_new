@@ -105,6 +105,7 @@ class ActionLogController extends Controller
 
         if ($role === 'salesman') {
             $rules['outcome_slug']      = 'required|string|exists:action_log_stage_crm,slug';
+            $rules['order_no']          = 'required_if:outcome_slug,placed_order|nullable|string|max:50';
             $rules['payment_collected'] = 'nullable|numeric|min:0';
             $rules['payment_mode']      = 'nullable|string|max:30';
             $rules['market_note']       = 'nullable|string';
@@ -187,6 +188,7 @@ class ActionLogController extends Controller
                 'status'            => 'visited',
                 'outcome_slug'      => $data['outcome_slug'] ?? null,
                 'outcome_name'      => $outcomeName,
+                'order_no'          => $data['order_no'] ?? null,
                 'general_notes'     => $data['general_notes'] ?? null,
                 'notes_related_to'  => $data['notes_related_to'] ?? null,
                 'images'            => $data['images'] ?? null,

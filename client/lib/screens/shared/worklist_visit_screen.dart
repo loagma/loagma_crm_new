@@ -68,6 +68,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
   // ── Data ──────────────────────────────────────────────────────────────────
   List<Map<String, dynamic>> _stages = [];
   Map<String, dynamic>? _lastCall; // telecaller: prefill for the Action Log popup
+  final List<String> _placedOrderIds = []; // orders placed during this visit
 
   List<Map<String, dynamic>> _orders = [];
   bool _loadingOrders = false, _ordersOnce = false, _ordersFailed = false;
@@ -195,6 +196,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
       accountType: widget.accountType,
       stages: _stages,
       callPrefill: _lastCall,
+      placedOrderIds: _placedOrderIds,
       uploadImage: ApiService.uploadActionLogImage,
     );
     if (body == null || !mounted) return; // cancelled — stay checked in
@@ -312,7 +314,10 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
         pincode: _acc['pincode'] as String?,
         onSave: (items, amt, status, pay, realOrderId) {
           if (!mounted) return;
-          if (realOrderId != null) _loadOrders(force: true);
+          if (realOrderId != null) {
+            if (!_placedOrderIds.contains(realOrderId)) _placedOrderIds.add(realOrderId);
+            _loadOrders(force: true);
+          }
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(realOrderId != null
                 ? 'Sales order #$realOrderId created — ₹$amt'
@@ -842,6 +847,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
     final market = '${l['market_note'] ?? ''}'.trim();
     final pay = l['payment_collected'];
     final fu = '${l['follow_up_date'] ?? ''}';
+    final orderNo = '${l['order_no'] ?? ''}'.trim();
     final images = ((l['images'] as List?) ?? []).whereType<String>().toList();
 
     return _card(Column(
@@ -860,6 +866,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
         _kv('Check-in', inAt),
         _kv('Check-out', outAt),
         if (dur is int && dur > 0) _kv('Duration', _fmtDur(Duration(seconds: dur))),
+        if (orderNo.isNotEmpty) _kv('Order no', '#$orderNo'),
         if (l['is_invalid_call'] == true) _kv('Invalid call', 'Yes'),
         if (l['call_status'] != null && '${l['call_status']}'.isNotEmpty) _kv('Call status', '${l['call_status']}'),
         if (pay != null && (pay as num) > 0) _kv('Payment collected', '₹$pay ${l['payment_mode'] ?? ''}'),

@@ -20,6 +20,7 @@ Future<Map<String, dynamic>?> showActionLogSheet(
   required String accountType, // 'lead' | 'customer'
   List<Map<String, dynamic>> stages = const [],
   Map<String, dynamic>? callPrefill,
+  List<String> placedOrderIds = const [], // orders placed during this visit
   required Future<String?> Function(List<int> bytes, String name) uploadImage,
 }) {
   return showModalBottomSheet<Map<String, dynamic>>(
@@ -36,6 +37,7 @@ Future<Map<String, dynamic>?> showActionLogSheet(
       accountType: accountType,
       stages: stages,
       callPrefill: callPrefill,
+      placedOrderIds: placedOrderIds,
       uploadImage: uploadImage,
     ),
   );
@@ -46,6 +48,7 @@ class _ActionLogSheet extends StatefulWidget {
   final String accountType;
   final List<Map<String, dynamic>> stages;
   final Map<String, dynamic>? callPrefill;
+  final List<String> placedOrderIds;
   final Future<String?> Function(List<int> bytes, String name) uploadImage;
 
   const _ActionLogSheet({
@@ -53,6 +56,7 @@ class _ActionLogSheet extends StatefulWidget {
     required this.accountType,
     required this.stages,
     required this.callPrefill,
+    required this.placedOrderIds,
     required this.uploadImage,
   });
 
@@ -65,6 +69,7 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
 
   // salesman
   String? _stageSlug;
+  final _orderNo = TextEditingController();
   final _generalNotes = TextEditingController();
   String? _notesRelatedTo;
   final _images = <String>[];
@@ -118,10 +123,15 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
       if (_outcomeOptions.any((e) => e.$1 == o)) _callOutcome = o;
       _isInvalid = p['is_invalid_call'] == true || o == 'invalid';
     }
+    // Pre-fill the order number with the last order placed during this visit.
+    if (widget.placedOrderIds.isNotEmpty) {
+      _orderNo.text = widget.placedOrderIds.last;
+    }
   }
 
   @override
   void dispose() {
+    _orderNo.dispose();
     _generalNotes.dispose();
     _paymentCollected.dispose();
     _marketNote.dispose();
@@ -186,9 +196,15 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
     if (picked != null) setState(() => _followUpDate = picked);
   }
 
+  bool get _isPlacedOrder => _stageSlug == 'placed_order';
+
   void _submit() {
     if (_isSalesman && _stageSlug == null) {
       _err('Pick a stage before checking out');
+      return;
+    }
+    if (_isSalesman && _isPlacedOrder && _orderNo.text.trim().isEmpty) {
+      _err('Enter the order number for the placed order');
       return;
     }
     if (!_isSalesman && _callOutcome == null) {
@@ -211,6 +227,7 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
 
     if (_isSalesman) {
       body['outcome_slug'] = _stageSlug;
+      if (_isPlacedOrder) body['order_no'] = _orderNo.text.trim();
       if (_generalNotes.text.trim().isNotEmpty) body['general_notes'] = _generalNotes.text.trim();
       if (_notesRelatedTo != null) body['notes_related_to'] = _notesRelatedTo;
       if (_images.isNotEmpty) body['images'] = List<String>.from(_images);
@@ -395,6 +412,39 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
             );
           }).toList(),
         ),
+      if (_isPlacedOrder) ...[
+        const SizedBox(height: 14),
+        _label('Order number *'),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _orderNo,
+          keyboardType: TextInputType.text,
+          decoration: _inputDecor(widget.placedOrderIds.isNotEmpty
+              ? 'Order placed this visit'
+              : 'Enter the placed order number'),
+        ),
+        if (widget.placedOrderIds.length > 1) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: widget.placedOrderIds
+                .map((id) => GestureDetector(
+                      onTap: () => setState(() => _orderNo.text = id),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: _orderNo.text == id ? kGold.withValues(alpha: 0.16) : Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: _orderNo.text == id ? kGold : const Color(0xFFE0E0E0)),
+                        ),
+                        child: Text('#$id', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                      ),
+                    ))
+                .toList(),
+          ),
+        ],
+      ],
       const SizedBox(height: 14),
       _label('General notes'),
       const SizedBox(height: 6),
