@@ -19,7 +19,18 @@ class CallRecordingPlayer extends StatefulWidget {
   final int callLogId;
   final Color accentColor;
 
-  const CallRecordingPlayer({super.key, required this.callLogId, this.accentColor = const Color(0xFFC09E3E)});
+  /// When set, streams via the account-scoped recording endpoint
+  /// (`/api/accounts/{accountId}/call-recording/{id}`) so a salesman can play a
+  /// telecaller's recording for the same customer. Omit for a telecaller
+  /// viewing their own calls.
+  final String? accountId;
+
+  const CallRecordingPlayer({
+    super.key,
+    required this.callLogId,
+    this.accountId,
+    this.accentColor = const Color(0xFFC09E3E),
+  });
 
   @override
   State<CallRecordingPlayer> createState() => _CallRecordingPlayerState();
@@ -62,7 +73,7 @@ class _CallRecordingPlayerState extends State<CallRecordingPlayer> {
   Future<void> _download() async {
     setState(() => _downloading = true);
     try {
-      final uri = Uri.parse(ApiService.callRecordingDownloadUrl(widget.callLogId));
+      final uri = Uri.parse(ApiService.callRecordingDownloadUrl(widget.callLogId, accountId: widget.accountId));
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else if (mounted) {
@@ -84,7 +95,7 @@ class _CallRecordingPlayerState extends State<CallRecordingPlayer> {
     });
     try {
       var bytes = _bytes;
-      bytes ??= await ApiService.fetchCallRecordingBytes(widget.callLogId);
+      bytes ??= await ApiService.fetchCallRecordingBytes(widget.callLogId, accountId: widget.accountId);
       if (bytes == null) {
         if (mounted) setState(() => _error = 'Could not load recording');
         return;
@@ -104,7 +115,7 @@ class _CallRecordingPlayerState extends State<CallRecordingPlayer> {
   }
 
   Future<void> _openExternally() async {
-    final uri = Uri.parse(ApiService.callRecordingStreamUrl(widget.callLogId));
+    final uri = Uri.parse(ApiService.callRecordingStreamUrl(widget.callLogId, accountId: widget.accountId));
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else if (mounted) {

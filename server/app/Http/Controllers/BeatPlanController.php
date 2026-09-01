@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActionLog;
 use App\Models\BeatPlan;
-use App\Models\BeatPlanVisit;
+use App\Models\BeatPlanFollowup;
 use App\Models\LeadsAccount;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 class BeatPlanController extends Controller
@@ -241,13 +243,22 @@ class BeatPlanController extends Controller
             : collect();
         $addressesByUser = $this->addressesByUserIds($customerIds);
 
-        // Build response with visit status for today
-        $visitedIds = BeatPlanVisit::where('salesman_id', $salesman)
-            ->where('visit_date', $today->toDateString())
-            ->pluck('beat_plan_id')
+        // "Visited today" is now a checked-out action_log row (beat_plan_visit_crm
+        // is gone) — keyed by account_id since the row need not carry a plan id.
+        $visitedAccountIds = ActionLog::where('employee_mobile', $salesman)
+            ->whereNotNull('check_out_at')
+            ->whereBetween('check_out_at', [$today->copy()->startOfDay(), $today->copy()->endOfDay()])
+            ->pluck('account_id')
             ->flip();
 
-        $data = $plans->map(function (BeatPlan $plan) use ($visitedIds, $leads, $customers, $addressesByUser) {
+        // Follow-ups due/overdue as of today — surfaced as beat-plan entries.
+        $followups = BeatPlanFollowup::where('staff_id', $salesman)
+            ->where('done', false)
+            ->whereDate('due_date', '<=', $today->toDateString())
+            ->get()
+            ->keyBy('account_id');
+
+        $data = $plans->map(function (BeatPlan $plan) use ($visitedAccountIds, $followups, $leads, $customers, $addressesByUser) {
             $account = null;
             if ($plan->account_type === 'customer') {
                 $user = $customers->get($plan->account_id);
@@ -281,11 +292,62 @@ class BeatPlanController extends Controller
                 'specific_dates' => $plan->specific_dates,
                 'appointment_date' => $plan->appointment_date,
                 'interval_days'  => $plan->interval_days,
-                'visited_today'  => $visitedIds->has($plan->id),
+                'visited_today'  => $visitedAccountIds->has($plan->account_id),
+                'follow_up_due'  => $followups->has($plan->account_id),
                 'account_type'   => $plan->account_type,
                 'account'        => $account,
             ];
         })->filter(fn($r) => $r['account'] !== null)->values();
+
+        // Follow-up accounts not already on today's plan — append as synthetic
+        // "appointment" entries so they still show up on the day's list.
+        $plannedIds  = $plans->pluck('account_id')->flip();
+        $extraFollow = $followups->reject(fn ($f, $id) => $plannedIds->has($id));
+        if ($extraFollow->isNotEmpty()) {
+            $fLeadIds = $extraFollow->where('account_type', 'lead')->keys()->all();
+            $fCustIds = $extraFollow->where('account_type', 'customer')->keys()->all();
+            // account_type can be null on older follow-ups — probe both tables.
+            $fUnknown = $extraFollow->whereNull('account_type')->keys()->all();
+            $fLeadIds = array_values(array_unique([...$fLeadIds, ...$fUnknown]));
+            $fCustIds = array_values(array_unique([...$fCustIds, ...$fUnknown]));
+
+            $fLeads = !empty($fLeadIds) ? LeadsAccount::whereIn('id', $fLeadIds)->get()->keyBy('id') : collect();
+            $fCust  = !empty($fCustIds) ? DB::table('user')->whereIn('userid', $fCustIds)->get()->keyBy('userid') : collect();
+            $fAddr  = $this->addressesByUserIds($fCustIds);
+
+            foreach ($extraFollow as $accId => $f) {
+                $account = null; $type = $f->account_type;
+                if ($fCust->has($accId)) {
+                    $type = 'customer';
+                    $account = $this->customerAccountPayload($fCust->get($accId), $fAddr->get($accId, collect()));
+                } elseif ($fLeads->has($accId)) {
+                    $type = 'lead';
+                    $l = $fLeads->get($accId);
+                    $account = [
+                        'id' => $l->id, 'accountCode' => $l->accountCode, 'businessName' => $l->businessName,
+                        'personName' => $l->personName, 'contactNumber' => $l->contactNumber, 'address' => $l->address,
+                        'area' => $l->area, 'pincode' => $l->pincode, 'latitude' => $l->latitude,
+                        'longitude' => $l->longitude, 'customerStage' => $l->customerStage,
+                    ];
+                }
+                if (!$account) continue;
+
+                $data->push([
+                    'beat_plan_id'     => null,
+                    'frequency'        => 'appointment',
+                    'days'             => null,
+                    'month_date'       => null,
+                    'specific_dates'   => null,
+                    'appointment_date' => optional($f->due_date)->toDateString(),
+                    'interval_days'    => null,
+                    'visited_today'    => $visitedAccountIds->has($accId),
+                    'follow_up_due'    => true,
+                    'account_type'     => $type,
+                    'account'          => $account,
+                ]);
+            }
+            $data = $data->values();
+        }
 
             return response()->json([
                 'success' => true,
@@ -330,9 +392,10 @@ class BeatPlanController extends Controller
                     : collect();
                 $addressesByUser = $this->addressesByUserIds($customerIds);
 
-                $visitedIds = BeatPlanVisit::where('salesman_id', $salesman)
-                    ->where('visit_date', $date->toDateString())
-                    ->pluck('beat_plan_id')
+                $visitedIds = ActionLog::where('employee_mobile', $salesman)
+                    ->whereNotNull('check_out_at')
+                    ->whereBetween('check_out_at', [$date->copy()->startOfDay(), $date->copy()->endOfDay()])
+                    ->pluck('account_id')
                     ->flip();
 
                 $data = $plans->map(function (BeatPlan $plan) use ($visitedIds, $leads, $customers, $addressesByUser) {
@@ -358,7 +421,7 @@ class BeatPlanController extends Controller
 
                     return [
                         'beat_plan_id'   => $plan->id,
-                        'visited_today'  => $visitedIds->has($plan->id),
+                        'visited_today'  => $visitedIds->has($plan->account_id),
                         'frequency'      => $plan->frequency,
                         'days'           => $plan->days,
                         'month_date'     => $plan->month_date,
@@ -400,12 +463,17 @@ class BeatPlanController extends Controller
                 ];
             }
 
-            // Visits logged this week
+            // Visits logged this week (distinct accounts checked out)
             $weekStart = $monday->toDateString();
             $weekEnd   = $monday->copy()->addDays(6)->toDateString();
-            $visited   = BeatPlanVisit::where('salesman_id', $salesman)
-                ->whereBetween('visit_date', [$weekStart, $weekEnd])
-                ->count();
+            $visited   = ActionLog::where('employee_mobile', $salesman)
+                ->whereNotNull('check_out_at')
+                ->whereBetween('check_out_at', [
+                    Carbon::parse($weekStart, self::TZ)->startOfDay(),
+                    Carbon::parse($weekEnd, self::TZ)->endOfDay(),
+                ])
+                ->distinct('account_id')
+                ->count('account_id');
 
             return response()->json([
                 'success'      => true,
@@ -582,43 +650,133 @@ class BeatPlanController extends Controller
         }
     }
 
-    // ── 7. Record a visit ─────────────────────────────────────────────────────
+    // ── 7. Follow-ups (both roles) ────────────────────────────────────────────
+    // A visit/call check-out can schedule a follow-up; it lands in
+    // beat_plan_followup_crm and surfaces here + on today()/week() + the
+    // telecaller Callbacks screen.
 
-    public function recordVisit(int $id): JsonResponse
+    public function followups(): JsonResponse
     {
         try {
-            $salesman = $this->salesmanId();
-            $plan = BeatPlan::where('id', $id)
-                ->where('salesman_id', $salesman)
-                ->firstOrFail();
+            $staff    = $this->salesmanId();
+            $todayStr = Carbon::today(self::TZ)->toDateString();
 
+            $rows = BeatPlanFollowup::where('staff_id', $staff)
+                ->where('done', false)
+                ->orderBy('due_date')
+                ->get();
+
+            $leadIds = $rows->where('account_type', 'lead')->pluck('account_id')->all();
+            $custIds = $rows->where('account_type', 'customer')->pluck('account_id')->all();
+            $unknown = $rows->whereNull('account_type')->pluck('account_id')->all();
+            $leadIds = array_values(array_unique([...$leadIds, ...$unknown]));
+            $custIds = array_values(array_unique([...$custIds, ...$unknown]));
+
+            $leads = !empty($leadIds)
+                ? LeadsAccount::whereIn('id', $leadIds)->get(['id', 'businessName', 'personName', 'contactNumber', 'area', 'pincode', 'customerStage'])->keyBy('id')
+                : collect();
+            $cust  = !empty($custIds)
+                ? DB::table('user')->whereIn('userid', $custIds)->get(['userid', 'name', 'shop_name', 'contactno', 'city', 'pincode'])->keyBy('userid')
+                : collect();
+
+            $data = $rows->map(function (BeatPlanFollowup $f) use ($leads, $cust, $todayStr) {
+                $due = optional($f->due_date)->toDateString();
+                $acc = $cust->get($f->account_id);
+                $type = $f->account_type;
+                if ($acc) {
+                    $type = 'customer';
+                    $name = $acc->shop_name ?: $acc->name;
+                    $phone = $acc->contactno; $area = $acc->city; $pincode = $acc->pincode; $stage = 'customer';
+                } else {
+                    $l = $leads->get($f->account_id);
+                    $type = $l ? 'lead' : $type;
+                    $name = $l ? ($l->businessName ?: $l->personName) : 'Unknown';
+                    $phone = $l->contactNumber ?? ''; $area = $l->area ?? ''; $pincode = $l->pincode ?? ''; $stage = $l->customerStage ?? 'lead';
+                }
+
+                return [
+                    'id'             => $f->id,
+                    'account_id'     => $f->account_id,
+                    'account_type'   => $type,
+                    'name'           => $name,
+                    'phone'          => $phone,
+                    'area'           => $area,
+                    'pincode'        => $pincode,
+                    'stage'          => $stage,
+                    'note'           => $f->note,
+                    'follow_up_date' => $due,
+                    'overdue'        => $due !== null && $due < $todayStr,
+                ];
+            })->values();
+
+            return response()->json(['success' => true, 'data' => $data]);
+        } catch (\Exception $e) {
+            \Log::error('Beat plan followups error', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function markFollowupDone(int $id): JsonResponse
+    {
+        try {
+            $staff = $this->salesmanId();
+            $f = BeatPlanFollowup::where('id', $id)->where('staff_id', $staff)->firstOrFail();
+            $f->update(['done' => true, 'done_at' => now()]);
+
+            return response()->json(['success' => true, 'data' => $f]);
+        } catch (\Exception $e) {
+            \Log::error('Beat plan markFollowupDone error', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function createFollowup(): JsonResponse
+    {
+        try {
+            $staff = $this->salesmanId();
             $data = request()->validate([
-                'notes'  => 'nullable|string|max:1000',
-                'status' => 'nullable|in:visited,missed,skipped',
+                'account_id'   => 'required|string|max:191',
+                'account_type' => 'nullable|in:lead,customer',
+                'due_date'     => 'required|date',
+                'note'         => 'nullable|string|max:255',
             ]);
 
-            $visit = BeatPlanVisit::updateOrCreate(
-                ['beat_plan_id' => $plan->id, 'visit_date' => Carbon::today(self::TZ)->toDateString()],
-                [
-                    'account_id'  => $plan->account_id,
-                    'salesman_id' => $salesman,
-                    'status'      => $data['status'] ?? 'visited',
-                    'notes'       => $data['notes']  ?? null,
-                ]
-            );
+            BeatPlanFollowup::where('staff_id', $staff)
+                ->where('account_id', $data['account_id'])
+                ->where('done', false)
+                ->update(['done' => true, 'done_at' => now()]);
 
-            return response()->json(['success' => true, 'data' => $visit]);
-        } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
-            return response()->json([
-                'success' => false,
-                'error'   => 'Authentication failed: ' . $e->getMessage(),
-            ], 401);
+            $f = BeatPlanFollowup::create([
+                'account_id'   => $data['account_id'],
+                'account_type' => $data['account_type'] ?? null,
+                'staff_id'     => $staff,
+                'due_date'     => Carbon::parse($data['due_date'])->toDateString(),
+                'note'         => $data['note'] ?? null,
+            ]);
+
+            return response()->json(['success' => true, 'data' => $f], 201);
         } catch (\Exception $e) {
-            \Log::error('Beat plan recordVisit error', ['error' => $e->getMessage()]);
-            return response()->json([
-                'success' => false,
-                'error'   => $e->getMessage(),
-            ], 500);
+            \Log::error('Beat plan createFollowup error', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function rescheduleFollowup(int $id): JsonResponse
+    {
+        try {
+            $staff = $this->salesmanId();
+            $data = request()->validate(['due_date' => 'required|date']);
+            $f = BeatPlanFollowup::where('id', $id)->where('staff_id', $staff)->firstOrFail();
+            $f->update([
+                'due_date' => Carbon::parse($data['due_date'])->toDateString(),
+                'done'     => false,
+                'done_at'  => null,
+            ]);
+
+            return response()->json(['success' => true, 'data' => $f]);
+        } catch (\Exception $e) {
+            \Log::error('Beat plan rescheduleFollowup error', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
         }
     }
 }

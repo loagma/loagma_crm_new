@@ -232,26 +232,6 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     );
   }
 
-  // Immediately update a single item's follow-up date and pill without an API round-trip.
-  void _onFollowUpScheduled(String accountId, String date) {
-    final now = DateTime.now();
-    final todayDate = DateTime(now.year, now.month, now.day);
-    final fuDate = DateTime.tryParse(date);
-
-    final idx = _items.indexWhere((w) => '${w['account_id']}' == accountId);
-    if (idx != -1) {
-      _items[idx] = {..._items[idx], 'next_follow_up': date};
-    }
-
-    if (fuDate != null &&
-        !DateTime(fuDate.year, fuDate.month, fuDate.day).isAfter(todayDate)) {
-      _followUpIds.add(accountId);
-      _todayIds.add(accountId);
-    }
-
-    setState(() {});
-  }
-
   // Today = in beat plan for today OR has a follow-up due/overdue today.
   bool _isToday(Map<String, dynamic> w) {
     final id = '${w['account_id']}';
@@ -529,7 +509,7 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     final st = stageStyle(stage);
     final prio = priorityForStage(stage);
     final accountId = '${w['account_id']}';
-    final wasCalled = _calledToday.contains(accountId);
+    final wasCalled = _calledToday.contains(accountId) || '${w['label']}' == 'called_today';
     final isFollowUp = _followUpIds.contains(accountId);
     // Shop / business name on top (dark); owner name goes beside it, like
     // Beat Plan's name+person row, instead of stacked underneath.
@@ -1018,100 +998,34 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     return '${d.day} ${months[d.month - 1]}';
   }
 
-  Future<void> _pushProfile(Map<String, dynamic> w) async {
-    final accountId = '${w['account_id']}';
+  // "Proceed" now opens the unified worklist-visit screen (Check In / Check
+  // Out + Overview + Order/Log/Call/Account tabs), same screen the salesman
+  // beat plan uses. Opening it isn't "calling", so no already-called gate.
+  Future<void> _openProfile(Map<String, dynamic> w) async {
     await context.push(
-      '/telecaller/profile',
+      '/visit/${w['account_id']}',
       extra: {
-        'account': {
-          'id': w['account_id'],
-          'account_id': w['account_id'],
-          'businessName': w['business_name'] ?? w['name'],
-          'name': w['name'],
-          'personName': w['person_name'],
-          'contactNumber': w['phone'],
-          'phone': w['phone'],
-          'area': w['area'],
-          'city': w['city'],
-          'pincode': w['pincode'],
-          'customerStage': w['stage'],
-          'label': w['label'],
-          'address': w['address'],
-          'addresses': w['addresses'],
-          'latitude': w['latitude'],
-          'longitude': w['longitude'],
-        },
-        'accountType': '${w['account_type'] ?? 'lead'}',
-        'onCalled': () => setState(() => _calledToday.add(accountId)),
-        'onFollowUpScheduled': (String date) =>
-            _onFollowUpScheduled(accountId, date),
+        'id': w['account_id'],
+        'account_id': w['account_id'],
+        'role': 'telecaller',
+        'account_type': '${w['account_type'] ?? 'lead'}',
+        'businessName': w['business_name'] ?? w['name'],
+        'name': w['name'],
+        'personName': w['person_name'],
+        'contactNumber': w['phone'],
+        'phone': w['phone'],
+        'area': w['area'],
+        'city': w['city'],
+        'pincode': w['pincode'],
+        'customerStage': w['stage'],
+        'address': w['address'],
+        'addresses': w['addresses'],
+        'latitude': w['latitude'],
+        'longitude': w['longitude'],
+        'accountCode': w['account_code'],
       },
     );
-    // User navigated back — silently sync to pick up outcome/follow-up changes.
+    // Back from the visit screen — silently sync to pick up outcome/follow-up changes.
     if (mounted) _backgroundSync();
-  }
-
-  Future<void> _openProfile(Map<String, dynamic> w) async {
-    final accountId = '${w['account_id']}';
-    if (_calledToday.contains(accountId)) {
-      final name = '${w['business_name'] ?? w['name'] ?? 'this customer'}'
-          .trim();
-      showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-          title: Row(
-            children: const [
-              Icon(
-                Icons.check_circle_rounded,
-                color: Color(0xFF2F9E57),
-                size: 22,
-              ),
-              SizedBox(width: 8),
-              Text(
-                'Already Called',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-            ],
-          ),
-          content: Text(
-            'You already called $name today. Do you want to call again?',
-            style: const TextStyle(fontSize: 14),
-          ),
-          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          actions: [
-            OutlinedButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.grey.shade600,
-                side: BorderSide(color: Colors.grey.shade300),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: const Text('Skip'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                _pushProfile(w); // async, fire-and-forget is fine here
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: kGold,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: const Text('Call Again'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
-    _pushProfile(w);
   }
 }

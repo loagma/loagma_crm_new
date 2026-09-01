@@ -15,7 +15,8 @@ use App\Http\Controllers\CallLogController;
 use App\Http\Controllers\ComplaintController;
 use App\Http\Controllers\KnowlarityCallController;
 use App\Http\Controllers\KnowlarityWebhookController;
-use App\Http\Controllers\OrderFunnelController;
+use App\Http\Controllers\AccountHistoryController;
+use App\Http\Controllers\ActionLogController;
 use App\Http\Controllers\OrderListController;
 use App\Http\Controllers\PincodeController;
 use App\Http\Controllers\ProductController;
@@ -172,14 +173,17 @@ Route::prefix('incharge-assign')->group(function () {
 // Beat Plan (salesman self-assigns accounts to recurring schedule)
 // ---------------------------------------------------------------------------
 Route::prefix('beat-plan')->group(function () {
-    Route::get('/my-plans',         [BeatPlanController::class, 'myPlans']);
-    Route::post('/assign',          [BeatPlanController::class, 'assign']);
-    Route::post('/unassign-bulk',   [BeatPlanController::class, 'unassignBulk']);
-    Route::get('/today',            [BeatPlanController::class, 'today']);
-    Route::get('/week',             [BeatPlanController::class, 'week']);
-    Route::get('/stats',            [BeatPlanController::class, 'accountStats']);
-    Route::delete('/{id}',          [BeatPlanController::class, 'unassign']);
-    Route::post('/{id}/visit',      [BeatPlanController::class, 'recordVisit']);
+    Route::get('/my-plans',           [BeatPlanController::class, 'myPlans']);
+    Route::post('/assign',            [BeatPlanController::class, 'assign']);
+    Route::post('/unassign-bulk',     [BeatPlanController::class, 'unassignBulk']);
+    Route::get('/today',              [BeatPlanController::class, 'today']);
+    Route::get('/week',               [BeatPlanController::class, 'week']);
+    Route::get('/stats',              [BeatPlanController::class, 'accountStats']);
+    Route::get('/followups',                   [BeatPlanController::class, 'followups']);   // must be before /{id}
+    Route::post('/followups',                   [BeatPlanController::class, 'createFollowup']);
+    Route::post('/followups/{id}/done',         [BeatPlanController::class, 'markFollowupDone']);
+    Route::post('/followups/{id}/reschedule',   [BeatPlanController::class, 'rescheduleFollowup']);
+    Route::delete('/{id}',                      [BeatPlanController::class, 'unassign']);
 });
 
 // ---------------------------------------------------------------------------
@@ -245,12 +249,22 @@ Route::prefix('telecaller')->group(function () {
 Route::post('/webhooks/knowlarity/{secret}/call-completed', [KnowlarityWebhookController::class, 'callCompleted']);
 
 // ---------------------------------------------------------------------------
-// Order Funnel (dynamic stages from order_funnel_crm + saved responses)
+// Action Log (was Order Funnel) — check-out form for the unified visit screen
 // ---------------------------------------------------------------------------
-Route::prefix('order-funnels')->group(function () {
-    Route::get('/',             [OrderFunnelController::class, 'options']);
-    Route::get('/response',     [OrderFunnelController::class, 'latestResponse']);
-    Route::get('/responses',    [OrderFunnelController::class, 'responses']);
-    Route::post('/response',    [OrderFunnelController::class, 'store']);
-    Route::post('/upload-image',[OrderFunnelController::class, 'uploadImage']);
+Route::prefix('action-log')->group(function () {
+    Route::get('/stages',       [ActionLogController::class, 'stages']);
+    Route::get('/response',     [ActionLogController::class, 'latestResponse']);
+    Route::get('/responses',    [ActionLogController::class, 'responses']);
+    Route::post('/response',    [ActionLogController::class, 'store']);
+    Route::post('/upload-image',[ActionLogController::class, 'uploadImage']);
+});
+
+// ---------------------------------------------------------------------------
+// Per-customer history for the unified visit screen (all staff, one account)
+// ---------------------------------------------------------------------------
+Route::prefix('accounts/{accountId}')->middleware('jwtauth')->group(function () {
+    Route::get('/action-logs',            [AccountHistoryController::class, 'actionLogs']);
+    Route::get('/call-history',            [AccountHistoryController::class, 'callHistory']);
+    Route::get('/call-recording/{id}',    [AccountHistoryController::class, 'callRecording']);
+    Route::get('/ledger',                 [AccountHistoryController::class, 'ledger']);
 });

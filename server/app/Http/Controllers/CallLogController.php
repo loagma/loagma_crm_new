@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BeatPlanFollowup;
 use App\Models\CallLog;
 use App\Models\Complaint;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
@@ -90,6 +92,23 @@ class CallLogController extends Controller
                 ->where('callback_done', false)
                 ->where('id', '!=', $log->id)
                 ->update(['callback_done' => true]);
+
+            // beat_plan_followup_crm is the single source the Callbacks screen +
+            // both Today lists read — mirror the follow-up into it.
+            BeatPlanFollowup::where('staff_id', $mobile)
+                ->where('account_id', $validated['account_id'])
+                ->where('done', false)
+                ->update(['done' => true, 'done_at' => now()]);
+
+            if (!empty($validated['follow_up_date'])) {
+                BeatPlanFollowup::create([
+                    'account_id'   => $validated['account_id'],
+                    'account_type' => $validated['account_type'] ?? null,
+                    'staff_id'     => $mobile,
+                    'due_date'     => Carbon::parse($validated['follow_up_date'])->toDateString(),
+                    'note'         => $validated['notes'] ?? null,
+                ]);
+            }
         }
 
         return response()->json(['success' => true, 'data' => $log], 201);
@@ -120,6 +139,29 @@ class CallLogController extends Controller
             $log->callback_done = (bool) $validated['callback_done'];
         }
         $log->save();
+
+        // Keep beat_plan_followup_crm in step (Reschedule / Mark done).
+        if ($log->account_id) {
+            if (!empty($validated['callback_done'])) {
+                BeatPlanFollowup::where('staff_id', $mobile)
+                    ->where('account_id', $log->account_id)
+                    ->where('done', false)
+                    ->update(['done' => true, 'done_at' => now()]);
+            }
+            if (array_key_exists('follow_up_date', $validated) && !empty($validated['follow_up_date'])) {
+                BeatPlanFollowup::where('staff_id', $mobile)
+                    ->where('account_id', $log->account_id)
+                    ->where('done', false)
+                    ->update(['done' => true, 'done_at' => now()]);
+                BeatPlanFollowup::create([
+                    'account_id'   => $log->account_id,
+                    'account_type' => $log->account_type,
+                    'staff_id'     => $mobile,
+                    'due_date'     => Carbon::parse($validated['follow_up_date'])->toDateString(),
+                    'note'         => $log->notes,
+                ]);
+            }
+        }
 
         return response()->json(['success' => true, 'data' => $log]);
     }

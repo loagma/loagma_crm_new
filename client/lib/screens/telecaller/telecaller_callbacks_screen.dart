@@ -194,7 +194,7 @@ class _TelecallerCallbacksScreenState extends State<TelecallerCallbacksScreen> {
     if (picked == null) return;
     final dateStr = '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
     setState(() => _busy = true);
-    final ok = await ApiService.updateCallLog(id, followUpDate: dateStr);
+    final ok = await ApiService.rescheduleBeatPlanFollowup(id, dateStr);
     if (!mounted) return;
     setState(() => _busy = false);
     if (ok) {
@@ -209,7 +209,7 @@ class _TelecallerCallbacksScreenState extends State<TelecallerCallbacksScreen> {
     final id = c['id'] as int?;
     if (id == null) return;
     setState(() => _busy = true);
-    final ok = await ApiService.updateCallLog(id, callbackDone: true);
+    final ok = await ApiService.markBeatPlanFollowupDone(id);
     if (!mounted) return;
     setState(() => _busy = false);
     if (ok) {

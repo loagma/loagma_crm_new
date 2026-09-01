@@ -233,6 +233,7 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
                         child: _CustomerCard(
                           item: _items[i],
                           todaysItems: _items,
+                          onReturn: _load,
                         ),
                       ),
                     ),
@@ -251,7 +252,8 @@ class _CustomerCard extends StatelessWidget {
   // straight to the account that has an open visit, when this card is
   // blocked from starting a new one (see _openAccount below).
   final List<Map<String, dynamic>> todaysItems;
-  const _CustomerCard({required this.item, required this.todaysItems});
+  final VoidCallback? onReturn;
+  const _CustomerCard({required this.item, required this.todaysItems, this.onReturn});
 
   static const _gold = Color(0xFFD7BE69);
   static const _cardBg = Color(0xFFFFF0EE);
@@ -270,6 +272,7 @@ class _CustomerCard extends StatelessWidget {
     String accountType,
   ) => {
     ...acc,
+    'role': 'salesman',
     'account_type': accountType,
     'beat_plan_id': forItem['beat_plan_id'],
     'frequency': forItem['frequency'],
@@ -334,7 +337,7 @@ class _CustomerCard extends StatelessWidget {
                   final otherType =
                       otherItem['account_type'] as String? ?? 'lead';
                   context.push(
-                    '/order-funnel/${other.accountId}',
+                    '/visit/${other.accountId}',
                     extra: _extraFor(otherAcc, otherItem, otherType),
                   );
                 },
@@ -346,10 +349,11 @@ class _CustomerCard extends StatelessWidget {
       return;
     }
 
-    context.push(
-      '/order-funnel/$myId',
+    await context.push(
+      '/visit/$myId',
       extra: _extraFor(acc, item, accountType),
     );
+    onReturn?.call();
   }
 
   String _freqLabel(String freq, List<dynamic>? days) {
@@ -435,6 +439,7 @@ class _CustomerCard extends StatelessWidget {
     final freq = item['frequency'] as String? ?? 'weekly';
     final days = item['days'] as List?;
     final visited = item['visited_today'] == true;
+    final followUpDue = item['follow_up_due'] == true;
     final stage = acc['customerStage'] as String? ?? accountType;
     final st = stageStyle(stage);
     final prio = priorityForStage(stage);
@@ -496,6 +501,12 @@ class _CustomerCard extends StatelessWidget {
                           ? const Color(0xFF1976D2)
                           : const Color(0xFFF57C00),
                     ),
+                    if (followUpDue)
+                      _Tag(
+                        label: 'Follow-up due',
+                        bg: const Color(0xFFFFEBEE),
+                        fg: const Color(0xFFE53935),
+                      ),
                     if (visited)
                       _Tag(
                         label: '✓ Visited',

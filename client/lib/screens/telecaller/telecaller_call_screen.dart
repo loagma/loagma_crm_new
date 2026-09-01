@@ -12,10 +12,17 @@ class TelecallerCallScreen extends StatefulWidget {
   final Map<String, dynamic> account;
   final String accountType; // 'lead' | 'customer'
 
+  /// When true (opened from the unified worklist-visit screen) the screen is
+  /// just the live-call step: once the call finishes it pops back with
+  /// {call_log_id, call_outcome, call_status} so the Check Out Action Log
+  /// popup can pre-fill, instead of showing its own post-call form.
+  final bool returnOnFinish;
+
   const TelecallerCallScreen({
     super.key,
     required this.account,
     required this.accountType,
+    this.returnOnFinish = false,
   });
 
   @override
@@ -188,6 +195,10 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
   void _finishLiveCall(String detectedOutcome) {
     if (!mounted) return;
     _tickTimer?.cancel();
+    if (widget.returnOnFinish) {
+      _popWithCall(detectedOutcome);
+      return;
+    }
     setState(() {
       _called = true;
       if (_outcomeOptions.any((o) => o.$1 == detectedOutcome)) {
@@ -201,7 +212,22 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
   void _skipWaitingForWebhook() {
     _pollTimer?.cancel();
     _tickTimer?.cancel();
+    if (widget.returnOnFinish) {
+      _popWithCall('${_liveStatus?['outcome'] ?? ''}');
+      return;
+    }
     setState(() => _called = true);
+  }
+
+  /// Hand the live call back to the worklist-visit screen so its Check Out
+  /// Action Log popup can pre-fill outcome / invalid / status.
+  void _popWithCall(String outcome) {
+    context.pop(<String, dynamic>{
+      'call_log_id': int.tryParse(_liveLogId ?? ''),
+      'call_outcome': outcome,
+      'is_invalid_call': outcome == 'invalid',
+      'call_status': '${_liveStatus?['source'] ?? _liveStatus?['direction'] ?? ''}',
+    });
   }
 
   Future<void> _openWhatsApp() async {
@@ -758,8 +784,11 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
             child: OutlinedButton(
               onPressed: _skipWaitingForWebhook,
               style: OutlinedButton.styleFrom(foregroundColor: _gold, side: const BorderSide(color: _gold)),
-              child: const Text('Call already finished — fill outcome now',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              child: Text(
+                  widget.returnOnFinish
+                      ? 'Call finished — back to check out'
+                      : 'Call already finished — fill outcome now',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
             ),
           ),
         ],

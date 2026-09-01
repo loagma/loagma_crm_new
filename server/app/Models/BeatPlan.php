@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class BeatPlan extends Model
 {
@@ -34,11 +33,6 @@ class BeatPlan extends Model
         'start_date'        => 'date:Y-m-d',
         'is_active'         => 'boolean',
     ];
-
-    public function visits(): HasMany
-    {
-        return $this->hasMany(BeatPlanVisit::class, 'beat_plan_id');
-    }
 
     /**
      * Whether this plan fires on a given Carbon date.

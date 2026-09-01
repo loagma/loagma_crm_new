@@ -36,7 +36,7 @@ import '../screens/employee/allotted_customer_accounts_screen.dart';
 import '../screens/employee/todays_beat_plan_screen.dart';
 import '../screens/employee/all_beat_plan_screen.dart';
 import '../screens/employee/beat_plan_day_screen.dart';
-import '../screens/employee/order_funnel_screen.dart';
+import '../screens/shared/worklist_visit_screen.dart';
 import '../screens/employee/assignment_view_screen.dart';
 import '../screens/lead/lead_account_screen.dart';
 import '../screens/lead/lead_account_list_screen.dart';
@@ -317,8 +317,9 @@ final appRouter = GoRouter(
       builder: (context, state) {
         final extra = state.extra as Map<String, dynamic>? ?? {};
         return TelecallerCallScreen(
-          account:     extra['account']     as Map<String, dynamic>? ?? {},
-          accountType: extra['accountType'] as String?               ?? 'lead',
+          account:        extra['account']        as Map<String, dynamic>? ?? {},
+          accountType:    extra['accountType']    as String?               ?? 'lead',
+          returnOnFinish: extra['returnOnFinish'] == true,
         );
       },
     ),
@@ -414,13 +415,30 @@ final appRouter = GoRouter(
       path: '/assignment-view',
       builder: (context, state) => const AssignmentViewScreen(),
     ),
+    // Unified worklist-visit screen (salesman Beat Plan + telecaller Worklist).
+    // `/order-funnel/:id` kept as an alias for one release.
+    GoRoute(
+      path: '/visit/:id',
+      builder: _worklistVisitBuilder,
+    ),
     GoRoute(
       path: '/order-funnel/:id',
-      builder: (context, state) {
-        final id      = state.pathParameters['id'] ?? '';
-        final account = state.extra as Map<String, dynamic>?;
-        return OrderFunnelScreen(accountId: id, account: account);
-      },
+      builder: _worklistVisitBuilder,
     ),
   ],
 );
+
+Widget _worklistVisitBuilder(BuildContext context, GoRouterState state) {
+  final id = state.pathParameters['id'] ?? '';
+  final extra = state.extra as Map<String, dynamic>? ?? const {};
+  final role = (UserService.currentRole ?? '').toLowerCase().trim() == 'telecaller'
+      ? 'telecaller'
+      : 'salesman';
+  return WorklistVisitScreen(
+    accountId: id,
+    account: extra,
+    role: (extra['role'] as String?) ?? role,
+    accountType: (extra['account_type'] as String?) ?? 'lead',
+    beatPlanId: extra['beat_plan_id'] is int ? extra['beat_plan_id'] as int : null,
+  );
+}

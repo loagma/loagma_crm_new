@@ -4,9 +4,13 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class OrderFunnel extends Model
+/**
+ * Salesman check-out stage lookup (was order_funnel_crm): Placed order,
+ * Shop closed, Negotiation, Interested, ...
+ */
+class ActionLogStage extends Model
 {
-    protected $table = 'order_funnel_crm';
+    protected $table = 'action_log_stage_crm';
 
     protected $fillable = ['slug', 'name', 'sort_order', 'is_active'];
 

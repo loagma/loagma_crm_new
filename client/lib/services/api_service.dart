@@ -1077,8 +1077,16 @@ class ApiService {
   /// Fetches a call recording's raw audio bytes through the authenticated
   /// backend proxy - the underlying Knowlarity URL 401s without the server's
   /// own API credentials, which no player/browser can attach directly.
-  static Future<Uint8List?> fetchCallRecordingBytes(int callLogId) async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/call-recording/$callLogId');
+  /// [accountId] switches to the account-scoped recording endpoint
+  /// (`/api/accounts/{accountId}/call-recording/{id}`) used by the shared
+  /// worklist-visit screen, where a salesman may play a telecaller's recording
+  /// for the same customer. Omit it for a telecaller viewing their own calls.
+  static String _recordingPath(int callLogId, String? accountId) => accountId == null
+      ? '/api/telecaller/call-recording/$callLogId'
+      : '/api/accounts/$accountId/call-recording/$callLogId';
+
+  static Future<Uint8List?> fetchCallRecordingBytes(int callLogId, {String? accountId}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}${_recordingPath(callLogId, accountId)}');
     try {
       final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 30));
       if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -1097,8 +1105,8 @@ class ApiService {
   /// authenticated fetch (fetchCallRecordingBytes) can. `download=1` tells the
   /// backend to send Content-Disposition: attachment so it saves as a file
   /// instead of trying to play inline.
-  static String callRecordingDownloadUrl(int callLogId) {
-    final uri = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/call-recording/$callLogId').replace(
+  static String callRecordingDownloadUrl(int callLogId, {String? accountId}) {
+    final uri = Uri.parse('${ApiConfig.baseUrl}${_recordingPath(callLogId, accountId)}').replace(
       queryParameters: {'download': '1', 'token': UserService.token},
     );
     return uri.toString();
@@ -1108,8 +1116,8 @@ class ApiService {
   /// without `download=1` - used as a fallback to open the recording in the
   /// device's own media player/browser when the in-app player can't decode
   /// it (e.g. narrowband/low-bitrate MP3 variants some platform codecs reject).
-  static String callRecordingStreamUrl(int callLogId) {
-    final uri = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/call-recording/$callLogId').replace(
+  static String callRecordingStreamUrl(int callLogId, {String? accountId}) {
+    final uri = Uri.parse('${ApiConfig.baseUrl}${_recordingPath(callLogId, accountId)}').replace(
       queryParameters: {'token': UserService.token},
     );
     return uri.toString();
@@ -2012,12 +2020,11 @@ class ApiService {
     return false;
   }
 
-  // ── Order Funnel ─────────────────────────────────────────────────────────
+  // ── Action Log (was Order Funnel) ────────────────────────────────────────
 
-  /// Fetch active order funnel stages from order_funnel_crm.
-  /// Returns list of {id, slug, name, sort_order}.
-  static Future<List<Map<String, dynamic>>> getOrderFunnels() async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels');
+  /// Salesman check-out stage options from action_log_stage_crm.
+  static Future<List<Map<String, dynamic>>> getActionLogStages() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/action-log/stages');
     try {
       final res = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
       if (res.statusCode >= 200 && res.statusCode < 300) {
@@ -2028,53 +2035,14 @@ class ApiService {
         }
       }
     } catch (e) {
-      print('getOrderFunnels error: $e');
+      print('getActionLogStages error: $e');
     }
     return [];
   }
 
-  /// Fetch the latest saved funnel response for an account (to prefill the form).
-  static Future<Map<String, dynamic>?> getOrderFunnelResponse(String accountId) async {
-    final uri = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels/response')
-        .replace(queryParameters: {'account_id': accountId});
-    try {
-      final res = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 12));
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
-        if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
-      }
-    } catch (e) {
-      print('getOrderFunnelResponse error: $e');
-    }
-    return null;
-  }
-
-  /// All saved order funnel responses for an account (Transaction tab).
-  static Future<List<Map<String, dynamic>>> getOrderFunnelResponses(String accountId) async {
-    final uri = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels/responses')
-        .replace(queryParameters: {'account_id': accountId});
-    try {
-      final res = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 12));
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
-        if (decoded['data'] is List) {
-          return (decoded['data'] as List)
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        }
-      }
-    } catch (e) {
-      print('getOrderFunnelResponses error: $e');
-    }
-    return [];
-  }
-
-  /// Upload a single order funnel image (raw bytes) and return its stored
-  /// relative path. Bytes are used (instead of a file path) so this works on
-  /// web too, where the picked file path is a blob URL that cannot be read.
-  static Future<String?> uploadOrderFunnelImage(List<int> bytes, String filename) async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels/upload-image');
+  /// Upload a single Action Log photo (raw bytes) — bytes so it works on web too.
+  static Future<String?> uploadActionLogImage(List<int> bytes, String filename) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/action-log/upload-image');
     try {
       final req = http.MultipartRequest('POST', url)
         ..headers['Accept'] = 'application/json'
@@ -2085,46 +2053,23 @@ class ApiService {
       final response = await http.Response.fromStream(streamed);
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final decoded = jsonDecode(response.body);
-        if (decoded is Map && decoded['path'] != null) {
-          return decoded['path'].toString();
-        }
+        if (decoded is Map && decoded['path'] != null) return decoded['path'].toString();
       }
-      print('uploadOrderFunnelImage unexpected status ${response.statusCode}: ${response.body}');
+      print('uploadActionLogImage unexpected status ${response.statusCode}: ${response.body}');
     } catch (e) {
-      print('uploadOrderFunnelImage failed for $url: $e');
+      print('uploadActionLogImage failed for $url: $e');
     }
     return null;
   }
 
-  /// Save an order funnel response for an account.
-  static Future<Map<String, dynamic>?> saveOrderFunnelResponse({
-    required String accountId,
-    required String funnelSlug,
-    String? accountType,
-    int? beatPlanId,
-    String? generalNotes,
-    String? notesRelatedTo,
-    String? visitInAt,
-    String? visitOutAt,
-    int? durationSeconds,
-    List<String>? images,
-  }) async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/order-funnels/response');
+  /// Submit the Action Log check-out popup. [fields] is the role-specific body
+  /// (see ActionLogController::store). Returns the saved row, {'errors': ...}
+  /// on 422, or null on failure.
+  static Future<Map<String, dynamic>?> saveActionLog(Map<String, dynamic> fields) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/action-log/response');
     try {
-      final body = <String, dynamic>{
-        'account_id':  accountId,
-        'funnel_slug': funnelSlug,
-        if (accountType != null)    'account_type':     accountType,
-        if (beatPlanId != null)     'beat_plan_id':     beatPlanId,
-        if (generalNotes != null)   'general_notes':    generalNotes,
-        if (notesRelatedTo != null) 'notes_related_to': notesRelatedTo,
-        if (visitInAt != null)      'visit_in_at':      visitInAt,
-        if (visitOutAt != null)     'visit_out_at':     visitOutAt,
-        if (durationSeconds != null)'duration_seconds': durationSeconds,
-        if (images != null)         'images':           images,
-      };
-      final res = await http.post(url, headers: _authHeaders, body: jsonEncode(body))
-          .timeout(const Duration(seconds: 15));
+      final res = await http.post(url, headers: _authHeaders, body: jsonEncode(fields))
+          .timeout(const Duration(seconds: 20));
       if (res.statusCode >= 200 && res.statusCode < 300) {
         final decoded = jsonDecode(res.body) as Map<String, dynamic>;
         if (decoded['data'] is Map) return Map<String, dynamic>.from(decoded['data'] as Map);
@@ -2134,25 +2079,114 @@ class ApiService {
         final decoded = jsonDecode(res.body) as Map<String, dynamic>;
         return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
       }
-      print('saveOrderFunnelResponse unexpected status ${res.statusCode}: ${res.body}');
+      print('saveActionLog unexpected status ${res.statusCode}: ${res.body}');
     } catch (e) {
-      print('saveOrderFunnelResponse error: $e');
+      print('saveActionLog error: $e');
     }
     return null;
   }
 
-  static Future<bool> recordBeatPlanVisit(int id, {String? notes}) async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/$id/visit');
+  // ── Per-customer history (unified worklist-visit screen) ──────────────────
+
+  static Future<List<Map<String, dynamic>>> _accountList(String accountId, String path) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/accounts/$accountId/$path');
     try {
-      final body = <String, dynamic>{
-        if (notes != null && notes.isNotEmpty) 'notes': notes,
-      };
-      final res = await http.post(url, headers: _authHeaders, body: jsonEncode(body))
+      final res = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        return ((decoded['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+      }
+    } catch (e) {
+      print('account $path error: $e');
+    }
+    return [];
+  }
+
+  /// Log History tab — every staff member's action_log rows for this customer.
+  static Future<List<Map<String, dynamic>>> getAccountActionLogs(String accountId) =>
+      _accountList(accountId, 'action-logs');
+
+  /// Call History tab — every staff member's call_log rows for this customer.
+  static Future<List<Map<String, dynamic>>> getAccountCallHistory(String accountId) =>
+      _accountList(accountId, 'call-history');
+
+  /// Account Details tab — outstanding / lifetime / aging / per-invoice ledger.
+  /// Returns {'is_customer': bool, 'data': {...}|null}.
+  static Future<Map<String, dynamic>> getAccountLedger(String accountId, {String? accountType}) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/accounts/$accountId/ledger').replace(
+      queryParameters: accountType != null ? {'account_type': accountType} : null,
+    );
+    try {
+      final res = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      print('getAccountLedger error: $e');
+    }
+    return {'success': false, 'is_customer': false, 'data': null};
+  }
+
+  // ── Beat-plan follow-ups (both roles) ────────────────────────────────────
+
+  static Future<List<Map<String, dynamic>>> getBeatPlanFollowups() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/followups');
+    try {
+      final res = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        return ((decoded['data'] as List?) ?? []).cast<Map<String, dynamic>>();
+      }
+    } catch (e) {
+      print('getBeatPlanFollowups error: $e');
+    }
+    return [];
+  }
+
+  static Future<bool> markBeatPlanFollowupDone(int id) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/followups/$id/done');
+    try {
+      final res = await http.post(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (e) {
+      print('markBeatPlanFollowupDone error: $e');
+    }
+    return false;
+  }
+
+  static Future<bool> rescheduleBeatPlanFollowup(int id, String dueDate) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/followups/$id/reschedule');
+    try {
+      final res = await http.post(url, headers: _authHeaders, body: jsonEncode({'due_date': dueDate}))
           .timeout(const Duration(seconds: 12));
       return res.statusCode >= 200 && res.statusCode < 300;
     } catch (e) {
-      print('recordBeatPlanVisit error: $e');
+      print('rescheduleBeatPlanFollowup error: $e');
     }
     return false;
+  }
+
+  static Future<Map<String, dynamic>?> createBeatPlanFollowup({
+    required String accountId,
+    String? accountType,
+    required String dueDate,
+    String? note,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/followups');
+    try {
+      final res = await http.post(url, headers: _authHeaders, body: jsonEncode({
+        'account_id': accountId,
+        if (accountType != null) 'account_type': accountType,
+        'due_date': dueDate,
+        if (note != null && note.isNotEmpty) 'note': note,
+      })).timeout(const Duration(seconds: 12));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        return decoded['data'] is Map ? Map<String, dynamic>.from(decoded['data'] as Map) : decoded;
+      }
+    } catch (e) {
+      print('createBeatPlanFollowup error: $e');
+    }
+    return null;
   }
 }

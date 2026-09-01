@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\ProcessKnowlarityCallCompleted;
 use App\Models\Area;
 use App\Models\AreaAssign;
+use App\Models\BeatPlanFollowup;
 use App\Models\CallLog;
 use App\Models\DeliStaff;
 use App\Models\InchargeAssign;
@@ -173,10 +174,10 @@ class TelecallerController extends Controller
             $weekCalls[] = CallLog::where('employee_mobile', $mobile)->whereDate('called_at', $d->toDateString())->count();
         }
 
-        // Follow-ups
-        $dueBase = CallLog::where('employee_mobile', $mobile)->whereNotNull('follow_up_date')->where('callback_done', false);
-        $followUpsDue     = (clone $dueBase)->whereDate('follow_up_date', '<=', $todayStr)->count();
-        $followUpsOverdue = (clone $dueBase)->whereDate('follow_up_date', '<', $todayStr)->count();
+        // Follow-ups — now live in beat_plan_followup_crm (written at check-out).
+        $dueBase = BeatPlanFollowup::where('staff_id', $mobile)->where('done', false);
+        $followUpsDue     = (clone $dueBase)->whereDate('due_date', '<=', $todayStr)->count();
+        $followUpsOverdue = (clone $dueBase)->whereDate('due_date', '<', $todayStr)->count();
 
         // My leads (area scope) → conversions + funnel
         [$areaIds, $pincodes] = $this->myAreaScope($mobile);
@@ -213,31 +214,37 @@ class TelecallerController extends Controller
     }
 
     // ── Today's callbacks (due + overdue) ────────────────────────────────────────
+    // Follow-ups now live in beat_plan_followup_crm (written by the Action Log
+    // check-out popup), shared with the salesman beat plan.
     public function callbacks(): JsonResponse
     {
         $mobile   = $this->mobile();
         $todayStr = Carbon::today()->toDateString();
 
-        $logs = CallLog::where('employee_mobile', $mobile)
-            ->whereNotNull('follow_up_date')
-            ->where('callback_done', false)
-            ->orderBy('follow_up_date')
+        $rows = BeatPlanFollowup::where('staff_id', $mobile)
+            ->where('done', false)
+            ->orderBy('due_date')
             ->get();
 
-        $enriched = $this->enrich($logs);
+        // enrich() keys off account_type — normalise the shape it expects.
+        $pseudo = $rows->map(fn ($f) => (object) [
+            'account_id'   => $f->account_id,
+            'account_type' => $f->account_type ?: 'lead',
+        ]);
+        $enriched = $this->enrich($pseudo);
 
-        $data = $logs->map(function (CallLog $l) use ($enriched, $todayStr) {
-            $acc = $enriched[$l->account_id] ?? [];
-            $fu  = optional($l->follow_up_date)->toDateString();
+        $data = $rows->map(function (BeatPlanFollowup $f) use ($enriched, $todayStr) {
+            $acc = $enriched[$f->account_id] ?? [];
+            $fu  = optional($f->due_date)->toDateString();
             return [
-                'id'             => $l->id,
-                'account_id'     => $l->account_id,
-                'account_type'   => $l->account_type,
+                'id'             => $f->id,
+                'account_id'     => $f->account_id,
+                'account_type'   => $f->account_type,
                 'name'           => $acc['name'] ?? 'Unknown',
                 'phone'          => $acc['phone'] ?? '',
                 'area'           => $acc['area'] ?? '',
                 'stage'          => $acc['stage'] ?? '',
-                'notes'          => $l->notes,
+                'notes'          => $f->note,
                 'follow_up_date' => $fu,
                 'overdue'        => $fu !== null && $fu < $todayStr,
             ];
@@ -607,16 +614,18 @@ class TelecallerController extends Controller
         $labels      = TelecallerLabel::where('employee_mobile', $mobile)->get()->keyBy('account_id');
         $calledToday = CallLog::where('employee_mobile', $mobile)
             ->whereDate('called_at', $todayStr)->whereNotNull('account_id')->pluck('account_id')->flip();
-        $openFollow  = CallLog::where('employee_mobile', $mobile)
-            ->whereNotNull('follow_up_date')->where('callback_done', false)->whereNotNull('account_id')->pluck('account_id')->flip();
+        // Follow-ups now live in beat_plan_followup_crm (written at check-out).
+        $openFollow  = BeatPlanFollowup::where('staff_id', $mobile)
+            ->where('done', false)->pluck('account_id')->flip();
 
-        // Last contact (max called_at) and next open follow-up (min follow_up_date) per account.
+        // Last contact (max called_at) per account.
         $lastContact = CallLog::where('employee_mobile', $mobile)->whereNotNull('account_id')
             ->select('account_id', DB::raw('MAX(called_at) as last_at'))
             ->groupBy('account_id')->pluck('last_at', 'account_id');
-        $nextFollow  = CallLog::where('employee_mobile', $mobile)
-            ->whereNotNull('follow_up_date')->where('callback_done', false)->whereNotNull('account_id')
-            ->select('account_id', DB::raw('MIN(follow_up_date) as next_at'))
+        // Next open follow-up (min due_date) per account.
+        $nextFollow  = BeatPlanFollowup::where('staff_id', $mobile)
+            ->where('done', false)
+            ->select('account_id', DB::raw('MIN(due_date) as next_at'))
             ->groupBy('account_id')->pluck('next_at', 'account_id');
 
         $deriveLabel = function (string $id) use ($labels, $calledToday, $openFollow): string {
