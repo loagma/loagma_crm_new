@@ -2030,6 +2030,24 @@ class _SeniorHierarchyCardState extends State<_SeniorHierarchyCard> {
         cur = parentKeyOf(cur, emp);
       }
 
+      // The incharge-assign map only goes up to Head Incharge — Admin sits
+      // above every role but is never part of that map. Append the Admin
+      // account so every non-admin user sees Admin as their top-most senior
+      // instead of "You are at the top".
+      if (!chain.any((s) => s.role == 'admin')) {
+        final admin = staff.firstWhere(
+          (e) => (e['role'] ?? '').toString().toLowerCase().trim() == 'admin',
+          orElse: () => <String, dynamic>{},
+        );
+        chain.add(
+          _Senior(
+            name: (admin['name'] ?? 'Admin').toString(),
+            mobile: (admin['mobile'] ?? '').toString(),
+            role: 'admin',
+          ),
+        );
+      }
+
       _cache = chain;
       _cacheAt = DateTime.now();
       if (mounted) {
@@ -2132,9 +2150,7 @@ class _SeniorHierarchyCardState extends State<_SeniorHierarchyCard> {
             )
           else if (_seniors.isEmpty)
             Text(
-              widget.role.toLowerCase().trim() == 'head_incharge'
-                  ? 'You are at the top.'
-                  : 'No senior assigned yet.',
+              'No senior assigned yet.',
               style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
             )
           else
