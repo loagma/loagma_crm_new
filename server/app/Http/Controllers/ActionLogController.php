@@ -261,6 +261,43 @@ class ActionLogController extends Controller
         return response()->json(['success' => true, 'data' => $row->fresh()], 201);
     }
 
+    /**
+     * Standalone merchandise photo log — the "Merchandise" button on the
+     * worklist-visit screen. Up to 5 photos + an optional note, stored as its
+     * own action_log_crm row so it shows in the customer's Log History.
+     */
+    public function merchandise(): JsonResponse
+    {
+        $staff  = $this->staff();
+        $mobile = (string) $staff->mobile;
+        $role   = $this->roleFor($staff);
+
+        $data = validator(request()->all(), [
+            'account_id'   => 'required|string|max:191',
+            'account_type' => 'nullable|in:lead,customer',
+            'beat_plan_id' => 'nullable|integer',
+            'note'         => 'nullable|string',
+            'images'       => 'required|array|min:1|max:5',
+            'images.*'     => 'string|max:500',
+        ])->validate();
+
+        $row = ActionLog::create([
+            'employee_mobile' => $mobile,
+            'role'            => $role,
+            'account_id'      => $data['account_id'],
+            'account_type'    => $data['account_type'] ?? null,
+            'beat_plan_id'    => $data['beat_plan_id'] ?? null,
+            'check_out_at'    => now(),
+            'status'          => 'visited',
+            'outcome_slug'    => 'merchandise',
+            'outcome_name'    => 'Merchandise',
+            'general_notes'   => $data['note'] ?? null,
+            'images'          => $data['images'],
+        ]);
+
+        return response()->json(['success' => true, 'data' => $row], 201);
+    }
+
     /** Upload a single Action Log photo; returns its stored relative path. */
     public function uploadImage(): JsonResponse
     {

@@ -256,6 +256,7 @@ Route::prefix('action-log')->group(function () {
     Route::get('/response',     [ActionLogController::class, 'latestResponse']);
     Route::get('/responses',    [ActionLogController::class, 'responses']);
     Route::post('/response',    [ActionLogController::class, 'store']);
+    Route::post('/merchandise', [ActionLogController::class, 'merchandise']);
     Route::post('/upload-image',[ActionLogController::class, 'uploadImage']);
 });
 

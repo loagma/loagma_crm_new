@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_config.dart';
@@ -400,6 +401,163 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
     ));
   }
 
+  // ── Merchandise (up to 5 photos + note) ─────────────────────────────────
+  Future<void> _merchandise() async {
+    if (!_live) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Check in before logging merchandise')));
+      return;
+    }
+    final picker = ImagePicker();
+    final images = <String>[];
+    final noteCtrl = TextEditingController();
+    bool busy = false;
+
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => Padding(
+          padding: EdgeInsets.fromLTRB(18, 18, 18, 18 + MediaQuery.of(ctx).viewInsets.bottom),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                const Icon(Icons.storefront_rounded, size: 20, color: Color(0xFF00838F)),
+                const SizedBox(width: 8),
+                const Text('Merchandise', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                const Spacer(),
+                Text('${images.length}/5', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              ]),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ...images.asMap().entries.map((e) => Stack(children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network('${ApiConfig.baseUrl}${e.value}',
+                              width: 72, height: 72, fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                  width: 72, height: 72, color: Colors.grey.shade200,
+                                  child: const Icon(Icons.broken_image_rounded, color: Colors.black26))),
+                        ),
+                        Positioned(
+                          right: -6, top: -6,
+                          child: IconButton(
+                            icon: const Icon(Icons.cancel, size: 20, color: Colors.redAccent),
+                            onPressed: busy ? null : () => setSheet(() => images.removeAt(e.key)),
+                          ),
+                        ),
+                      ])),
+                  if (images.length < 5)
+                    GestureDetector(
+                      onTap: busy
+                          ? null
+                          : () async {
+                              final src = await showModalBottomSheet<ImageSource>(
+                                context: ctx,
+                                builder: (c) => SafeArea(
+                                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                    ListTile(leading: const Icon(Icons.camera_alt_rounded), title: const Text('Camera'),
+                                        onTap: () => Navigator.pop(c, ImageSource.camera)),
+                                    ListTile(leading: const Icon(Icons.photo_library_rounded), title: const Text('Gallery'),
+                                        onTap: () => Navigator.pop(c, ImageSource.gallery)),
+                                  ]),
+                                ),
+                              );
+                              if (src == null) return;
+                              XFile? f;
+                              try {
+                                f = await picker.pickImage(source: src, imageQuality: 80);
+                              } catch (_) {}
+                              if (f == null) return;
+                              setSheet(() => busy = true);
+                              final path = await ApiService.uploadActionLogImage(await f.readAsBytes(), f.name);
+                              setSheet(() {
+                                busy = false;
+                                if (path != null && path.isNotEmpty) images.add(path);
+                              });
+                            },
+                      child: Container(
+                        width: 72, height: 72,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00838F).withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF00838F)),
+                        ),
+                        child: busy
+                            ? const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)))
+                            : const Icon(Icons.add_a_photo_rounded, color: Color(0xFF00838F)),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: noteCtrl,
+                maxLines: 2,
+                decoration: const InputDecoration(hintText: 'Note (optional)', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00838F), foregroundColor: Colors.white),
+                  onPressed: (busy || images.isEmpty) ? null : () => Navigator.pop(ctx, true),
+                  child: const Text('Save Merchandise', style: TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (ok != true || !mounted) return;
+    final res = await ApiService.saveMerchandise(
+      accountId: widget.accountId,
+      accountType: widget.accountType,
+      beatPlanId: widget.beatPlanId,
+      note: noteCtrl.text,
+      images: images,
+    );
+    if (!mounted) return;
+    final good = res != null && res['errors'] == null;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(good ? 'Merchandise saved' : 'Failed to save merchandise'),
+      backgroundColor: good ? _green : Colors.red,
+    ));
+    if (good && _tab == 2) _loadLogs(force: true);
+  }
+
+  // ── Quick follow-up (date picker → beat_plan_followup) ──────────────────
+  Future<void> _scheduleFollowUp() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now.add(const Duration(days: 1)),
+      firstDate: now,
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (picked == null || !mounted) return;
+    final d = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+    final res = await ApiService.createBeatPlanFollowup(
+      accountId: widget.accountId,
+      accountType: widget.accountType,
+      dueDate: d,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(res != null ? 'Follow-up set for $d' : 'Could not set follow-up'),
+      backgroundColor: res != null ? _green : Colors.red,
+    ));
+  }
+
   // ── Loaders ──────────────────────────────────────────────────────────────
   Future<void> _loadOrders({bool force = false}) async {
     if (!_isCustomer) {
@@ -614,22 +772,43 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
                         {..._acc, '_type': widget.accountType},
                       ])))
                   : null),
+              // Salesman: complaint moved to an icon (its button slot is now
+              // Merchandise). Telecaller: quick follow-up scheduler.
+              if (_isSalesman)
+                _act(Icons.report_problem_rounded, Colors.red.shade600, _live ? _raiseComplaint : null)
+              else
+                _act(Icons.event_available_rounded, const Color(0xFFD98A2B), _scheduleFollowUp),
             ],
           ),
           const SizedBox(height: 10),
-          // Main actions
+          // Main actions — Take Order is primary for both roles. Second slot:
+          // salesman → Merchandise, telecaller → Complaint.
           Row(
             children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _live ? _takeOrder : null,
+                  icon: const Icon(Icons.shopping_cart_rounded, size: 16),
+                  label: const Text('Take Order', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kGold,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: kGold.withValues(alpha: 0.35),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
               if (_isSalesman)
                 Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _live ? _takeOrder : null,
-                    icon: const Icon(Icons.shopping_cart_rounded, size: 16),
-                    label: const Text('Take Order', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: kGold,
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: kGold.withValues(alpha: 0.35),
+                  child: OutlinedButton.icon(
+                    onPressed: _live ? _merchandise : null,
+                    icon: const Icon(Icons.storefront_rounded, size: 16),
+                    label: const Text('Merchandise', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF00838F),
+                      side: BorderSide(color: _live ? const Color(0xFF4DB6AC) : Colors.grey.shade300),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
@@ -637,33 +816,18 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
                 )
               else
                 Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _live ? _cloudCall : null,
-                    icon: const Icon(Icons.ring_volume_rounded, size: 16),
-                    label: const Text('Cloud Call', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF8E24AA),
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: const Color(0xFF8E24AA).withValues(alpha: 0.35),
+                  child: OutlinedButton.icon(
+                    onPressed: _live ? _raiseComplaint : null,
+                    icon: const Icon(Icons.report_problem_rounded, size: 16),
+                    label: const Text('Complaint', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red.shade600,
+                      side: BorderSide(color: _live ? Colors.red.shade300 : Colors.grey.shade300),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
                   ),
                 ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _live ? _raiseComplaint : null,
-                  icon: const Icon(Icons.report_problem_rounded, size: 16),
-                  label: const Text('Complaint', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red.shade600,
-                    side: BorderSide(color: _live ? Colors.red.shade300 : Colors.grey.shade300),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                  ),
-                ),
-              ),
             ],
           ),
           if (!_live) ...[

@@ -2086,6 +2086,38 @@ class ApiService {
     return null;
   }
 
+  /// Standalone merchandise photo log (Merchandise button — up to 5 images).
+  static Future<Map<String, dynamic>?> saveMerchandise({
+    required String accountId,
+    String? accountType,
+    int? beatPlanId,
+    String? note,
+    required List<String> images,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/action-log/merchandise');
+    try {
+      final res = await http.post(url, headers: _authHeaders, body: jsonEncode({
+        'account_id': accountId,
+        if (accountType != null) 'account_type': accountType,
+        if (beatPlanId != null) 'beat_plan_id': beatPlanId,
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+        'images': images,
+      })).timeout(const Duration(seconds: 20));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        return decoded['data'] is Map ? Map<String, dynamic>.from(decoded['data'] as Map) : decoded;
+      }
+      if (res.statusCode == 422) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        return {'errors': decoded['errors'] ?? decoded['message'] ?? 'Validation failed'};
+      }
+      print('saveMerchandise unexpected status ${res.statusCode}: ${res.body}');
+    } catch (e) {
+      print('saveMerchandise error: $e');
+    }
+    return null;
+  }
+
   // ── Per-customer history (unified worklist-visit screen) ──────────────────
 
   static Future<List<Map<String, dynamic>>> _accountList(String accountId, String path) async {
