@@ -32,6 +32,7 @@ import '../screens/admin/incharge_child_assign_screen.dart';
 import '../screens/employee/my_assigned_areas_screen.dart';
 import '../screens/employee/my_team_screen.dart';
 import '../screens/employee/my_incharges_screen.dart';
+import '../screens/employee/incharge_profile_screen.dart';
 import '../screens/employee/allotted_customer_accounts_screen.dart';
 import '../screens/employee/todays_beat_plan_screen.dart';
 import '../screens/employee/all_beat_plan_screen.dart';
@@ -238,6 +239,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/admin/reports',
       builder: (context, state) => const AdminReportsScreen(),
+    ),
+    GoRoute(
+      path: '/incharge-profile',
+      builder: (context, state) => const InchargeProfileScreen(),
     ),
     GoRoute(
       path: '/pending-leads',

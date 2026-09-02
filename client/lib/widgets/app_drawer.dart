@@ -277,6 +277,13 @@ class AppDrawer extends StatelessWidget {
         ];
       case 'salesman':
         return [
+          {
+            'title': 'Incharge Profile',
+            'icon': Icons.badge_rounded,
+            'route': '/incharge-profile',
+            'color': const Color(0xFFAB47BC),
+            'subtitle': 'Your reporting incharge',
+          },
           // {
           //   'title': 'Create Lead Accounts',
           //   'icon': Icons.account_balance_wallet_rounded,
@@ -310,7 +317,7 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF5C6BC0),
           },
           {
-            'title': 'Notes / Complaints',
+            'title': 'Notes',
             'icon': Icons.report_problem_rounded,
             'route': '/complaints',
             'color': const Color(0xFFE53935),
