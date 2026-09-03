@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Support\ProductTaxResolver;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
@@ -35,9 +36,53 @@ class SalesOrderController extends Controller
      */
     public function nextOrderId(): JsonResponse
     {
-        $next = (int) DB::table('orders')->max('order_id') + 1;
+        return response()->json([
+            'success' => true,
+            'data' => ['next_order_id' => self::nextFreeOrderId(false)],
+        ]);
+    }
 
-        return response()->json(['success' => true, 'data' => ['next_order_id' => $next]]);
+    /**
+     * The next id free in BOTH `orders` and `master_orders`.
+     *
+     * One order writes an `orders` row AND a `master_orders` row under the
+     * same id, so allocating off `MAX(orders.order_id)` alone is wrong: the
+     * consumer app creates its `master_orders` row first (at payment
+     * initiation) and only writes the matching `orders` row once payment
+     * clears, so every abandoned consumer checkout leaves a `master_orders`
+     * id with no `orders` twin. `MAX(orders.order_id) + 1` then points
+     * straight at that orphan -- the `orders` insert succeeds, the
+     * `master_orders` insert dies on a duplicate PRIMARY key, the whole
+     * transaction rolls back, and the next attempt recomputes the exact same
+     * doomed id. CRM order creation stays wedged until someone cleans the
+     * orphan up by hand (observed live: master_orders 279662 with
+     * payment_status 'pms' and no orders_item rows blocked every checkout).
+     *
+     * Taking the max across both tables makes the id free in both by
+     * construction.
+     */
+    private static function nextFreeOrderId(bool $lock = true): int
+    {
+        $orders = DB::table('orders');
+        $master = DB::table('master_orders');
+        if ($lock) {
+            $orders->lockForUpdate();
+            $master->lockForUpdate();
+        }
+
+        return max((int) $orders->max('order_id'), (int) $master->max('id')) + 1;
+    }
+
+    /**
+     * True for the specific failure the retry above exists to survive: another
+     * writer (the consumer app) taking the id we just picked, between our
+     * MAX() and our INSERT. Anything else -- a duplicate idempotency_key, a
+     * bill_no clash -- is a real error and must surface, not be retried.
+     */
+    private static function isDuplicatePrimaryKey(QueryException $e): bool
+    {
+        return (int) ($e->errorInfo[1] ?? 0) === 1062
+            && stripos($e->getMessage(), 'PRIMARY') !== false;
     }
 
     public function store(): JsonResponse
@@ -110,97 +155,110 @@ class SalesOrderController extends Controller
 
         $orderId = null;
 
-        DB::transaction(function () use (
-            $items, $taxes, $buyerUserId, $discount, $deliveryCharge, $narration, $department,
-            $areaName, $timeSlot, $documentDate, $deliveryInfo, $beforeDiscount, $orderTotal,
-            $idempotencyKey, &$orderId
-        ) {
-            $nextOrderId = (int) (DB::table('orders')->lockForUpdate()->max('order_id')) + 1;
-            $nextItemId  = (int) (DB::table('orders_item')->lockForUpdate()->max('item_id')) + 1;
+        // Retry rather than fail: the id is picked from a MAX() that no lock can
+        // hold a gap above, so a concurrent consumer-app order can still take it
+        // first. Each attempt re-runs against the rolled-back state and so picks
+        // up whatever landed in between.
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                DB::transaction(function () use (
+                    $items, $taxes, $buyerUserId, $discount, $deliveryCharge, $narration, $department,
+                    $areaName, $timeSlot, $documentDate, $deliveryInfo, $beforeDiscount, $orderTotal,
+                    $idempotencyKey, &$orderId
+                ) {
+                    $nextOrderId = self::nextFreeOrderId();
+                    $nextItemId  = (int) (DB::table('orders_item')->lockForUpdate()->max('item_id')) + 1;
 
-            $now = now();
+                    $now = now();
 
-            DB::table('orders')->insert([
-                'order_id'          => $nextOrderId,
-                'master_order_id'   => $nextOrderId,
-                'txn_id'            => 'CRM-' . $nextOrderId . '-' . $now->timestamp,
-                'buyer_userid'      => $buyerUserId,
-                'start_time'        => $now->timestamp,
-                'last_update_time'  => $now->timestamp,
-                'short_datetime'    => $now->format('d-M-y h:i A'),
-                'order_state'       => 'pending',
-                'payment_method'    => 'cod',
-                'items_count'       => count($items),
-                'delivery_charge'   => $deliveryCharge,
-                'order_total'       => $orderTotal,
-                'delivery_info'     => json_encode($deliveryInfo ?: (object) []),
-                'area_name'         => $areaName,
-                'feedback'          => '',
-                'admin_id'          => 0,
-                'payment_status'    => 'not_paid',
-                'discount'          => $discount,
-                'before_discount'   => $beforeDiscount,
-                'time_slot'         => $timeSlot,
-                'bill_narration'    => $narration,
-                'department'        => $department,
-                'bill_dt'           => $documentDate,
-                'idempotency_key'   => $idempotencyKey,
-            ]);
+                    DB::table('orders')->insert([
+                        'order_id'          => $nextOrderId,
+                        'master_order_id'   => $nextOrderId,
+                        'txn_id'            => 'CRM-' . $nextOrderId . '-' . $now->timestamp,
+                        'buyer_userid'      => $buyerUserId,
+                        'start_time'        => $now->timestamp,
+                        'last_update_time'  => $now->timestamp,
+                        'short_datetime'    => $now->format('d-M-y h:i A'),
+                        'order_state'       => 'pending',
+                        'payment_method'    => 'cod',
+                        'items_count'       => count($items),
+                        'delivery_charge'   => $deliveryCharge,
+                        'order_total'       => $orderTotal,
+                        'delivery_info'     => json_encode($deliveryInfo ?: (object) []),
+                        'area_name'         => $areaName,
+                        'feedback'          => '',
+                        'admin_id'          => 0,
+                        'payment_status'    => 'not_paid',
+                        'discount'          => $discount,
+                        'before_discount'   => $beforeDiscount,
+                        'time_slot'         => $timeSlot,
+                        'bill_narration'    => $narration,
+                        'department'        => $department,
+                        'bill_dt'           => $documentDate,
+                        'idempotency_key'   => $idempotencyKey,
+                    ]);
 
-            $itemId = $nextItemId;
-            foreach ($items as $item) {
-                $qty        = (float) $item['quantity'];
-                $price      = (float) ($item['item_price'] ?? 0);
-                // Tax comes from product_taxes via the resolver, not the client —
-                // see the note at $taxes above.
-                $tax         = $taxes[(int) $item['product_id']];
-                $taxPercent  = $tax['tax_percent'];
-                $sgstPercent = $tax['sgst_percent'];
-                $cgstPercent = $tax['cgst_percent'];
-                DB::table('orders_item')->insert([
-                    'order_id'   => $nextOrderId,
-                    'item_id'    => $itemId,
-                    'product_id' => (int) $item['product_id'],
-                    'pinfo'      => json_encode([
-                        'unit'                  => $item['unit'] ?? 'PCS',
-                        // The catalog pack's own label (e.g. "1 Pack of 5 Kg
-                        // @ 195/-"), if the client sent one — surfaced back as
-                        // OrderListController::getOrderDetail's 'pack_size' so
-                        // the order screen can show which pack was actually sold.
-                        'ps'                    => $item['pack_size'] ?? null,
-                        'price_inclusive'       => true,
-                        'unit_price_inclusive'  => $price,
-                        'tax_percent'           => $taxPercent,
-                        'sgst_percent'          => $sgstPercent,
-                        'cgst_percent'          => $cgstPercent,
-                        'discount_percent'      => 0,
-                    ]),
-                    'quantity'   => (int) round($qty),
-                    'item_price' => $price,
-                    'item_total' => round($qty * $price, 2),
-                    'commission' => 0,
-                ]);
-                $itemId++;
+                    $itemId = $nextItemId;
+                    foreach ($items as $item) {
+                        $qty        = (float) $item['quantity'];
+                        $price      = (float) ($item['item_price'] ?? 0);
+                        // Tax comes from product_taxes via the resolver, not the client —
+                        // see the note at $taxes above.
+                        $tax         = $taxes[(int) $item['product_id']];
+                        $taxPercent  = $tax['tax_percent'];
+                        $sgstPercent = $tax['sgst_percent'];
+                        $cgstPercent = $tax['cgst_percent'];
+                        DB::table('orders_item')->insert([
+                            'order_id'   => $nextOrderId,
+                            'item_id'    => $itemId,
+                            'product_id' => (int) $item['product_id'],
+                            'pinfo'      => json_encode([
+                                'unit'                  => $item['unit'] ?? 'PCS',
+                                // The catalog pack's own label (e.g. "1 Pack of 5 Kg
+                                // @ 195/-"), if the client sent one — surfaced back as
+                                // OrderListController::getOrderDetail's 'pack_size' so
+                                // the order screen can show which pack was actually sold.
+                                'ps'                    => $item['pack_size'] ?? null,
+                                'price_inclusive'       => true,
+                                'unit_price_inclusive'  => $price,
+                                'tax_percent'           => $taxPercent,
+                                'sgst_percent'          => $sgstPercent,
+                                'cgst_percent'          => $cgstPercent,
+                                'discount_percent'      => 0,
+                            ]),
+                            'quantity'   => (int) round($qty),
+                            'item_price' => $price,
+                            'item_total' => round($qty * $price, 2),
+                            'commission' => 0,
+                        ]);
+                        $itemId++;
+                    }
+
+                    DB::table('master_orders')->insert([
+                        'id'              => $nextOrderId,
+                        'user_id'         => $buyerUserId,
+                        'txn_id'          => 'CRM-' . $nextOrderId,
+                        'payment_status'  => 'not_paid',
+                        'order_count'     => count($items),
+                        'payment_method'  => 'cod',
+                        'delivery_info'   => json_encode($deliveryInfo ?: (object) []),
+                        'order_total'     => $orderTotal,
+                        'delivery_charge' => $deliveryCharge,
+                        'discount'        => $discount,
+                        'before_discount' => $beforeDiscount,
+                        'status'          => '1',
+                        'created_at'      => $now,
+                    ]);
+
+                    $orderId = $nextOrderId;
+                });
+                break;
+            } catch (QueryException $e) {
+                if ($attempt >= 5 || !self::isDuplicatePrimaryKey($e)) {
+                    throw $e;
+                }
             }
-
-            DB::table('master_orders')->insert([
-                'id'              => $nextOrderId,
-                'user_id'         => $buyerUserId,
-                'txn_id'          => 'CRM-' . $nextOrderId,
-                'payment_status'  => 'not_paid',
-                'order_count'     => count($items),
-                'payment_method'  => 'cod',
-                'delivery_info'   => json_encode($deliveryInfo ?: (object) []),
-                'order_total'     => $orderTotal,
-                'delivery_charge' => $deliveryCharge,
-                'discount'        => $discount,
-                'before_discount' => $beforeDiscount,
-                'status'          => '1',
-                'created_at'      => $now,
-            ]);
-
-            $orderId = $nextOrderId;
-        });
+        }
 
         return response()->json([
             'success' => true,
