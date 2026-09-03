@@ -325,7 +325,14 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
         _findPack((p) => p['is_default'] == true) ??
         (_packs.isNotEmpty ? _packs.first : null);
     _selectedPackId = defaultPack?['id'] as String?;
-    final uom = (widget.product['stock_uom'] as String?)?.trim() ?? '';
+    // `stock_uom` is the unit label (KG/NOS/PCS…) resolved server-side from
+    // product.stock_uom -> units_master. Older API builds sent the raw numeric
+    // unit id instead, and a blind `as String?` on that threw a TypeError for
+    // every product that had one — crashing the whole card into a blank grey
+    // box in release web. Coerce defensively: use it only when it's genuinely
+    // a text label, else fall back to 'PCS'.
+    final uomRaw = widget.product['stock_uom'];
+    final uom = uomRaw is String ? uomRaw.trim() : '';
     _fallbackUnit = uom.isEmpty ? 'PCS' : uom;
     // Defaults to whatever's already in the cart for this pack (0 if
     // nothing's been added yet) rather than always starting at 1 — the
@@ -434,12 +441,15 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
         item.product.text = (widget.product['name'] as String?) ?? '';
         item.productId = productId;
         item.packId = _selectedPackId;
-        item.vendorProductId = widget.product['vendor_product_id'] as String?;
+        // Server sends vendor_product_id (vendor_products.id) as a raw number
+        // and hsn_code can also come through non-string — coerce rather than
+        // cast so adding to cart can't throw the way the card render did.
+        item.vendorProductId = widget.product['vendor_product_id']?.toString();
         item.gstPercent =
             (widget.product['gst_percent'] as num?)?.toDouble() ?? 0;
         item.maxQty = _stock;
         item.packLabel = pack['label'] as String?;
-        item.hsnCode = widget.product['hsn_code'] as String?;
+        item.hsnCode = widget.product['hsn_code']?.toString();
         item.unit = _shortUnit(pack['label'] as String? ?? _fallbackUnit);
         item.unitPrice.text = price.toStringAsFixed(2);
         return item;

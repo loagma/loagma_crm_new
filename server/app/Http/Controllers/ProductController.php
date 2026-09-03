@@ -32,10 +32,22 @@ class ProductController extends Controller
         $q = trim((string) request()->query('q', ''));
         $adminId = self::currentVendorAdminId();
 
+        // `product.stock_uom` is a FK to `units_master.unit_id`, not a label —
+        // resolve it to the unit name (KG / NOS / PCS …) here so the client
+        // gets something it can actually show as a unit. Left join so a
+        // product with a null/stale stock_uom still comes back.
         $query = DB::table('product')
-            ->where('is_deleted', 0)
-            ->where('is_published', 1)
-            ->select(['product_id', 'name', 'hsn_code', 'stock_uom', 'cat_id', 'parent_cat_id']);
+            ->leftJoin('units_master', 'product.stock_uom', '=', 'units_master.unit_id')
+            ->where('product.is_deleted', 0)
+            ->where('product.is_published', 1)
+            ->select([
+                'product.product_id',
+                'product.name',
+                'product.hsn_code',
+                'units_master.unit_name as stock_uom',
+                'product.cat_id',
+                'product.parent_cat_id',
+            ]);
 
         // Only show products this vendor actually carries — a `product` row
         // with no `vendor_products` listing for the logged-in staff's
@@ -101,27 +113,33 @@ class ProductController extends Controller
             'data' => $rows->map(function ($r) use ($taxes, $vendorProducts, $adminId) {
                 $tax = $taxes[(int) $r->product_id];
                 $vp = $vendorProducts->get((int) $r->product_id);
+                // Every id-ish scalar goes out as a string (or null) — these
+                // columns are ints/bigints in the DB and PDO hands them back
+                // as PHP ints, so without the cast the client got raw JSON
+                // numbers where it expected strings (a blind `as String` on
+                // `stock_uom` there crashed the whole catalog card). Keep the
+                // shape consistent with `product_id`, which was already cast.
                 return [
                     'product_id'      => (string) $r->product_id,
                     'name'            => $r->name,
-                    'hsn_code'        => $r->hsn_code,
+                    'hsn_code'        => $r->hsn_code === null ? null : (string) $r->hsn_code,
                     'gst_percent'     => $tax['tax_percent'],
                     'sgst_percent'    => $tax['sgst_percent'],
                     'cgst_percent'    => $tax['cgst_percent'],
-                    'stock_uom'       => $r->stock_uom,
+                    'stock_uom'       => $r->stock_uom === null ? null : (string) $r->stock_uom,
                     // On `product`, confusingly, `parent_cat_id` is the
                     // top-level category and `cat_id` is the more specific
                     // subcategory (verified against `categories.parent_cat_id`
                     // — a category row with parent_cat_id=0 is top-level, and
                     // product.parent_cat_id always resolves to one of those).
-                    'vendor_id'       => $adminId,
-                    'cat_id'          => $r->parent_cat_id,
-                    'subcat_id'       => $r->cat_id,
+                    'vendor_id'       => $adminId === null ? null : (string) $adminId,
+                    'cat_id'          => $r->parent_cat_id === null ? null : (string) $r->parent_cat_id,
+                    'subcat_id'       => $r->cat_id === null ? null : (string) $r->cat_id,
                     // The row id of this product's vendor-specific listing in
                     // `vendor_products` — i.e. this vendor's own id for the
                     // product. Null when the vendor has no listing for it at
                     // all (same case where packs is empty).
-                    'vendor_product_id' => $vp->id ?? null,
+                    'vendor_product_id' => isset($vp->id) ? (string) $vp->id : null,
                     'default_pack_id' => $vp->default_pack_id ?? null,
                     'packs'           => $vp ? self::parsePacks($vp->packs, $vp->default_pack_id) : [],
                 ];
