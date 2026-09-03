@@ -447,70 +447,76 @@ class ApiService {
     }
   }
 
-  /// Persisted Create-Sales-Order cart for one real customer account (the
-  /// `cart` table — see CartController). Leads have no `user` row, so this is
-  /// never called for a lead; the sheet keeps their cart local-only.
-  static Future<List<Map<String, dynamic>>> getCart(String userId) async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/cart').replace(queryParameters: {'user_id': userId});
+  /// The staff member's un-submitted Create Sales Order cart for one account
+  /// (`sales_order_draft_crm` — see SalesOrderDraftController). Scoped
+  /// server-side to the caller's own `deli_staff.mobile`, so a salesman's
+  /// draft for a shop and a telecaller's draft for that same shop stay
+  /// separate. Works for leads and customers alike.
+  ///
+  /// Returns null when there's no draft (or the request failed) — the caller
+  /// treats both the same way: start with an empty cart.
+  static Future<Map<String, dynamic>?> getOrderDraft({
+    required String accountId,
+    required String accountType,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/order-draft')
+        .replace(queryParameters: {'account_id': accountId, 'account_type': accountType});
     try {
       final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {
         final raw = decoded['data'];
-        if (raw is List) return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        if (raw is Map) return Map<String, dynamic>.from(raw);
+        return null; // no draft stored for this (staff, account)
       }
-      print('getCart failed: ${decoded['message'] ?? response.body}');
+      print('getOrderDraft failed: ${decoded['message'] ?? response.body}');
     } catch (e) {
-      print('getCart error: $e');
+      print('getOrderDraft error: $e');
     }
-    return [];
+    return null;
   }
 
-  /// Add/update/remove one cart line (quantity <= 0 removes it). Fire-and-forget
-  /// from the catalog's qty stepper — a failure here just means the next app
-  /// open won't show this particular change; it never blocks the UI.
-  static Future<bool> upsertCart({
-    required String userId,
-    required String productId,
-    String? vendorProductId,
-    required String packId,
-    required int quantity,
-    required double unitPrice,
+  /// Upsert the whole draft. Fire-and-forget from the sheet's debounced
+  /// autosave — a failure here only means this particular edit won't be there
+  /// next time, it never blocks the on-screen cart.
+  static Future<bool> saveOrderDraft({
+    required String accountId,
+    required String accountType,
+    required Map<String, dynamic> payload,
   }) async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/cart');
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/order-draft');
     try {
       final response = await http
-          .post(url, headers: _authHeaders, body: jsonEncode({
-            'user_id':            userId,
-            'product_id':         productId,
-            'vendor_product_id':  vendorProductId,
-            'pack_id':            packId,
-            'quantity':           quantity,
-            'unit_price':         unitPrice,
+          .put(url, headers: _authHeaders, body: jsonEncode({
+            'account_id':   accountId,
+            'account_type': accountType,
+            'payload':      payload,
           }))
           .timeout(const Duration(seconds: 15));
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {
         return true;
       }
-      print('upsertCart failed: ${decoded['message'] ?? response.body}');
+      print('saveOrderDraft failed: ${decoded['message'] ?? response.body}');
     } catch (e) {
-      print('upsertCart error: $e');
+      print('saveOrderDraft error: $e');
     }
     return false;
   }
 
-  /// Wipes the persisted cart for one customer — called once a sales order is
-  /// actually created from it, so the same items don't keep re-appearing.
-  static Future<bool> clearCart(String userId) async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/cart/clear');
+  /// Drop the draft — called once an order is actually created from it (so the
+  /// next open starts clean) and when the cart is emptied back to nothing.
+  static Future<bool> clearOrderDraft({
+    required String accountId,
+    required String accountType,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/order-draft')
+        .replace(queryParameters: {'account_id': accountId, 'account_type': accountType});
     try {
-      final response = await http
-          .post(url, headers: _authHeaders, body: jsonEncode({'user_id': userId}))
-          .timeout(const Duration(seconds: 15));
+      final response = await http.delete(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
       return response.statusCode >= 200 && response.statusCode < 300;
     } catch (e) {
-      print('clearCart error: $e');
+      print('clearOrderDraft error: $e');
       return false;
     }
   }

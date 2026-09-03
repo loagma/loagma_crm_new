@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 
@@ -41,9 +43,11 @@ class OrderLineItem {
   // Null only if this product had no vendor pack pricing at all — see
   // ProductController::search.
   String? packLabel;
-  // vendor_products.id for this product+vendor — carried along purely so a
-  // persisted cart line (CartController) records which vendor listing priced
-  // it; null for a product with no vendor pack pricing (same case as packId).
+  // vendor_products.id for this product+vendor — carried along so a stored
+  // draft line records which vendor listing priced it (and so the draft's
+  // stock figure can be re-resolved on restore — see
+  // SalesOrderDraftController); null for a product with no vendor pack
+  // pricing (same case as packId).
   String? vendorProductId;
   // product.hsn_code, carried along so a catalog pick still shows a real HSN
   // in the item header instead of always falling back to "NA".
@@ -168,46 +172,207 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
 
   bool get _isCustomer => widget.accountType == 'customer';
 
+  // -- Draft persistence (sales_order_draft_crm) ---------------------------
+  // Autosave is debounced so a burst of qty taps is one PUT, not ten. Every
+  // mutation path funnels through _scheduleDraftSave(); dispose() flushes any
+  // pending timer so closing the sheet right after an edit still persists it.
+  Timer? _draftDebounce;
+  static const _draftDebounceDelay = Duration(milliseconds: 600);
+  // Nothing is saved until the restore has finished - otherwise the empty
+  // initial state would race the GET and overwrite the very draft being
+  // loaded.
+  bool _draftLoaded = false;
+  // The address stored on the draft, used only when the caller didn't pass a
+  // freshly-picked one (see _deliveryAddress).
+  Map<String, dynamic>? _draftDeliveryAddress;
+
+  // The caller resolves an address *before* opening the sheet, so a choice
+  // made this session always wins over whatever the draft remembers; the
+  // draft's copy is the fallback for when nothing was picked.
+  Map<String, dynamic>? get _deliveryAddress =>
+      widget.deliveryAddress ?? _draftDeliveryAddress;
+
   @override
   void initState() {
     super.initState();
     _loadVoucherPreview();
     _loadUnits();
-    if (_isCustomer) _loadPersistedCart();
+    // Leads restore too - the draft table is keyed by (staff, account) and
+    // never touches `user`, so nothing here depends on the account being a
+    // registered customer.
+    _loadDraft();
+    // The narration field has no onChanged of its own, so watch the
+    // controller instead of threading a callback through the Review sheet.
+    _narration.addListener(_scheduleDraftSave);
   }
 
-  // Restores a real customer's in-progress cart from the `cart` table so
-  // closing/crashing the app mid-order doesn't lose it — leads never call
-  // this (no `user` row, see CartController), so their cart stays local-only.
-  Future<void> _loadPersistedCart() async {
-    final rows = await ApiService.getCart(widget.accountId);
-    if (!mounted || rows.isEmpty) return;
+  // Restores this staff member's in-progress cart for this account so
+  // closing the sheet (or the app) without checking out doesn't lose it.
+  // Everything the user built comes back: line items - including hand-typed
+  // ones the old `cart` table couldn't represent - plus extra charges,
+  // narration, both dates and the delivery address.
+  Future<void> _loadDraft() async {
+    final draft = await ApiService.getOrderDraft(
+      accountId: widget.accountId,
+      accountType: widget.accountType,
+    );
+    if (!mounted) {
+      _draftLoaded = true;
+      return;
+    }
+    if (draft == null) {
+      // No stored draft (or the fetch failed) - start clean, but allow
+      // autosave from here on so this session still persists.
+      setState(() => _draftLoaded = true);
+      if (!_draftIsEmpty) _scheduleDraftSave();
+      return;
+    }
+
     setState(() {
-      for (final r in rows) {
-        final productId = r['product_id'] as String?;
-        final packId = r['pack_id'] as String?;
-        // This GET is fired at initState and can still be in flight once the
-        // user starts tapping catalog cards, so a line for this exact
-        // product+pack may already exist by the time the response lands —
-        // skip it rather than adding a duplicate row on top of the live one.
-        final alreadyPresent = _lineItems.any(
-          (i) => i.productId == productId && i.packId == packId,
-        );
-        if (alreadyPresent) continue;
+      for (final raw in (draft['items'] as List?) ?? const []) {
+        final r = Map<String, dynamic>.from(raw as Map);
+        // This GET is fired from initState and the catalog is already
+        // interactive while it's in flight, so the user can have added this
+        // exact product+pack before the draft landed. Their live tap is the
+        // more recent intent - keep it and skip the stored copy, rather than
+        // ending up with the line twice.
+        final productId = r['product_id']?.toString();
+        final packId = r['pack_id']?.toString();
+        if (productId != null &&
+            _lineItems.any(
+              (i) => i.productId == productId && i.packId == packId,
+            )) {
+          continue;
+        }
         final item = OrderLineItem();
-        item.product.text     = (r['name'] as String?) ?? '';
-        item.productId         = productId;
-        item.packId            = packId;
-        item.vendorProductId   = r['vendor_product_id']?.toString();
-        item.packLabel         = r['pack_label'] as String?;
-        item.hsnCode           = r['hsn_code'] as String?;
-        item.gstPercent        = (r['gst_percent'] as num?)?.toDouble() ?? 0;
-        item.maxQty            = (r['max_qty'] as num?)?.toInt();
-        item.unitPrice.text    = ((r['unit_price'] as num?) ?? 0).toStringAsFixed(2);
-        item.qty.text          = '${(r['quantity'] as num?) ?? 0}';
+        item.product.text = (r['product_name'] ?? '').toString();
+        item.productId = productId;
+        item.packId = packId;
+        item.packLabel = r['pack_label']?.toString();
+        item.vendorProductId = r['vendor_product_id']?.toString();
+        item.hsnCode = r['hsn_code']?.toString();
+        item.gstPercent = (r['gst_percent'] as num?)?.toDouble() ?? 0;
+        // Re-resolved against live vendor_products stock server-side, so a
+        // draft that sat for days can't submit against a stale figure.
+        item.maxQty = (r['max_qty'] as num?)?.toInt();
+        item.unit = (r['unit'] ?? 'PCS').toString();
+        item.qty.text = (r['quantity'] ?? '1').toString();
+        item.unitPrice.text = (r['unit_price'] ?? '0').toString();
         _lineItems.add(item);
       }
+      for (final raw in (draft['addons'] as List?) ?? const []) {
+        final r = Map<String, dynamic>.from(raw as Map);
+        final addon = OrderAddon((r['name'] ?? _addonNames.first).toString());
+        addon.amount.text = (r['amount'] ?? '0').toString();
+        _addons.add(addon);
+      }
+      // The addon editor starts collapsed, but a restored draft that has
+      // charges should show them rather than hiding them behind the link.
+      if (_addons.isNotEmpty) _showAddons = true;
+
+      final narration = (draft['narration'] ?? '').toString();
+      if (narration.isNotEmpty) {
+        // Assigning fires the listener added in initState, which would
+        // schedule a save of what is still being restored - _draftLoaded is
+        // still false here, so that save is correctly suppressed.
+        _narration.text = narration;
+      }
+      _documentDate = _parseIsoDate(draft['document_date']) ?? _documentDate;
+      _expectedDate = _parseIsoDate(draft['expected_date']) ?? _expectedDate;
+
+      final addr = draft['delivery_address'];
+      if (addr is Map) _draftDeliveryAddress = Map<String, dynamic>.from(addr);
+
+      _draftLoaded = true;
     });
+
+    // Edits made while the GET was in flight were suppressed by the
+    // _draftLoaded gate above; now that it's open, make sure they're stored
+    // rather than waiting for the user's next tap.
+    if (!_draftIsEmpty) _scheduleDraftSave();
+  }
+
+  static DateTime? _parseIsoDate(dynamic raw) {
+    if (raw is! String || raw.trim().isEmpty) return null;
+    return DateTime.tryParse(raw.trim());
+  }
+
+  // Everything the sheet would need to rebuild itself. Quantities and prices
+  // are stored as their raw controller text so a restore is character-exact
+  // rather than round-tripped through a double.
+  Map<String, dynamic> _draftPayload() => {
+    'items': _lineItems
+        .map(
+          (i) => {
+            'product_name': i.product.text,
+            'product_id': i.productId,
+            'pack_id': i.packId,
+            'pack_label': i.packLabel,
+            'vendor_product_id': i.vendorProductId,
+            'hsn_code': i.hsnCode,
+            'gst_percent': i.gstPercent,
+            'max_qty': i.maxQty,
+            'unit': i.unit,
+            'quantity': i.qty.text,
+            'unit_price': i.unitPrice.text,
+          },
+        )
+        .toList(),
+    'addons': _addons
+        .map((a) => {'name': a.name, 'amount': a.amount.text})
+        .toList(),
+    'narration': _narration.text,
+    'document_date': _isoDate(_documentDate),
+    'expected_date': _isoDate(_expectedDate),
+    'delivery_address': _deliveryAddress,
+  };
+
+  // True once there's genuinely nothing worth restoring - an emptied cart
+  // deletes its draft row instead of storing an empty one, so re-opening
+  // starts clean rather than restoring a blank draft over fresh defaults.
+  bool get _draftIsEmpty =>
+      _lineItems.isEmpty && _addons.isEmpty && _narration.text.trim().isEmpty;
+
+  // Called from every cart mutation. Coalesces a burst of edits into one
+  // write and never blocks the UI - a failed save just means this particular
+  // edit isn't there next time.
+  void _scheduleDraftSave() {
+    if (!_draftLoaded) return; // still restoring - don't overwrite the draft
+    _draftDebounce?.cancel();
+    _draftDebounce = Timer(_draftDebounceDelay, _saveDraftNow);
+  }
+
+  // Checkout hands the cart's contents to a real order (or, for a lead, to
+  // the caller's local list), so the draft must not survive it. Ordering
+  // matters: kill the pending autosave and latch _draftLoaded off FIRST, or
+  // dispose()'s flush - which runs moments later when _closeAfterSave() pops
+  // this route - would happily re-create the row we just deleted.
+  Future<void> _discardDraft() async {
+    _draftDebounce?.cancel();
+    _draftDebounce = null;
+    _draftLoaded = false;
+    await ApiService.clearOrderDraft(
+      accountId: widget.accountId,
+      accountType: widget.accountType,
+    );
+  }
+
+  void _saveDraftNow() {
+    _draftDebounce?.cancel();
+    _draftDebounce = null;
+    if (!_draftLoaded) return;
+    if (_draftIsEmpty) {
+      ApiService.clearOrderDraft(
+        accountId: widget.accountId,
+        accountType: widget.accountType,
+      );
+      return;
+    }
+    ApiService.saveOrderDraft(
+      accountId: widget.accountId,
+      accountType: widget.accountType,
+      payload: _draftPayload(),
+    );
   }
 
   Future<void> _loadVoucherPreview() async {
@@ -240,11 +405,21 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
       units: _units,
       selected: item.unit,
     );
-    if (picked != null) setState(() => item.unit = picked);
+    if (picked != null) {
+      setState(() => item.unit = picked);
+      _scheduleDraftSave();
+    }
   }
 
   @override
   void dispose() {
+    // A pending debounce would otherwise be cancelled with the timer, losing
+    // the last edit when the user adds an item and immediately closes the
+    // sheet. Fire it now - the request outlives this State, which is fine
+    // because ApiService is static and needs no context.
+    if (_draftDebounce?.isActive ?? false) _saveDraftNow();
+    _draftDebounce?.cancel();
+    _narration.removeListener(_scheduleDraftSave);
     _narration.dispose();
     for (final i in _lineItems) {
       i.dispose();
@@ -410,6 +585,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
       setState(
         () => expected ? _expectedDate = picked : _documentDate = picked,
       );
+      _scheduleDraftSave();
     }
   }
 
@@ -481,12 +657,12 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         changed = item;
       }
     });
-    // Persist to the real `cart` table so this survives an app close/crash —
-    // real customers only (leads have no `user` row — see CartController).
-    // Fire-and-forget: a failed sync never blocks the on-screen cart, it just
-    // means the next app open won't reflect this particular change. Reads
-    // whatever it needs off `changed` before dispose() below runs.
-    if (changed != null) _syncCartQty(changed!, qty);
+    // Persist to sales_order_draft_crm so this survives closing the sheet or
+    // the app — leads included, since the draft is keyed by (staff, account)
+    // rather than a `user` row. Debounced and fire-and-forget: a failed save
+    // never blocks the on-screen cart, it just means the next open won't
+    // reflect this particular change.
+    if (changed != null) _scheduleDraftSave();
     if (qty <= 0 && changed != null) changed!.dispose();
   }
 
@@ -497,6 +673,10 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   void _bump(StateSetter setModalState, VoidCallback fn) {
     setState(fn);
     setModalState(() {});
+    // Every Review-sheet edit - addon add/remove/rename, addon amount typing,
+    // item delete, manual item fields - goes through here, so one hook covers
+    // all of them.
+    _scheduleDraftSave();
   }
 
   String _isoDate(DateTime d) =>
@@ -519,7 +699,11 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         .join(', ');
 
     if (!_isCustomer) {
-      // Lead — no real `user` row to attach an order to. Local draft only.
+      // Lead - no real `user` row to attach an order to. Local draft only,
+      // but from the user's point of view this Save *is* the checkout, so the
+      // stored cart goes with it.
+      await _discardDraft();
+      if (!mounted) return;
       widget.onSave(
         itemsSummary,
         _grandTotal.round(),
@@ -574,12 +758,12 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
       areaName: widget.areaName,
       timeSlot: _fmtDate(_expectedDate),
       documentDate: _isoDate(_documentDate),
-      deliveryInfo: widget.deliveryAddress != null
+      deliveryInfo: _deliveryAddress != null
           ? {
               'name': widget.name,
-              'address': widget.deliveryAddress!['address'],
-              'latitude': widget.deliveryAddress!['latitude'],
-              'longitude': widget.deliveryAddress!['longitude'],
+              'address': _deliveryAddress!['address'],
+              'latitude': _deliveryAddress!['latitude'],
+              'longitude': _deliveryAddress!['longitude'],
             }
           : null,
     );
@@ -597,9 +781,12 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
 
     final realOrderId = result['order_id']?.toString();
     final savedTotal = ((result['order_total'] as num?) ?? _grandTotal).round();
-    // The order now owns these items — drop them from the persisted cart so
-    // they don't keep re-appearing next time this customer's cart loads.
-    ApiService.clearCart(widget.accountId);
+    // The order now owns these items - drop the draft so they don't keep
+    // re-appearing next time this account's cart loads. Awaited (the old
+    // fire-and-forget could lose the race against the sheet closing, leaving
+    // an already-ordered cart to come back).
+    await _discardDraft();
+    if (!mounted) return;
     widget.onSave(itemsSummary, savedTotal, 'Pending', 'Not Paid', realOrderId);
     _closeAfterSave();
   }
@@ -964,7 +1151,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
             ],
           ),
         ),
-        if (widget.deliveryAddress != null) ...[
+        if (_deliveryAddress != null) ...[
           const SizedBox(height: 14),
           _label('Delivery Address'),
           Container(
@@ -976,7 +1163,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
               border: Border.all(color: _fieldBorder),
             ),
             child: Text(
-              '${widget.deliveryAddress!['address'] ?? ''}',
+              '${_deliveryAddress!['address'] ?? ''}',
               style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
           ),
@@ -1656,21 +1843,10 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   }
 
   // Shared by both qty-mutation paths (catalog card stepper and this review-
-  // sheet stepper) — pushes the new quantity to the persisted `cart` table
-  // for a real customer. Manual-entry items (no vendor pack — packId/
-  // productId null) can't be represented in `cart`'s schema, so those stay
-  // session-only, same as before this table existed.
-  void _syncCartQty(OrderLineItem item, int qty) {
-    if (!_isCustomer || item.productId == null || item.packId == null) return;
-    ApiService.upsertCart(
-      userId: widget.accountId,
-      productId: item.productId!,
-      vendorProductId: item.vendorProductId,
-      packId: item.packId!,
-      quantity: qty,
-      unitPrice: item.priceNum,
-    );
-  }
+  // sheet stepper). The draft is stored whole, so unlike the old per-line
+  // `cart` sync this needs nothing off the item itself - and hand-typed items
+  // with no vendor pack now persist exactly like catalog ones.
+  void _syncCartQty(OrderLineItem item, int qty) => _scheduleDraftSave();
 
   // Real data only — no fabricated "free delivery above ₹X" threshold, since
   // that business rule doesn't exist anywhere in this backend. Shows the
