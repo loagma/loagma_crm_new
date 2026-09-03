@@ -81195,28 +81195,27 @@ T(){return new A.Si()},
 b1Y(a,b,c,d){return this.d.$4$buildItem$packId$productId$qty(a,b,c,d)},
 Ne(a,b){return this.e.$2(a,b)}}
 A.Si.prototype={
-a2(){var s,r,q,p,o=this,n="product_id"
-o.ad()
-s=t.g.a(o.a.c.h(0,"packs"))
+a2(){var s,r,q,p,o,n=this,m="product_id"
+n.ad()
+s=t.g.a(n.a.c.h(0,"packs"))
 if(s==null)s=B.kC
 s=J.dd(s,t.P)
-o.d!==$&&A.bT()
-o.d=s
-r=o.a4a(new A.b8O())
+n.d!==$&&A.bT()
+n.d=s
+r=n.a4a(new A.b8O())
 if(r==null)r=!s.gai(s)?s.gab(s):null
-o.e=A.N(r==null?null:r.h(0,"id"))
-s=A.N(o.a.c.h(0,"stock_uom"))
-q=s==null?null:B.m.J(s)
-if(q==null)q=""
-s=q.length===0?"PCS":q
-o.r!==$&&A.bT()
-o.r=s
-if(A.N(o.a.c.h(0,n))==null)s=0
-else{s=o.a
-p=A.N(s.c.h(0,n))
-p.toString
-p=s.Ne(p,o.e)
-s=p}o.f=s},
+n.e=A.N(r==null?null:r.h(0,"id"))
+q=n.a.c.h(0,"stock_uom")
+p=typeof q=="string"?B.m.J(q):""
+s=p.length===0?"PCS":p
+n.r!==$&&A.bT()
+n.r=s
+if(A.N(n.a.c.h(0,m))==null)s=0
+else{s=n.a
+o=A.N(s.c.h(0,m))
+o.toString
+o=s.Ne(o,n.e)
+s=o}n.f=s},
 aK(a){var s,r,q,p=this
 p.b5(a)
 s=A.N(p.a.c.h(0,"product_id"))
@@ -81364,30 +81363,32 @@ A.b8E.prototype={
 $0(){return this.a.f=this.b},
 $S:0}
 A.b8F.prototype={
-$0(){var s,r,q,p=this.b,o=A.cF(p.h(0,"price")),n=o==null?null:o
-if(n==null)n=0
+$0(){var s,r,q,p=null,o=this.b,n=A.cF(o.h(0,"price")),m=n==null?p:n
+if(m==null)m=0
 s=A.bMd()
-o=this.a
-r=A.N(o.a.c.h(0,"name"))
+n=this.a
+r=A.N(n.a.c.h(0,"name"))
 if(r==null)r=""
 s.a.sb9(r)
 s.e=this.c
-s.f=o.e
-s.w=A.N(o.a.c.h(0,"vendor_product_id"))
-r=A.cF(o.a.c.h(0,"gst_percent"))
-if(r==null)r=null
+s.f=n.e
+r=n.a.c.h(0,"vendor_product_id")
+s.w=r==null?p:J.y(r)
+r=A.cF(n.a.c.h(0,"gst_percent"))
+if(r==null)r=p
 s.z=r==null?0:r
-if(o.gh9()==null)r=0
-else{r=o.gh9()
+if(n.gh9()==null)r=0
+else{r=n.gh9()
 r.toString
-r=o.tf(r)}s.y=r
-s.r=A.N(p.h(0,"label"))
-s.x=A.N(o.a.c.h(0,"hsn_code"))
-p=A.N(p.h(0,"label"))
-if(p==null){p=o.r
-p===$&&A.b()}q=B.m.lY(B.m.J(p),A.c2("\\s+",!0,!1,!1))
-s.d=q.length!==0?B.h.gau(q):p
-s.c.sb9(B.q.a5(n,2))
+r=n.tf(r)}s.y=r
+s.r=A.N(o.h(0,"label"))
+r=n.a.c.h(0,"hsn_code")
+s.x=r==null?p:J.y(r)
+o=A.N(o.h(0,"label"))
+if(o==null){o=n.r
+o===$&&A.b()}q=B.m.lY(B.m.J(o),A.c2("\\s+",!0,!1,!1))
+s.d=q.length!==0?B.h.gau(q):o
+s.c.sb9(B.q.a5(m,2))
 return s},
 $S:398}
 A.b8H.prototype={
