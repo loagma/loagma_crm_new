@@ -291,7 +291,9 @@ class _CustomerCard extends StatelessWidget {
     String accountType,
   ) async {
     final myId = '${acc['id'] ?? ''}';
-    final other = await OpenVisitStore.findOtherOpen(myId);
+    // Role-scoped: a salesman's open visit only blocks another salesman
+    // check-in, never a telecaller's, and vice versa.
+    final other = await OpenVisitStore.findOtherOpen('salesman', myId);
     if (!context.mounted) return;
 
     if (other != null) {
@@ -305,7 +307,7 @@ class _CustomerCard extends StatelessWidget {
                 'another customer';
       await showDialog<void>(
         context: context,
-        builder: (_) => AlertDialog(
+        builder: (dctx) => AlertDialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
@@ -314,24 +316,27 @@ class _CustomerCard extends StatelessWidget {
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
           ),
           content: Text(
-            'You have an open visit at $label. Visit Out there before starting a new visit.',
+            'You have an open visit at $label. Check out there before starting a new visit.',
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(dctx),
               child: const Text('OK', style: TextStyle(color: Colors.grey)),
             ),
-            if (otherItem.isNotEmpty)
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _gold,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
+            // Always offered — even when the open visit is at a customer
+            // that isn't on today's beat plan, id + name + type is enough
+            // for its visit screen to load so they can check out there.
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _gold,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                onPressed: () {
-                  Navigator.pop(context);
+              ),
+              onPressed: () {
+                Navigator.pop(dctx);
+                if (otherItem.isNotEmpty) {
                   final otherAcc =
                       (otherItem['account'] as Map<String, dynamic>?) ?? {};
                   final otherType =
@@ -340,9 +345,19 @@ class _CustomerCard extends StatelessWidget {
                     '/visit/${other.accountId}',
                     extra: _extraFor(otherAcc, otherItem, otherType),
                   );
-                },
-                child: const Text('Go There'),
-              ),
+                } else {
+                  context.push('/visit/${other.accountId}', extra: {
+                    'id': other.accountId,
+                    'account_id': other.accountId,
+                    'role': 'salesman',
+                    'account_type': other.accountType,
+                    'businessName': other.accountName,
+                    'name': other.accountName,
+                  });
+                }
+              },
+              child: const Text('Go There'),
+            ),
           ],
         ),
       );
@@ -551,28 +566,31 @@ class _CustomerCard extends StatelessWidget {
                       ),
                     ),
                   const SizedBox(height: 6),
-                  if (!visited)
-                    GestureDetector(
-                      onTap: () => _openAccount(context, acc, accountType),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 7,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _gold,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Text(
-                          'Proceed',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
+                  // Shown even after the customer's been visited today — a
+                  // salesman can go back in for another visit (a second call,
+                  // a delivery, a missed line item). "Proceed" reopens the
+                  // visit screen where a fresh Check In starts a new visit.
+                  GestureDetector(
+                    onTap: () => _openAccount(context, acc, accountType),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: visited ? const Color(0xFF2E7D32) : _gold,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        visited ? 'Visit Again' : 'Proceed',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
                         ),
                       ),
                     ),
+                  ),
                 ],
               ),
             ],

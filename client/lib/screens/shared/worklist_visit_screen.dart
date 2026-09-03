@@ -103,10 +103,11 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
   }
 
   Future<void> _restoreOpenVisit() async {
-    final open = await OpenVisitStore.load(widget.accountId);
+    final open = await OpenVisitStore.load(widget.role, widget.accountId);
     if (!mounted || open == null) return;
     setState(() {
       _checkedIn = true;
+      _checkedOut = false;
       _checkInAt = open.visitInAt;
       _elapsed = DateTime.now().difference(open.visitInAt);
     });
@@ -141,26 +142,32 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
 
   // ── Check In / Check Out ─────────────────────────────────────────────────
   Future<void> _checkIn() async {
-    final other = await OpenVisitStore.findOtherOpen(widget.accountId);
+    // Single lane *per role*: a salesman can't be mid-visit at two customers,
+    // but a telecaller's open visit is a separate lane (findOtherOpen is
+    // role-scoped) and never blocks the other role.
+    final other = await OpenVisitStore.findOtherOpen(widget.role, widget.accountId);
     if (other != null) {
       if (!mounted) return;
-      final label = other.accountName?.isNotEmpty == true ? other.accountName! : 'another customer';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('You are still checked in at $label — check out there first.'),
-        backgroundColor: Colors.red,
-      ));
+      await _showOpenVisitBlockedDialog(other);
       return;
     }
 
     final startedAt = DateTime.now();
     setState(() {
       _checkedIn = true;
+      _checkedOut = false; // a fresh visit — re-visiting after an earlier check-out is allowed
       _checkInAt = startedAt;
       _elapsed = Duration.zero;
+      _inLat = null;
+      _inLng = null;
+      _placedOrderIds.clear();
+      _lastCall = null;
     });
     _startTicker();
     await OpenVisitStore.save(OpenVisit(
       accountId: widget.accountId,
+      role: widget.role,
+      accountType: widget.accountType,
       visitInAt: startedAt,
       accountName: _acc['businessName'] as String? ?? _acc['name'] as String?,
     ));
@@ -171,6 +178,57 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
     if (pos != null && mounted) setState(() {
       _inLat = pos.latitude;
       _inLng = pos.longitude;
+    });
+  }
+
+  // Blocked from checking in here because another visit (same role) is still
+  // open. Name that customer and offer a one-tap jump to its visit screen so
+  // they can check out there instead of hunting for it in the list.
+  Future<void> _showOpenVisitBlockedDialog(OpenVisit other) async {
+    final label = other.accountName?.trim().isNotEmpty == true
+        ? other.accountName!.trim()
+        : 'another customer';
+    await showDialog<void>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Visit already in progress',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        content: Text('You are still checked in at $label. Check out there first, '
+            'then start this visit.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dctx),
+            child: const Text('OK', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: kGold,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () {
+              Navigator.pop(dctx);
+              _goToVisit(other);
+            },
+            child: const Text('Go There'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Sync (no async gap) so it can be fired straight from the dialog button.
+  // The target may be a lead or a customer we don't have a full record for —
+  // id + name + type is enough for its visit screen to load and check out.
+  void _goToVisit(OpenVisit other) {
+    context.push('/visit/${other.accountId}', extra: {
+      'id': other.accountId,
+      'account_id': other.accountId,
+      'role': other.role,
+      'account_type': other.accountType,
+      'businessName': other.accountName,
+      'name': other.accountName,
     });
   }
 
@@ -232,7 +290,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
     final res = await ApiService.saveActionLog(fields);
     if (!mounted) return;
     final ok = res != null && res['errors'] == null;
-    if (ok) await OpenVisitStore.clear(widget.accountId);
+    if (ok) await OpenVisitStore.clear(widget.role, widget.accountId);
 
     setState(() {
       _saving = false;
@@ -731,7 +789,10 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              _smallBtn('Check In', active: !_checkedIn, onTap: _checkedIn ? null : _checkIn),
+              // Stays live whenever there's no open visit — after a check-out
+              // it re-enables so the same customer can be visited again.
+              _smallBtn(_checkedOut ? 'Check In Again' : 'Check In',
+                  active: !_live && !_saving, onTap: (!_live && !_saving) ? _checkIn : null),
               const SizedBox(width: 6),
               _smallBtn(_saving ? 'Saving…' : 'Check Out',
                   active: _live && !_saving, onTap: (_live && !_saving) ? _checkOut : null),
@@ -839,7 +900,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
                 Expanded(
                   child: Text(
                     _checkedOut
-                        ? 'Visit closed — actions are locked.'
+                        ? 'Visit saved — check in again to start another visit here.'
                         : 'Check in to take an order, call, or raise a complaint.',
                     style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
                   ),
