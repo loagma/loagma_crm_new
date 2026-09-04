@@ -22,7 +22,8 @@ import '../screens/admin/route_view_screen.dart';
 import '../screens/admin/history_roster_screen.dart';
 import '../screens/admin/admin_notifications_screen.dart';
 import '../screens/admin/admin_target_screen.dart';
-import '../screens/admin/admin_reports_screen.dart';
+import '../screens/admin/team_report_screen.dart';
+import '../screens/admin/team_report_employee_screen.dart';
 import '../screens/lead/pending_leads_screen.dart';
 import '../screens/complaints/complaints_screen.dart';
 import '../screens/admin/admin_incharge_assign_screen.dart';
@@ -237,8 +238,21 @@ final appRouter = GoRouter(
       builder: (context, state) => const AdminTargetScreen(),
     ),
     GoRoute(
-      path: '/admin/reports',
-      builder: (context, state) => const AdminReportsScreen(),
+      path: '/team-report',
+      builder: (context, state) => const TeamReportScreen(),
+    ),
+    GoRoute(
+      path: '/team-report/employee',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>? ?? const {};
+        return TeamReportEmployeeScreen(
+          mobile: extra['mobile'] as String? ?? '',
+          name: extra['name'] as String? ?? '',
+          role: extra['role'] as String? ?? '',
+          from: extra['from'] as String?,
+          to: extra['to'] as String?,
+        );
+      },
     ),
     GoRoute(
       path: '/incharge-profile',

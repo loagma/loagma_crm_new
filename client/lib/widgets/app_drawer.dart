@@ -111,11 +111,11 @@ class AppDrawer extends StatelessWidget {
             'subtitle': 'Goals vs achievement',
           },
           {
-            'title': 'Reports',
-            'icon': Icons.bar_chart_rounded,
-            'route': '/admin/reports',
+            'title': 'Team Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/team-report',
             'color': const Color(0xFF5C6BC0),
-            'subtitle': 'KPIs & trends',
+            'subtitle': "Today's activity",
           },
           {
             'title': 'Settings',
@@ -182,6 +182,13 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF7E57C2),
             'subtitle': 'Calls & recordings',
           },
+          {
+            'title': 'Team Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/team-report',
+            'color': const Color(0xFF5C6BC0),
+            'subtitle': "Today's activity",
+          },
         ];
       case 'zonal_incharge':
         return [
@@ -211,6 +218,13 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF7E57C2),
             'subtitle': 'Calls & recordings',
           },
+          {
+            'title': 'Team Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/team-report',
+            'color': const Color(0xFF5C6BC0),
+            'subtitle': "Today's activity",
+          },
         ];
       case 'area_incharge':
         return [
@@ -236,6 +250,13 @@ class AppDrawer extends StatelessWidget {
           // No "Team Call History": calls belong to the telecaller hierarchy's
           // seniors. Area Incharge owns salesmen, not telecallers — the server
           // 403s /api/telecaller/team-call-history for this role too.
+          {
+            'title': 'Team Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/team-report',
+            'color': const Color(0xFF5C6BC0),
+            'subtitle': "Today's activity",
+          },
         ];
       case 'teleadmin':
         return [
@@ -273,6 +294,13 @@ class AppDrawer extends StatelessWidget {
             'route': '/team-call-history',
             'color': const Color(0xFF7E57C2),
             'subtitle': 'Calls & recordings',
+          },
+          {
+            'title': 'Team Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/team-report',
+            'color': const Color(0xFF5C6BC0),
+            'subtitle': "Today's activity",
           },
         ];
       case 'salesman':

@@ -1080,6 +1080,59 @@ class ApiService {
     return [];
   }
 
+  /// Team Report — read-only rollup of a senior's subordinates' activity
+  /// (attendance + completed visits + calls) over [from]..[to] (`Y-m-d` local
+  /// days; omit for "today"). Hierarchy-scoped server-side: admin sees every
+  /// field-staff member, everyone else only their own subtree. Returns the
+  /// decoded body; the screen reads `['data']` (`{range, scope, capabilities,
+  /// totals, employees}`). 403s (a role that can't open it) surface as null.
+  static Future<Map<String, dynamic>?> getTeamReport({
+    String? from,
+    String? to,
+    bool includeLocked = false,
+  }) async {
+    final query = <String, String>{
+      'from': ?from,
+      'to': ?to,
+      if (includeLocked) 'include_locked': '1',
+    };
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/team/report')
+        .replace(queryParameters: query.isEmpty ? null : query);
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 25));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('getTeamReport failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getTeamReport error: $e');
+    }
+    return null;
+  }
+
+  /// One subordinate's full day(s) for the Team Report drill-in: every
+  /// attendance row, every completed visit, every call, and a merged timeline.
+  /// 403 (mobile outside the viewer's subtree) → null.
+  static Future<Map<String, dynamic>?> getTeamReportEmployee(
+    String mobile, {
+    String? from,
+    String? to,
+  }) async {
+    final query = <String, String>{'from': ?from, 'to': ?to};
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/team/report/$mobile')
+        .replace(queryParameters: query.isEmpty ? null : query);
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 25));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('getTeamReportEmployee failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getTeamReportEmployee error: $e');
+    }
+    return null;
+  }
+
   /// Fetches a call recording's raw audio bytes through the authenticated
   /// backend proxy - the underlying Knowlarity URL 401s without the server's
   /// own API credentials, which no player/browser can attach directly.

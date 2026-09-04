@@ -24,6 +24,7 @@ use App\Http\Controllers\SalesOrderController;
 use App\Http\Controllers\TelecallerController;
 use App\Http\Controllers\CallScriptController;
 use App\Http\Controllers\TrackingController;
+use App\Http\Controllers\TeamReportController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -149,6 +150,19 @@ Route::prefix('tracking')->middleware('jwtauth')->group(function () {
     Route::get('/roster', [TrackingController::class, 'roster'])
         ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge');
 });
+
+// ---------------------------------------------------------------------------
+// Team Report — read-only, hierarchy-scoped rollup of a senior's subordinates'
+// activity (attendance + visits + calls) for a day / date range. No mutations.
+// Union of the tracking + telecaller-senior role lists so every senior branch
+// can open it; the payload adapts (capabilities.show_calls / show_route).
+// ---------------------------------------------------------------------------
+Route::prefix('team')
+    ->middleware(['jwtauth', 'role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin'])
+    ->group(function () {
+        Route::get('/report',                  [TeamReportController::class, 'roster']);
+        Route::get('/report/{employeeMobile}', [TeamReportController::class, 'employee']);
+    });
 
 // ---------------------------------------------------------------------------
 // Area Assign (salesman + incharge: get / save / delete)
