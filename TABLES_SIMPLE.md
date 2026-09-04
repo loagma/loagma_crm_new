@@ -1,526 +1,536 @@
 # Database Tables — Loagma CRM (Simple Reference)
 
-27 tables that the Laravel backend (`server/`) actually reads or writes, table name bolded, one line per column. Pulled live from the production schema (`loagma_new`), so it reflects what's really deployed — not migration files.
+The database (`loagma_new`, TiDB Cloud) has ~123 tables. The Laravel backend in `server/`
+only touches **28 real tables**: **15 created and owned by this CRM** (the `_crm` suffix)
+and **13 shared with the older ERP / consumer app** (read, and mostly written, but the
+schema is never altered here). Everything else in the DB belongs to other apps and is not
+listed.
 
-## Summary
-
-| # | Table | What it's for |
-|---|-------|----------------|
-| 1 | **deli_staff** | Staff/employee login & profile (core auth table) |
-| 2 | **user** | Customer accounts |
-| 3 | **user_addresses** | Customer delivery addresses |
-| 4 | **area_crm** | Named service areas |
-| 5 | **area_assign_crm** | Employee-to-area assignment |
-| 6 | **incharge_assign_crm** | Incharge hierarchy |
-| 7 | **LeadsAccount_crm** | Prospect/lead accounts (telecaller funnel) |
-| 8 | **role_crm** | List of valid staff roles |
-| 9 | **units_master** | Unit of measure lookup |
-| 10 | **attendance_crm** | Punch in/out records |
-| 11 | **location_pings_crm** | Live GPS trail |
-| 12 | **beat_plan_crm** | Recurring visit schedule |
-| 13 | **beat_plan_visit_crm** | Single scheduled visit |
-| 14 | **call_log_crm** | Call history |
-| 15 | **call_scripts_crm** | Canned call scripts |
-| 16 | **complaint_crm** | Customer complaints |
-| 17 | **order_funnel_crm** | Funnel stage lookup |
-| 18 | **order_funnel_response_crm** | Visit funnel form |
-| 19 | **telecaller_label_crm** | Quick account labels |
-| 20 | **orders** | Order header (shared/legacy) |
-| 21 | **orders_item** | Order line items (shared/legacy) |
-| 22 | **master_orders** | Groups a multi-vendor checkout (shared/legacy) |
-| 23 | **product** | Product catalog (shared/legacy) |
-| 24 | **vendor_products** | Per-vendor product overrides (shared/legacy) |
-| 25 | **product_taxes** | Product tax rate history (shared/legacy) |
-| 26 | **taxes** | Tax rate lookup (shared/legacy) |
-| 27 | **admin** | Vendor/admin accounts (shared/legacy, read-only here) |
-
-Tables 1–19 are owned by this app (CRM/telecalling/tracking). Tables 20–27 belong to the older shared ERP but this app reads and, in most cases, writes to them directly.
+Only the tables and columns this codebase actually reads or writes are documented below,
+with **what** each is for, **where** (which controller) it is used, and **why**.
+For full column types, keys and gotchas see [TABLES.md](TABLES.md). Last verified 2026-09-05.
 
 ---
 
-## Full detail
+## Quick map
 
-**deli_staff** - staff/employee login & profile
-    deli_id - primary key
-    admin_id - which admin/vendor the staff belongs to
-    role - telecaller / deli_staff / incharge / zonal_incharge / head_incharge / teleadmin / admin
-    name - staff name
-    mobile - login id
-    password - login password, also reused as the OTP code
-    otp - unused
-    otp_expires_at - unused
-    permissions - JSON permission flags
-    sess_id - session id
-    lat - last known latitude
-    lng - last known longitude
-    pincode - last known pincode
-    city - last known city
-    state - last known state
-    location_last_updated - last GPS update time
-    is_locked - account disabled flag
-    punch_in_time - shift start time
-    punch_out_time - shift end time
-    grace_minutes - late-arrival tolerance
-    approval_required - needs manual attendance approval
+| Area | Tables |
+|---|---|
+| Auth / identity | `deli_staff` (staff), `user` (customers), `role_crm` |
+| Leads & accounts | `LeadsAccount_crm`, `user`, `user_addresses` |
+| Areas & hierarchy | `area_crm`, `area_assign_crm`, `incharge_assign_crm` |
+| Field activity | `beat_plan_crm`, `beat_plan_followup_crm`, `action_log_crm`, `action_log_stage_crm` |
+| Telecalling | `call_log_crm`, `call_scripts_crm`, `telecaller_label_crm` |
+| Attendance & tracking | `attendance_crm`, `location_pings_crm` |
+| Complaints | `complaint_crm` |
+| Sales orders | `cart` (un-submitted draft), `orders`, `orders_item`, `master_orders` |
+| Catalog & tax | `product`, `vendor_products`, `product_taxes`, `taxes`, `units_master` |
+| Vendor | `admin` |
 
-**user** - customer accounts
-    userid - primary key
-    email - customer email
-    is_email_verified - email verified flag
-    contactno - customer phone
-    is_contact_verified - phone verified flag
-    name - customer name
-    account_state - account status
-    address - customer address
-    latitude - location
-    longitude - location
-    dob - date of birth
-    register_date - signup date
-    shop_name - shop name
-    shop_address - shop address
-    shop_plot_no - shop plot number
-    user_type - customer type
-    adhar_card - Aadhar number
-    shop_photo - shop photo url
-    shop_licence - shop license doc
-    bussiness_pan_card - PAN doc
-    is_approved - approval status
-    session_id - login session
-    last_activity - last active timestamp
-    push_notif_id - push notification token
-    is_first_login - first login flag
-    has_unread_comments - unread comments flag
-    password - login password
-    pincode - customer pincode
-    city - customer city
-    state - customer state
-    gst_no - GST number
-    party_code - party code
-    lead_account_id - link to LeadsAccount_crm after conversion
+**Two cross-cutting rules:**
 
-**user_addresses** - customer delivery addresses
-    id - primary key
-    user_id - link to user
-    full_name - recipient name
-    full_address - full address text
-    phone_no - contact number
-    name - address label name
-    address - address text
-    lat - latitude
-    lng - longitude
-    pincode - pincode
-    type - home / shop / other
-    city_id - city reference
-    area_id - area reference
-    is_default - default address flag
-    created_at - created timestamp
+1. **Staff are keyed by phone number** (`deli_staff.mobile`), not `deli_id`. The column
+   name changes per table: `employee_mobile`, `staff_id`, `salesman_id`, `raised_by`, …
+   (Only `area_assign_crm` / `incharge_assign_crm` use the numeric `deli_id`.)
+2. **Accounts are polymorphic** via `(account_id, account_type)`:
+   `account_type='lead'` → `account_id` is a `LeadsAccount_crm.id` (UUID);
+   `account_type='customer'` → it is a `user.userid`. No foreign keys anywhere.
 
-**area_crm** - named service areas
-    id - primary key
-    area_name - area name
-    pincodes - JSON list of pincodes covered
-    created_at - created timestamp
-    updated_at - updated timestamp
+---
 
-**area_assign_crm** - employee-to-area assignment
-    id - primary key
-    area_ids - JSON list of assigned area ids
-    area_names - JSON list of area names
-    employee_id - link to deli_staff
-    created_at - created timestamp
-    updated_at - updated timestamp
+# CRM-owned tables (15)
 
-**incharge_assign_crm** - incharge hierarchy
-    id - primary key
-    head_incharge_id - link to deli_staff (head incharge)
-    incharge_ids - JSON list of incharges under them
-    incharge_names - JSON list of incharge names
-    created_at - created timestamp
-    updated_at - updated timestamp
+## LeadsAccount_crm — prospect / lead accounts
+**Where:** `LeadsAccountController`, `BeatPlanController`, `ActionLogController`, `ComplaintController`, `AccountHistoryController`.
+**Why:** every prospective shop starts here; on conversion a `user` row is created and linked back via `user.lead_account_id`. Drives the telecaller funnel and the salesman beat plan.
+Note: PascalCase table name and camelCase columns (unlike every other CRM table).
 
-**LeadsAccount_crm** - prospect / lead accounts
-    id - primary key (uuid)
-    accountCode - lead account code
-    businessName - business name
-    businessType - business type
-    businessSize - business size
-    personName - contact person name
-    contactNumber - phone number
-    dateOfBirth - date of birth
-    customerStage - pipeline stage
-    funnelStage - funnel stage
-    gstNumber - GST number
-    panCard - PAN
-    ownerImage - owner photo
-    shopImage - shop photo
-    isActive - active flag
-    pincode - pincode
-    country - country
-    state - state
-    district - district
-    city - city
-    area - area name
-    address - address text
-    latitude - location
-    longitude - location
-    areaId - link to area_crm
-    assignedToId - assigned telecaller (deli_staff)
-    assignedDays - JSON assigned visit days
-    createdById - who created it
-    approvedById - who approved it
-    approvedAt - approval timestamp
-    isApproved - approved flag
-    approval_status - approval status text
-    verificationNotes - verification notes
-    rejectionNotes - rejection notes
-    createdAt - created timestamp
-    updatedAt - updated timestamp
+| Column | Use |
+|---|---|
+| `id` | primary key, 36-char UUID |
+| `accountCode` | human-facing account code (unique) |
+| `businessName` | shop/business name — the account title in the UI |
+| `businessType`, `businessSize` | list filters |
+| `personName`, `contactNumber` | contact person; `contactNumber` is the dedupe key for `/check-contact` |
+| `dateOfBirth` | contact DOB |
+| `customerStage`, `funnelStage` | pipeline position; snapshotted onto `action_log_crm` at check-out |
+| `gstNumber`, `panCard` | tax identifiers |
+| `ownerImage`, `shopImage` | upload paths, served via `/lead-accounts/image/{file}` |
+| `isActive` | soft-delete flag |
+| `pincode`, `country`, `state`, `district`, `city`, `area`, `address` | location text |
+| `latitude`, `longitude` | 50 m geofence check on visit check-in |
+| `areaId` | → `area_crm.id` |
+| `assignedToId` | `deli_staff.mobile` of the owning salesman/telecaller |
+| `assignedDays` | JSON weekdays this account is visited |
+| `createdById` | `deli_staff.mobile` of creator |
+| `approvedById`, `approvedAt`, `isApproved` | legacy approval trio (kept in sync) |
+| `approval_status` | **authoritative** approval state: pending / approved / rejected |
+| `verificationNotes`, `rejectionNotes` | reviewer notes |
+| `createdAt`, `updatedAt` | timestamps |
 
-**role_crm** - list of valid staff roles
-    id - primary key
-    role_name - role name
-    created_at - created timestamp
-    updated_at - updated timestamp
+## action_log_crm — the activity spine
+**Where:** `ActionLogController`, `BeatPlanController`, `AccountHistoryController`, `CallLogController`, `TeamReportController`.
+**Why:** one row per salesman visit **or** telecaller call outcome — the single source for "what happened with this account". Also stores standalone merchandise photo logs (`outcome_slug='merchandise'`).
+Formerly `order_funnel_response_crm`; `visit_in/out_at` renamed to `check_in/out_at`, `funnel_slug/name` to `outcome_slug/name`.
 
-**units_master** - unit of measure lookup
-    unit_id - primary key
-    unit_name - unit name (kg, box, litre...)
-    dimension - unit dimension
-    base_unit_name - base unit reference
-    serial_no - display order
-    conversion_rate - conversion factor
-    is_active - active flag
-    created_at - created timestamp
+| Column | Use |
+|---|---|
+| `employee_mobile` | `deli_staff.mobile` |
+| `role` | `salesman` or `telecaller` — which flow wrote the row |
+| `account_id`, `account_type` | the visited/called account (lead or customer) |
+| `beat_plan_id` | → `beat_plan_crm.id` if the visit came from a plan |
+| `check_in_at`, `check_out_at` | visit start / end |
+| `check_in_lat/lng`, `check_out_lat/lng` | geofence evidence |
+| `duration_seconds` | derived at check-out |
+| `outcome_slug`, `outcome_name` | → `action_log_stage_crm` |
+| `order_no` | set when the visit produced an order |
+| `status` | visited / missed / skipped |
+| `call_outcome`, `call_status`, `is_invalid_call` | telecaller path only |
+| `call_log_id` | → `call_log_crm.id` |
+| `conversation_notes`, `discussion_points` | free text |
+| `customer_stage`, `funnel_stage` | snapshot copied from the account at check-out |
+| `payment_collected`, `payment_mode` | cash collected on the visit |
+| `market_note` | competitor / market intel |
+| `follow_up_date`, `follow_up_note` | mirrored into `beat_plan_followup_crm` |
+| `general_notes`, `notes_related_to` | free text |
+| `images` | JSON photo paths |
+| `created_at`, `updated_at` | timestamps |
 
-**attendance_crm** - punch in/out records
-    id - primary key
-    employee_mobile - link to deli_staff
-    date - attendance date
-    punch_in_time - punch-in time
-    punch_in_photo - punch-in selfie
-    punch_in_location - punch-in GPS
-    punch_out_time - punch-out time
-    punch_out_photo - punch-out selfie
-    punch_out_location - punch-out GPS
-    last_ping_at - last location ping time
-    was_interrupted - shift interrupted flag
-    total_distance_km - distance travelled
-    route_snapped - snapped route path
-    auto_closed - auto-closed shift flag
-    break_details - JSON break log
-    total_work_minutes - total worked minutes
-    total_break_minutes - total break minutes
-    is_late - late flag
-    is_early_out - early checkout flag
-    is_early_in - early checkin flag
-    late_reason - reason for being late
-    early_out_reason - reason for early out
-    early_in_reason - reason for early in
-    status - pending / approved / rejected
-    admin_notes - admin remarks
-    approved_by - approver id
-    approved_at - approval timestamp
-    created_at - created timestamp
-    updated_at - updated timestamp
+## action_log_stage_crm — outcome lookup
+**Where:** `ActionLogController`.
+**Why:** the selectable list of visit/call outcomes shown at check-out; `is_active` retires an option without deleting history.
+Formerly `order_funnel_crm`.
 
-**location_pings_crm** - live GPS trail
-    id - primary key
-    employee_mobile - link to deli_staff
-    date - ping date
-    lat - latitude
-    lng - longitude
-    accuracy - GPS accuracy
-    speed - movement speed
-    heading - direction heading
-    battery - device battery %
-    is_mock - fake GPS detected flag
-    recorded_at - ping timestamp
+| Column | Use |
+|---|---|
+| `id` | primary key |
+| `slug` | stored on `action_log_crm.outcome_slug` |
+| `name` | display label |
+| `sort_order` | UI order |
+| `is_active` | show / hide |
 
-**beat_plan_crm** - recurring visit schedule
-    id - primary key
-    account_id - customer/lead being visited
-    account_type - user or lead
-    salesman_id - assigned staff
-    frequency - daily / weekly / monthly / interval
-    days - JSON days of week
-    week_anchor_date - week reference date
-    month_date - day of month
-    specific_dates - JSON custom dates
-    appointment_date - specific appointment
-    interval_days - repeat interval
-    start_date - plan start date
-    is_active - active flag
-    created_at - created timestamp
-    updated_at - updated timestamp
+## beat_plan_crm — recurring visit schedule
+**Where:** `BeatPlanController`.
+**Why:** defines when a salesman should visit an account (weekly / monthly / every N days / specific dates). The daily beat list is generated from these rows.
 
-**beat_plan_visit_crm** - single scheduled visit
-    id - primary key
-    beat_plan_id - link to beat_plan_crm
-    account_id - customer/lead
-    salesman_id - assigned staff
-    visit_date - date of visit
-    status - pending / done / missed
-    notes - visit notes
-    created_at - created timestamp
-    updated_at - updated timestamp
+| Column | Use |
+|---|---|
+| `id` | primary key |
+| `account_id`, `account_type` | account to visit |
+| `salesman_id` | `deli_staff.mobile` |
+| `frequency` | weekly / monthly / n_days / specific_dates — selects which fields below apply |
+| `days` | JSON weekday numbers (weekly) |
+| `week_anchor_date` | anchors the repeating week (weekly) |
+| `month_date` | day of month (monthly) |
+| `specific_dates` | JSON explicit date list |
+| `interval_days` | gap between visits (n_days) |
+| `appointment_date` | one-off appointment |
+| `start_date` | first eligible date |
+| `is_active` | active flag |
 
-**call_log_crm** - call history
-    id - primary key
-    employee_mobile - caller staff
-    source - manual or knowlarity
-    direction - inbound / outbound
-    knowlarity_call_id - webhook call id
-    duration_seconds - call length
-    recording_url - call recording link
-    raw_payload - full webhook JSON
-    account_id - customer/lead called
-    account_type - user or lead
-    call_outcome - outcome/result
-    notes - call notes
-    follow_up_date - next follow-up date
-    callback_done - callback completed flag
-    called_at - call time
-    created_at - created timestamp
-    updated_at - updated timestamp
+## beat_plan_followup_crm — one-off follow-ups
+**Where:** `BeatPlanController`, `TelecallerController`.
+**Why:** a single dated follow-up scheduled from the check-out popup; surfaces on the future day's Beat Plan (salesman), Worklist (telecaller) and Callbacks screen.
 
-**call_scripts_crm** - canned call scripts
-    id - primary key
-    employee_mobile - script owner (or shared)
-    title - script title
-    stage_label - funnel stage label
-    lines - JSON script lines
-    sort_order - display order
-    created_at - created timestamp
-    updated_at - updated timestamp
+| Column | Use |
+|---|---|
+| `id` | primary key |
+| `account_id`, `account_type` | the account |
+| `staff_id` | `deli_staff.mobile` of whoever scheduled it |
+| `due_date` | when it is due |
+| `note` | free text |
+| `source_action_log_id` | → `action_log_crm.id` |
+| `done`, `done_at` | completion |
 
-**complaint_crm** - customer complaints
-    id - primary key
-    account_id - customer/lead
-    account_type - user or lead
-    source_channel - call / visit / manual
-    raised_by - staff who logged it
-    assigned_to - staff handling it
-    assigned_by - who assigned it
-    assigned_at - assignment time
-    call_log_id - originating call
-    beat_plan_id - originating visit
-    category - complaint category
-    description - complaint text
-    status - open / in_progress / resolved
-    resolution_notes - resolution details
-    resolved_by - who resolved it
-    resolved_at - resolution time
-    created_at - created timestamp
-    updated_at - updated timestamp
+## call_log_crm — telecaller call records
+**Where:** `CallLogController`, `KnowlarityCallController`, `KnowlarityWebhookController`, `TelecallerController`, `AccountHistoryController`, `TeamReportController`.
+**Why:** every call — manual entries and Knowlarity cloud-call webhook rows — in one table.
 
-**order_funnel_crm** - funnel stage lookup
-    id - primary key
-    slug - stage code
-    name - stage label
-    sort_order - display order
-    is_active - active flag
-    created_at - created timestamp
-    updated_at - updated timestamp
+| Column | Use |
+|---|---|
+| `id` | primary key |
+| `employee_mobile` | agent `deli_staff.mobile`; nullable for an unmatched inbound |
+| `source` | `manual` or Knowlarity |
+| `direction` | inbound / outbound |
+| `knowlarity_call_id` | dedupe key for webhook replays |
+| `duration_seconds` | call length |
+| `recording_url` | playback, access-gated |
+| `raw_payload` | verbatim webhook body |
+| `account_id`, `account_type` | called account (`unknown` allowed here only) |
+| `call_outcome` | answered / busy / no_answer / switch_off / invalid / callback / pending / complaint |
+| `notes` | free text |
+| `follow_up_date` | next follow-up |
+| `callback_done` | flag |
+| `called_at` | call time (naive IST) |
 
-**order_funnel_response_crm** - visit funnel form
-    id - primary key
-    employee_mobile - staff who filled it
-    account_id - customer/lead visited
-    account_type - user or lead
-    beat_plan_id - linked visit plan
-    visit_in_at - visit start time
-    visit_out_at - visit end time
-    duration_seconds - visit duration
-    funnel_slug - selected funnel stage
-    funnel_name - stage name
-    general_notes - general notes
-    notes_related_to - notes context
-    images - JSON photo urls
-    created_at - created timestamp
-    updated_at - updated timestamp
+## call_scripts_crm — call scripts
+**Where:** `CallScriptController`.
+**Why:** per-telecaller canned scripts, grouped by funnel stage.
 
-**telecaller_label_crm** - quick account labels
-    id - primary key
-    employee_mobile - who set the label
-    account_id - customer/lead
-    account_type - user or lead
-    label - label text (e.g. hot lead, do not call)
-    created_at - created timestamp
-    updated_at - updated timestamp
+| Column | Use |
+|---|---|
+| `id` | primary key |
+| `employee_mobile` | owner (scripts are per-telecaller) |
+| `title` | script title |
+| `stage_label` | which funnel stage it suits |
+| `lines` | JSON ordered lines |
+| `sort_order` | display order |
 
-**orders** - order header (legacy, shared with old ERP)
-    order_id - primary key
-    bill_no - bill number
-    invoice_number - invoice number
-    charges_json - extra charges JSON
-    invoice_pdf_url - invoice PDF link
-    bill_dt - bill date
-    department - department tag
-    bill_narration - bill remarks
-    expected_date - expected delivery date
-    bill_roff - rounding adjustment
-    doc_year - financial year
-    sales_return_voucher_no - return voucher number
-    sales_return_dt - return date
-    sales_return_status - return status
-    sales_return_reason - return reason
-    sales_return_charges_json - return charges JSON
-    salesman_id - staff who booked it
-    master_order_id - link to master_orders
-    txn_id - payment transaction id
-    buyer_userid - customer who ordered
-    start_time - order start timestamp
-    last_update_time - last update timestamp
-    short_datetime - display datetime
-    order_state - order status
-    payment_method - payment method
-    ctype_id - customer type
-    items_count - number of items
-    delivery_charge - delivery fee
-    order_total - total amount
-    bill_amount - final bill amount
-    delivery_info - delivery notes
-    area_name - delivery area
-    feedback - customer feedback
-    admin_id - vendor/admin who owns it
-    payment_status - payment status
-    amountReceivedInfo - payment collection info
-    trip_id - delivery trip id
-    discount - discount amount
-    before_discount - amount before discount
-    time_slot - delivery time slot
-    delivered_time - delivery timestamp
-    deli_id - delivery staff id
-    idempotency_key - dedupe key for double-submits
+## telecaller_label_crm — private account labels
+**Where:** `TelecallerController`.
+**Why:** quick per-telecaller tags on an account (e.g. "hot lead", "do not call"); private to the telecaller who set them.
 
-**orders_item** - order line items
-    order_id - link to orders
-    item_id - primary key
-    product_id - link to product
-    vendor_product_id - vendor-specific product
-    pinfo - product info snapshot
-    offers - applied offers snapshot
-    quantity - quantity ordered
-    qty_loaded - quantity loaded for delivery
-    qty_delivered - quantity delivered
-    qty_returned - quantity returned
-    return_reason - return reason
-    item_price - price per item
-    item_total - line total
-    op_id - operation reference
-    commission - commission earned
+| Column | Use |
+|---|---|
+| `employee_mobile` | who set the label |
+| `account_id`, `account_type` | the account |
+| `label` | label text |
 
-**master_orders** - groups a multi-vendor checkout
-    id - primary key
-    user_id - customer who checked out
-    txn_id - payment transaction id
-    payment_status - payment status
-    order_count - number of orders in this checkout
-    payment_method - payment method
-    delivery_info - delivery notes
-    order_total - total across all orders
-    delivery_charge - total delivery fee
-    discount - total discount
-    before_discount - amount before discount
-    status - overall status
-    created_at - created timestamp
+## complaint_crm — customer complaints
+**Where:** `ComplaintController`.
+**Why:** complaints raised from a call or a visit, with assignment and resolution tracking.
 
-**product** - product catalog (legacy, shared with old ERP)
-    product_id - primary key
-    cat_id - category id
-    parent_cat_id - parent category id
-    brand - brand name
-    ctype_id - customer type restriction
-    seq_no - display order
-    start_date - listing start date
-    is_published - published flag
-    is_used - in-use flag
-    is_deleted - soft delete flag
-    in_stock - stock availability
-    inventory_type - inventory type
-    inventory_unit_type - unit type
-    stock_uom - stock unit of measure
-    name - product name
-    short_name - short name
-    description - product description
-    display_photo - product image
-    keywords - search keywords
-    spec_params - specification params
-    packs - JSON pack/pricing options (only ~3% of products have real pricing here)
-    default_pack_id - default pack reference
-    hsn_code - HSN tax code
-    gst_percent - GST rate
-    offers - offers text
-    cache_txt - cached display text
-    img_last_updated - image update timestamp
-    stock - stock quantity
-    stock_ut_id - stock unit reference
-    order_limit - max order quantity
-    buffer_limit - buffer stock quantity
-    nop - number of packs
-    is_taxable - taxable flag
-    exempt_from - tax exemption start
-    exempt_to - tax exemption end
+| Column | Use |
+|---|---|
+| `account_id`, `account_type` | the account |
+| `source_channel` | telecaller_call / salesman_visit |
+| `raised_by` | `deli_staff.mobile` |
+| `assigned_to`, `assigned_by`, `assigned_at` | assignment |
+| `call_log_id` | → `call_log_crm.id` if raised from a call |
+| `beat_plan_id` | → `beat_plan_crm.id` if raised from a visit |
+| `category` | complaint category |
+| `description` | complaint text |
+| `status` | open / in_progress / resolved / closed |
+| `resolution_notes`, `resolved_by`, `resolved_at` | resolution |
+| `created_at` | timestamp |
 
-**vendor_products** - per-vendor product overrides
-    id - primary key
-    admin_vendor_id - vendor/admin id
-    product_id - link to product
-    packs - vendor-specific pack pricing
-    default_pack_id - default pack reference
-    status - listing status
-    in_stock - stock availability
-    created_at - created timestamp
+## attendance_crm — daily punch in/out
+**Where:** `AttendanceController`, `TrackingController`, `TeamReportController`.
+**Why:** one row per employee per day — punch in/out, breaks, route distance, late/early flags and approval.
 
-**product_taxes** - product tax rate history
-    id - primary key
-    product_id - link to product
-    tax_id - link to taxes
-    tax_percent - tax rate
-    effective_from - rate start date
-    effective_to - rate end date
-    created_at - created timestamp
-    updated_at - updated timestamp
+| Column | Use |
+|---|---|
+| `employee_mobile` | staff |
+| `date` | IST calendar day |
+| `punch_in_time`, `punch_out_time` | shift times |
+| `punch_in_photo`, `punch_out_photo` | selfies |
+| `punch_in_location`, `punch_out_location` | JSON `{lat,lng}` |
+| `last_ping_at` | heartbeat; drives `auto_closed` |
+| `was_interrupted` | tracking gap detected |
+| `total_distance_km` | sum over the day's pings |
+| `route_snapped` | JSON map-matched polyline |
+| `auto_closed` | shift closed by the system |
+| `break_details` | JSON break intervals |
+| `total_work_minutes`, `total_break_minutes` | totals |
+| `is_late`, `is_early_out`, `is_early_in` | exception flags |
+| `late_reason`, `early_out_reason`, `early_in_reason` | required when the flag is set |
+| `status` | on_time / pending / approved / rejected / early_in |
+| `admin_notes` | admin remarks |
+| `approved_by`, `approved_at` | approver `deli_staff.mobile` |
 
-**taxes** - tax rate lookup
-    id - primary key
-    tax_category - tax category
-    tax_sub_category - tax sub-category
-    tax_name - tax name
-    is_active - active flag
-    created_at - created timestamp
-    updated_at - updated timestamp
+## location_pings_crm — live GPS trail
+**Where:** `TrackingController`.
+**Why:** GPS breadcrumbs written only while punched in; feed the live map and `attendance_crm.total_distance_km` / `route_snapped`.
 
-**admin** - vendor/admin accounts (legacy, read-only here)
-    userid - primary key
-    session_id - login session
-    username - login username
-    name - admin/vendor name
-    password - login password
-    type - account type
-    register_date - signup date
-    last_activity - last active timestamp
-    data - misc data blob
-    delivery_manage_by - delivery management owner
-    org_name - organization name
-    org_email - organization email
-    org_contact_no - organization phone
-    org_gst - organization GST
-    org_address - organization address
-    category_id - category ids handled
-    city_id - city reference
-    areas - service areas
-    web_token - API/web token
-    commission - commission rate
-    fssai_no - FSSAI license number
-    gst_no - GST number
-    licence_1 - license doc 1
-    licence_2 - license doc 2
-    bank_name - bank name
-    bank_branch - bank branch
-    account_number - bank account number
-    ifsc_code - bank IFSC code
-    account_type - bank account type
-    scanner_qr - payment QR code
-    phonepe_no - PhonePe number
-    gpay_no - GPay number
+| Column | Use |
+|---|---|
+| `employee_mobile` | staff |
+| `date` | partition key for day queries |
+| `lat`, `lng` | position |
+| `accuracy`, `speed`, `heading` | device-reported |
+| `battery` | 0–100 |
+| `is_mock` | fake-GPS flag — every synthetic ping must set this |
+| `recorded_at` | device time |
+
+## area_crm — service areas
+**Where:** `AreaController`, `MastersController`, `PincodeController`.
+**Why:** named areas and the pincodes they cover; leads and staff are scoped to areas.
+
+| Column | Use |
+|---|---|
+| `id` | primary key |
+| `area_name` | area name |
+| `pincodes` | JSON list of pincodes covered |
+
+## area_assign_crm — employee → areas
+**Where:** `AreaAssignController`.
+**Why:** which areas an employee covers; one row per employee, areas denormalised into JSON arrays.
+
+| Column | Use |
+|---|---|
+| `id` | primary key |
+| `employee_id` | `deli_staff.deli_id` (numeric id, unique) |
+| `area_ids` | JSON `area_crm.id` list |
+| `area_names` | JSON denormalised names |
+
+## incharge_assign_crm — head-incharge → incharges
+**Where:** `InchargeAssignController`, `TeamReportController`.
+**Why:** one level up the hierarchy — which incharges report to a head incharge. Used to build the team tree for reporting.
+
+| Column | Use |
+|---|---|
+| `id` | primary key |
+| `head_incharge_id` | `deli_staff.deli_id` (unique) |
+| `incharge_ids` | JSON reporting incharge ids |
+| `incharge_names` | JSON denormalised names |
+
+## role_crm — role name lookup
+**Where:** `MastersController`.
+**Why:** list of valid role names for dropdowns. `deli_staff.role` is free text and does **not** FK to this.
+
+| Column | Use |
+|---|---|
+| `id` | primary key |
+| `role_name` | role name (unique) |
+| `created_at`, `updated_at` | timestamps |
+
+---
+
+# Shared / parent-app tables (13)
+
+`cart` (below) is now **written** by the CRM — CRM-added columns only, never the
+consumer-app columns. The other 12 stay read-only in schema.
+
+## deli_staff — core auth table
+**Where:** nearly every controller (`Auth`, `TrackingController`, `TeamReportController`, `ProductController`, …).
+**Why:** every non-customer login — salesman, telecaller, incharge, teleadmin, admin, driver — despite the delivery-oriented name.
+
+| Column | Use |
+|---|---|
+| `deli_id` | primary key; referenced by `area_assign_crm.employee_id`, `incharge_assign_crm.head_incharge_id` |
+| `admin_id` | which vendor this staff sells for — scopes `vendor_products` pricing |
+| `role` | free text, no FK (driver / telecaller / salesman / head_incharge / zonal_incharge / teleadmin / admin / …) |
+| `name` | staff name |
+| `mobile` | login id and **the staff identity used across all CRM tables** |
+| `password` | login password — **also the OTP code** |
+| `sess_id` | session id |
+| `lat`, `lng`, `pincode`, `city`, `state` | last known position |
+| `location_last_updated` | last GPS update |
+| `is_locked` | blocks login |
+| `punch_in_time`, `punch_out_time` | expected shift, per employee |
+| `grace_minutes` | feeds `attendance_crm.is_late` |
+| `approval_required` | whether attendance exceptions need sign-off |
+
+*(Dead columns: `otp`, `otp_expires_at`, `permissions`, `is_record_locked`.)*
+
+## user — registered customers
+**Where:** `LeadsAccountController`, `AccountHistoryController`, `SalesOrderController`, `OrderListController`, `ComplaintController`.
+**Why:** the customer account; used as `account_id` when `account_type='customer'` and as `orders.buyer_userid`. Singular name — `users` (plural) is unused Laravel scaffolding.
+
+| Column | Use |
+|---|---|
+| `userid` | customer id |
+| `email`, `contactno`, `name` | identity |
+| `account_state` | account status |
+| `address`, `latitude`, `longitude` | the account's own address |
+| `shop_name`, `shop_address` | business title shown in the CRM |
+| `user_type` | B2C / B2B |
+| `is_approved` | YES / NO / REQUESTED (string enum) |
+| `session_id`, `push_notif_id` | session / push token |
+| `password` | login password |
+| `pincode`, `city`, `state` | location |
+| `lead_account_id` | → `LeadsAccount_crm.id` — link back to the converted lead |
+
+## user_addresses — customer address book
+**Where:** `SalesOrderController`, `AccountHistoryController`.
+**Why:** a customer's saved delivery addresses; `is_default` picks one. Not every customer has a row — code falls back to `user.address`.
+
+| Column | Use |
+|---|---|
+| `id` | primary key |
+| `user_id` | → `user.userid` |
+| `address` | address text |
+| `lat`, `lng` | position |
+| `type` | Home / Office |
+| `is_default` | `'1'` / `'0'` (string enum — compare against `'1'`) |
+
+## orders — sales order header
+**Where:** written by `SalesOrderController`, read by `OrderListController`, `AccountHistoryController`.
+**Why:** real sales orders. The CRM only ever creates them in `order_state='pending'` — no invoicing, no stock movement.
+
+| Column | Use |
+|---|---|
+| `order_id` | primary key — **no AUTO_INCREMENT**, allocated as `MAX+1` across `orders`+`master_orders` |
+| `master_order_id` | set equal to `order_id` |
+| `txn_id` | CRM writes `CRM-{id}-{unix}` |
+| `buyer_userid` | → `user.userid` |
+| `start_time`, `last_update_time` | unix timestamps |
+| `short_datetime` | pre-formatted display string |
+| `order_state` | CRM writes only `pending` |
+| `payment_method` | CRM hardcodes `cod` |
+| `payment_status` | `not_paid` |
+| `items_count` | line count |
+| `delivery_charge` | whole rupees; CRM folds addon charges (Hamali/Transport) in here |
+| `order_total`, `before_discount`, `discount`, `bill_amount` | amounts |
+| `delivery_info` | JSON `{name,address,latitude,longitude}` |
+| `area_name` | delivery area |
+| `feedback` | customer feedback |
+| `admin_id` | CRM writes 0 |
+| `amountReceivedInfo` | payment collection info |
+| `time_slot` | CRM stores the expected delivery date (`dd/MM/yyyy`) here |
+| `bill_dt` | document date |
+| `department` | department tag |
+| `bill_narration` | bill remarks (added by CRM migration) |
+| `invoice_pdf_url` | read-only for the CRM |
+| `idempotency_key` | pre-checked so a retry replays instead of duplicating |
+
+## master_orders — order header twin
+**Where:** `SalesOrderController`.
+**Why:** the consumer app's parallel header row; the CRM writes all 13 columns to keep the pair consistent. Same id counter as `orders.order_id`.
+
+| Column | Use |
+|---|---|
+| `id` | same value as `orders.order_id`; no AUTO_INCREMENT |
+| `user_id` | → `user.userid` |
+| `txn_id` | CRM writes `CRM-{id}` |
+| `payment_status` | `not_paid` |
+| `order_count` | item count |
+| `payment_method` | `cod` |
+| `delivery_info` | JSON |
+| `order_total`, `delivery_charge`, `discount`, `before_discount` | amounts (float) |
+| `status` | `'1'` / `'0'` string enum |
+| `created_at` | timestamp |
+
+## orders_item — order line items
+**Where:** `SalesOrderController`, `OrderListController`, `AccountHistoryController`.
+**Why:** one row per product line. `product_id` is NOT NULL — every line must resolve to a real `product` row (no free-text items).
+
+| Column | Use |
+|---|---|
+| `item_id` | primary key — global sequence, `MAX+1` |
+| `order_id` | → `orders.order_id` |
+| `product_id` | → `product.product_id` (required) |
+| `pinfo` | JSON snapshot: unit, pack, prices, tax percentages |
+| `quantity` | integer only |
+| `item_price`, `item_total` | tax-inclusive amounts |
+| `qty_delivered` | written by fulfilment |
+| `commission` | CRM writes 0 |
+
+## product — product catalog
+**Where:** `ProductController` (read-only).
+**Why:** the catalog the sales-order screen searches.
+
+| Column | Use |
+|---|---|
+| `product_id` | primary key (serialised to client as string) |
+| `name` | product name — `utf8mb4_bin`, **case-sensitive**, search via `LOWER()` |
+| `hsn_code` | HSN tax code |
+| `gst_percent` | last-resort tax fallback only (0.00 for ~48% of products) |
+| `stock_uom` | → `units_master.unit_id` |
+| `cat_id`, `parent_cat_id` | category — **inverted**: `parent_cat_id` is top-level |
+| `is_published`, `is_deleted` | both must be filtered (published=1, deleted=0) |
+
+*(Pricing is NOT in `product.packs` — it is in `vendor_products`.)*
+
+## vendor_products — per-vendor pack pricing & stock
+**Where:** `ProductController`, `SalesOrderController`, `SalesOrderDraftController`.
+**Why:** the same product is priced differently per vendor; the applicable row depends on the staff member's `deli_staff.admin_id`. Many `(product, vendor)` pairs have no row — then the product can't be sold.
+
+| Column | Use |
+|---|---|
+| `id` | surfaced as `vendor_product_id` |
+| `admin_vendor_id` | matched against `deli_staff.admin_id` |
+| `product_id` | → `product.product_id` |
+| `packs` | JSON keyed by pack id: label `tx`, MRP `op`, selling price `rp`, stock `stk` |
+| `default_pack_id` | key into `packs` |
+| `status` | filter on `'1'` (string) |
+
+## product_taxes — authoritative GST rates
+**Where:** `ProductController` / `ProductTaxResolver`.
+**Why:** the real per-product GST source (not `product.gst_percent`), with effective-date history.
+
+| Column | Use |
+|---|---|
+| `id` | primary key; newest row per component wins |
+| `product_id` | → `product.product_id` |
+| `tax_id` | → `taxes.id` |
+| `tax_percent` | rate |
+| `effective_from`, `effective_to` | validity window (null = open-ended) |
+
+## taxes — tax component names
+**Where:** `ProductTaxResolver`.
+**Why:** resolves `tax_id` to a component name (SGST / CGST / IGST / CESS).
+
+| Column | Use |
+|---|---|
+| `id` | key (not a declared PK) |
+| `tax_name` | SGST / CGST / IGST / CESS |
+| `is_active` | inactive components ignored |
+
+## units_master — unit of measure lookup
+**Where:** `ProductController`, `MastersController`.
+**Why:** resolves `product.stock_uom` (a numeric id) to a label; also the unit dropdown.
+
+| Column | Use |
+|---|---|
+| `unit_id` | target of `product.stock_uom` |
+| `unit_name` | KG / NOS / PCS / BOX / DOZEN … |
+| `serial_no` | display order |
+| `is_active` | dropdown filter |
+
+## cart — un-submitted sales-order draft (CRM use)
+**Where:** `SalesOrderDraftController` (`GET`/`PUT`/`DELETE /api/order-draft`).
+**Why:** autosaves the Create Sales Order cart, one row per (staff, account), so a salesman's in-person draft and a telecaller's phone draft for the same shop stay separate. Deleted on checkout. Stored on the consumer app's `cart` table by product decision (2026-09-05), replacing the former `sales_order_draft_crm`.
+**How it coexists with the consumer app:** CRM rows are tagged `ctype_id = 'crm_sales_draft'` (no `cart_type` maps to it, so consumer cart queries never see them); the whole draft sits in the new `draft_payload` JSON column; the consumer-app item columns are filled with inert placeholders (`product_id = 0`, `addressId = 0`, `pack_id = "crmdraft:{staff}|{type}|{ref}"`) purely to satisfy the existing `(userid, product_id, pack_id, addressId)` unique key.
+
+| Column | Use |
+|---|---|
+| `cart_id` | primary key — **no AUTO_INCREMENT**, allocated `MAX+1` under a row lock |
+| `userid` | customer `user.userid`, or `0` for a lead draft |
+| `ctype_id` | `'crm_sales_draft'` for CRM rows |
+| `staff_id` | *(CRM column)* `deli_staff.mobile` of the draft owner |
+| `account_ref`, `account_type` | *(CRM columns)* the account (leads allowed) |
+| `draft_payload` | *(CRM column)* whole draft as JSON: `items[]`, `addons[]`, `narration`, dates, `delivery_address` |
+| `created_at` | last-saved time (touched on every autosave) |
+| `product_id`, `vendor_product_id`, `pack_id`, `addressId`, `quantity`, `total` | placeholders on CRM rows — not read |
+
+*CRM adds `cart_crm_draft_unique (staff_id, account_ref, account_type)`; consumer rows leave those NULL and do not collide.*
+
+## admin — vendor organisation
+**Where:** `OrderListController`, `SalesOrderController`.
+**Why:** only the name is read, to label an order with its vendor.
+
+| Column | Use |
+|---|---|
+| `userid` | matches `deli_staff.admin_id` |
+| `name` | vendor / org name |
+
+---
+
+# Not used (deliberately)
+
+- **`cart_type`** — consumer-app registry of cart taxonomies (express / min-total /
+  delivery-charge rules). The CRM only reads nothing from it; its sentinel
+  `crm_sales_draft` deliberately has no row here.
+- **Laravel scaffolding** — `cache`, `cache_locks`, `failed_jobs`, `job_batches`, `jobs`,
+  `password_reset_tokens`, `sessions`, `users` (plural). Present, unused by app code.
+
+# Relationships (lookup conventions, not enforced FKs)
+
+```
+deli_staff.mobile  → action_log_crm / attendance_crm / call_log_crm / call_scripts_crm /
+                     location_pings_crm / telecaller_label_crm  (employee_mobile)
+                   → beat_plan_crm.salesman_id, beat_plan_followup_crm.staff_id,
+                     cart.staff_id (crm_sales_draft rows),
+                     complaint_crm.raised_by / assigned_to / resolved_by
+deli_staff.deli_id → area_assign_crm.employee_id → area_crm.id
+                   → incharge_assign_crm.head_incharge_id
+deli_staff.admin_id → admin.userid, vendor_products.admin_vendor_id
+
+(account_id, account_type):  'lead' → LeadsAccount_crm.id (UUID)
+                             'customer' → user.userid
+user.lead_account_id → LeadsAccount_crm.id            (conversion link)
+LeadsAccount_crm.areaId → area_crm.id
+
+user.userid → user_addresses.user_id, orders.buyer_userid, master_orders.user_id
+orders.order_id ═ master_orders.id  (same counter) ;  orders.order_id → orders_item.order_id
+orders_item.product_id → product.product_id
+product.product_id → product_taxes.product_id → taxes.id
+                   → vendor_products.product_id
+product.stock_uom → units_master.unit_id
+
+action_log_crm.outcome_slug → action_log_stage_crm.slug
+action_log_crm.call_log_id  → call_log_crm.id
+action_log_crm.beat_plan_id → beat_plan_crm.id
+beat_plan_followup_crm.source_action_log_id → action_log_crm.id
+```

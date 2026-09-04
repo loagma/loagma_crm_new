@@ -13,7 +13,13 @@ with the live `SHOW COLUMNS` output** for that table. A token that isn't a real 
 that table is dropped, so nothing here is guessed. Types, nullability, keys and defaults
 are the live production schema, not migration files.
 
-Last verified: **2026-09-03**.
+Last verified: **2026-09-05**.
+
+> **2026-09-05:** by product decision the Create Sales Order draft was moved off
+> `sales_order_draft_crm` (now dropped) onto the shared **`cart`** table — one JSON row
+> per (staff, account), `ctype_id = 'crm_sales_draft'`, in a new `draft_payload` column.
+> `cart` is therefore now a **written** shared table (CRM-added columns only). See the
+> `cart` section and migration `2026_09_05_000001_move_sales_order_draft_to_cart`.
 
 ---
 
@@ -21,8 +27,8 @@ Last verified: **2026-09-03**.
 
 | Class | Count | Meaning |
 |---|---|---|
-| **CRM** | 16 | Created and owned by this repo's migrations. Safe to alter. |
-| **Shared** | 12 | Owned by the parent ERP / consumer app. **Never alter the schema.** |
+| **CRM** | 15 | Created and owned by this repo's migrations. Safe to alter. |
+| **Shared** | 13 | Owned by the parent ERP / consumer app. Do not alter existing columns; `cart` carries CRM-added columns. |
 | **Laravel** | 8 | Framework scaffolding. Present, unused by app code. |
 
 The `_crm` suffix marks CRM ownership — with three traps:
@@ -52,7 +58,7 @@ common source of confusion:
 | Column | Tables |
 |---|---|
 | `employee_mobile` | `action_log_crm`, `attendance_crm`, `call_log_crm`, `call_scripts_crm`, `location_pings_crm`, `telecaller_label_crm` |
-| `staff_id` | `beat_plan_followup_crm`, `sales_order_draft_crm` |
+| `staff_id` | `beat_plan_followup_crm`, `cart` (`crm_sales_draft` rows) |
 | `salesman_id` | `beat_plan_crm` |
 | `raised_by`, `assigned_to`, `assigned_by`, `resolved_by` | `complaint_crm` |
 | `approved_by` | `attendance_crm` |
@@ -78,7 +84,7 @@ and `master_orders.id` are allocated as `MAX(...) + 1` under `lockForUpdate()`. 
 
 ## Summary
 
-### CRM-owned (16)
+### CRM-owned (15)
 
 | Table | Cols used | Purpose |
 |---|---|---|
@@ -96,14 +102,14 @@ and `master_orders.id` are allocated as `MAX(...) + 1` under `lockForUpdate()`. 
 | `incharge_assign_crm` | 4/6 | Head-incharge → incharge hierarchy |
 | `location_pings_crm` | 10/11 | GPS breadcrumbs during a punched-in shift |
 | `role_crm` | 4/4 | Role name lookup |
-| `sales_order_draft_crm` | 6/7 | Un-submitted Create Sales Order cart |
 | `telecaller_label_crm` | 4/7 | Per-telecaller labels on an account |
 
-### Shared / parent-app (12) — **do not alter**
+### Shared / parent-app (13) — do not alter existing columns
 
 | Table | Cols used | Purpose |
 |---|---|---|
 | `admin` | 2/32 | Vendor org; only the name is read |
+| `cart` | 8/14 | **Written by the CRM** — un-submitted Create Sales Order draft (`ctype_id='crm_sales_draft'`), CRM-added columns only |
 | `deli_staff` | 18/22 | **Core auth table.** Every non-customer login |
 | `master_orders` | 13/13 | Order header twin of `orders` |
 | `orders` | 27/43 | Real sales orders |
@@ -375,26 +381,41 @@ by `CallLogController`, `KnowlarityCallController`, `KnowlarityWebhookController
 | `role_name` | varchar(50) **UNI** | Lookup only — `deli_staff.role` is free text and does **not** FK to this |
 | `created_at`, `updated_at` | timestamp | |
 
-## sales_order_draft_crm
-The un-submitted Create Sales Order cart. One row per (staff member, account), so a
-salesman's in-person draft and a telecaller's phone draft for the same shop stay
-independent. Used by `SalesOrderDraftController` (`GET`/`PUT`/`DELETE /api/order-draft`).
+---
+
+# Shared / parent-app tables — do not alter existing columns
+
+## cart
+Consumer-app cart table, now **also** the store for the un-submitted Create Sales Order
+draft (product decision, 2026-09-05 — replaced `sales_order_draft_crm`). Used by
+`SalesOrderDraftController` (`GET`/`PUT`/`DELETE /api/order-draft`).
+
+One row per (staff member, account), `ctype_id = 'crm_sales_draft'`, whole draft in
+`draft_payload`. A salesman's in-person draft and a telecaller's phone draft for the same
+shop stay independent (`staff_id` is part of the key). The row is deleted on checkout; on
+read each item's `max_qty` is re-resolved against live `vendor_products` stock.
+
+**Only CRM-added columns may be written by the CRM. Never touch the consumer-app columns
+of a non-CRM row.**
 
 | Column | Type | Notes |
 |---|---|---|
-| `staff_id` | varchar(20) NOT NULL | `deli_staff.mobile` |
-| `account_id` | varchar(64) NOT NULL | |
-| `account_type` | enum('lead','customer') NOT NULL | Leads persist here too — nothing depends on a `user` row |
-| `payload` | longtext NOT NULL | Whole draft as JSON: `items[]` (incl. hand-typed lines), `addons[]`, `narration`, `document_date`, `expected_date`, `delivery_address` |
-| `created_at`, `updated_at` | timestamp | |
+| `cart_id` | int **PK**, no AUTO_INCREMENT | Allocated `MAX(cart_id)+1` under `lockForUpdate()`, same pattern as `orders.order_id` |
+| `userid` | bigint NOT NULL | Customer `user.userid`; **`0` for a lead draft** |
+| `ctype_id` | varchar(250) default `vegetables_fruits` | CRM writes `crm_sales_draft` — a value no `cart_type` row maps to, so consumer cart queries (filter by `userid` + a real `ctype_id`) never return these rows |
+| `product_id` | bigint NOT NULL | CRM writes `0` — placeholder only |
+| `pack_id` | varchar(255) NOT NULL | CRM writes `crmdraft:{staff}|{type}|{ref}` so the pre-existing `UNIQUE(userid, product_id, pack_id, addressId)` stays unique per (staff, account) and can't collide with a real row (whose `product_id` is never 0) |
+| `addressId` | int NOT NULL | CRM writes `0` — placeholder only |
+| `vendor_product_id`, `quantity`, `total` | — | CRM writes `0` — placeholders |
+| `created_at` | timestamp | CRM reuses this as **last-saved time**, touched on every autosave |
+| `staff_id` | varchar(20) NULL — *CRM-added* | `deli_staff.mobile` of the draft owner |
+| `account_ref` | varchar(64) NULL — *CRM-added* | Lead UUID or `user.userid` |
+| `account_type` | varchar(16) NULL — *CRM-added* | `lead` / `customer` |
+| `draft_payload` | longtext NULL — *CRM-added* | Whole draft JSON: `items[]` (incl. hand-typed lines), `addons[]`, `narration`, `document_date`, `expected_date`, `delivery_address` |
 
-`UNIQUE(staff_id, account_id, account_type)` — autosave upserts against exactly this key.
-The row is deleted on checkout. On read, each item's `max_qty` is re-resolved against live
-`vendor_products` stock; everything else restores verbatim.
-
----
-
-# Shared / parent-app tables — **schema is read-only**
+CRM-added `UNIQUE(staff_id, account_ref, account_type)` (`cart_crm_draft_unique`) — the
+autosave upsert key. Consumer rows leave all three NULL; NULLs don't collide in a unique
+index.
 
 ## deli_staff
 **The core auth table** — every non-customer login (salesman, telecaller, incharge,
@@ -612,19 +633,19 @@ The other 30 columns (org GST, bank details, QR/UPI, licences) are untouched.
 
 # Deliberately not used
 
-**`cart` and `cart_type`** are the **consumer app's** cart, and the CRM no longer touches
-them. `cart_type` is a registry (`vegetables_fruits`, `balaji_grocery`, `in_store`,
-`fashion`) carrying express/min-total/delivery-charge rules, and `cart.ctype_id` is a
-taxonomy key into it — not a free-text discriminator.
+**`cart_type`** is the consumer app's registry of cart taxonomies (`vegetables_fruits`,
+`balaji_grocery`, `in_store`, `fashion`) carrying express/min-total/delivery-charge rules.
+`cart.ctype_id` is a taxonomy key into it. The CRM reads nothing from `cart_type`; its
+`crm_sales_draft` sentinel deliberately has no row here, which is what keeps CRM draft
+rows out of every consumer-app cart query.
 
-The CRM briefly wrote `in_store` rows to `cart`. That was wrong and destructive: `cart`'s
-`UNIQUE KEY unique_user_product_pack_address (userid, product_id, pack_id, addressId)`
-**omits `ctype_id`**, so a CRM upsert for the same product+pack+address matched — and a
-CRM clear deleted — the customer's own consumer-app cart row. That path was replaced by
-`sales_order_draft_crm` on 2026-09-03.
-
-**Never write to `cart` from the CRM.** New CRM state goes in a `*_crm` table with its own
-migration.
+**History:** the CRM once wrote `in_store` rows to `cart` as a real per-line cart — wrong
+and destructive, because `cart`'s `UNIQUE KEY (userid, product_id, pack_id, addressId)`
+omits `ctype_id`, so a CRM upsert matched (and a CRM clear deleted) the customer's own
+consumer-app cart line for the same product+pack. That was replaced by
+`sales_order_draft_crm` on 2026-09-03, which was in turn folded back into `cart` on
+2026-09-05 — this time as a **single JSON row** with placeholder `product_id = 0`, so the
+same unique key now guarantees isolation instead of breaking it. See the `cart` section.
 
 ---
 
@@ -636,7 +657,7 @@ deli_staff.mobile ──┬─→ action_log_crm.employee_mobile
                     ├─→ call_log_crm.employee_mobile ──→ call_scripts_crm.employee_mobile
                     ├─→ beat_plan_crm.salesman_id
                     ├─→ beat_plan_followup_crm.staff_id
-                    ├─→ sales_order_draft_crm.staff_id
+                    ├─→ cart.staff_id            (ctype_id = 'crm_sales_draft' rows)
                     ├─→ complaint_crm.raised_by / assigned_to / resolved_by
                     └─→ telecaller_label_crm.employee_mobile
 deli_staff.deli_id ─┬─→ area_assign_crm.employee_id ──→ area_crm.id

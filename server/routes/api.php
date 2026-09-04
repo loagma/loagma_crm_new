@@ -70,8 +70,9 @@ Route::post('/sales-orders', [SalesOrderController::class, 'store']);
 Route::put('/orders/{orderId}/items', [SalesOrderController::class, 'updateItems']); // edit items on an existing pending order
 Route::get('/products/search', [ProductController::class, 'search']);
 
-// Un-submitted Create Sales Order cart, per (staff member, account) — backed
-// by sales_order_draft_crm, NOT the shared `cart` table (see that migration).
+// Un-submitted Create Sales Order cart, per (staff member, account) — stored as
+// one JSON row on the shared `cart` table (ctype_id = 'crm_sales_draft'); see
+// 2026_09_05_000001_move_sales_order_draft_to_cart.
 Route::get('/order-draft',    [SalesOrderDraftController::class, 'show']);
 Route::put('/order-draft',    [SalesOrderDraftController::class, 'store']);
 Route::delete('/order-draft', [SalesOrderDraftController::class, 'destroy']);
