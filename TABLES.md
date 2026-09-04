@@ -13,7 +13,8 @@ with the live `SHOW COLUMNS` output** for that table. A token that isn't a real 
 that table is dropped, so nothing here is guessed. Types, nullability, keys and defaults
 are the live production schema, not migration files.
 
-Last verified: **2026-09-05**.
+Last verified: **2026-09-05**. Narrative companion (created vs. borrowed vs. added-columns,
+with the why/how): [DB_GUIDE.md](DB_GUIDE.md).
 
 > **2026-09-05:** by product decision the Create Sales Order draft was moved off
 > `sales_order_draft_crm` (now dropped) onto the shared **`cart`** table — one JSON row

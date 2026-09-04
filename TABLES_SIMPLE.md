@@ -8,7 +8,9 @@ listed.
 
 Only the tables and columns this codebase actually reads or writes are documented below,
 with **what** each is for, **where** (which controller) it is used, and **why**.
-For full column types, keys and gotchas see [TABLES.md](TABLES.md). Last verified 2026-09-05.
+For full column types, keys and gotchas see [TABLES.md](TABLES.md). For a narrative
+"what the CRM created vs. borrowed vs. added-columns-to, and why" see
+[DB_GUIDE.md](DB_GUIDE.md). Last verified 2026-09-05.
 
 ---
 
