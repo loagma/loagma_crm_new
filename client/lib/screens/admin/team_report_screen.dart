@@ -21,13 +21,12 @@ class TeamReportScreen extends StatefulWidget {
   State<TeamReportScreen> createState() => _TeamReportScreenState();
 }
 
-enum _Activity { all, visits, calls, attention }
+enum _Activity { all, visits, calls }
 
 const _activityLabels = <_Activity, String>{
   _Activity.all: 'All',
   _Activity.visits: 'Has visits',
   _Activity.calls: 'Has calls',
-  _Activity.attention: 'Needs attention',
 };
 
 enum _RoleFilter { all, salesman, telecaller }
@@ -54,7 +53,6 @@ class _TeamReportScreenState extends State<TeamReportScreen> {
   CallDateFilter _dateFilter = CallDateFilter.today;
   DateTimeRange? _customRange;
   String _query = '';
-  String _employeeFilter = 'all'; // 'all' or a mobile
   _Activity _activity = _Activity.all;
   _RoleFilter _roleFilter = _RoleFilter.all;
   _Sort _sort = _Sort.active;
@@ -112,7 +110,6 @@ class _TeamReportScreenState extends State<TeamReportScreen> {
       _activity != _Activity.all ||
       _roleFilter != _RoleFilter.all ||
       _sort != _Sort.active ||
-      _employeeFilter != 'all' ||
       _includeLocked;
 
   int _visitCount(Map<String, dynamic> e) =>
@@ -120,16 +117,6 @@ class _TeamReportScreenState extends State<TeamReportScreen> {
   int _callCount(Map<String, dynamic> e) =>
       ((e['calls'] as Map?)?['count'] as num?)?.toInt() ?? 0;
   int _activityScore(Map<String, dynamic> e) => _visitCount(e) + _callCount(e);
-
-  bool _needsAttention(Map<String, dynamic> e) {
-    final att = e['attendance'] as Map?;
-    if (att == null) return true; // absent for the whole range
-    if (_isSingleDay) {
-      final latest = att['latest'] as Map?;
-      return latest?['is_late'] == true || latest?['was_interrupted'] == true;
-    }
-    return ((att['late_count'] as num?)?.toInt() ?? 0) > 0;
-  }
 
   String? _lastActivityIso(Map<String, dynamic> e) {
     final att = (e['attendance'] as Map?)?['latest'] as Map?;
@@ -143,7 +130,6 @@ class _TeamReportScreenState extends State<TeamReportScreen> {
           '${e['name'] ?? ''}'.toLowerCase().contains(q) ||
           '${e['mobile'] ?? ''}'.contains(q) ||
           '${e['city'] ?? ''}'.toLowerCase().contains(q);
-      final matchesEmp = _employeeFilter == 'all' || '${e['mobile']}' == _employeeFilter;
       final matchesRole = switch (_roleFilter) {
         _RoleFilter.all => true,
         _RoleFilter.salesman => e['role'] == 'salesman',
@@ -153,9 +139,8 @@ class _TeamReportScreenState extends State<TeamReportScreen> {
         _Activity.all => true,
         _Activity.visits => _visitCount(e) > 0,
         _Activity.calls => _callCount(e) > 0,
-        _Activity.attention => _needsAttention(e),
       };
-      return matchesQuery && matchesEmp && matchesRole && matchesActivity;
+      return matchesQuery && matchesRole && matchesActivity;
     }).toList();
 
     switch (_sort) {
@@ -379,12 +364,6 @@ class _TeamReportScreenState extends State<TeamReportScreen> {
       );
 
   Widget _activeChips() {
-    String empName() {
-      final e = _employees.firstWhere((x) => '${x['mobile']}' == _employeeFilter,
-          orElse: () => const {});
-      return '${e['name'] ?? _employeeFilter}';
-    }
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       child: Align(
@@ -401,8 +380,6 @@ class _TeamReportScreenState extends State<TeamReportScreen> {
                 });
                 _load();
               }),
-            if (_employeeFilter != 'all')
-              _chip(empName(), () => setState(() => _employeeFilter = 'all')),
             if (_roleFilter != _RoleFilter.all)
               _chip(_roleLabels[_roleFilter]!,
                   () => setState(() => _roleFilter = _RoleFilter.all)),
@@ -645,15 +622,11 @@ class _TeamReportScreenState extends State<TeamReportScreen> {
     var tRange = _customRange;
     DateTime? tFrom = _customRange?.start;
     DateTime? tTo = _customRange?.end;
-    var tEmp = _employeeFilter;
     var tActivity = _activity;
     var tRole = _roleFilter;
     var tSort = _sort;
     var tLocked = _includeLocked;
 
-    // Snapshot the roster for the employee chips (filtering by employee never
-    // refetches, so "all currently-loaded people" is the right list).
-    final roster = _employees;
     final showRoleFilter = _hasSalesmen && _hasTelecallers;
 
     await showModalBottomSheet<bool>(
@@ -714,40 +687,6 @@ class _TeamReportScreenState extends State<TeamReportScreen> {
                                 if (tFrom != null && tFrom!.isAfter(d)) tFrom = d;
                               })),
                         ),
-                      ],
-                    ),
-                  ],
-                  if (roster.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    _label('Employee'),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('Everyone'),
-                          selected: tEmp == 'all',
-                          selectedColor: kGold.withValues(alpha: 0.25),
-                          labelStyle: TextStyle(
-                              fontSize: 12,
-                              color: tEmp == 'all' ? kGoldDark : Colors.black87,
-                              fontWeight: FontWeight.w600),
-                          onSelected: (_) => setSheet(() => tEmp = 'all'),
-                        ),
-                        for (final e in roster)
-                          ChoiceChip(
-                            label: Text('${e['name'] ?? e['mobile']}'),
-                            selected: tEmp == '${e['mobile']}',
-                            selectedColor: kGold.withValues(alpha: 0.25),
-                            labelStyle: TextStyle(
-                                fontSize: 12,
-                                color: tEmp == '${e['mobile']}'
-                                    ? kGoldDark
-                                    : Colors.black87,
-                                fontWeight: FontWeight.w600),
-                            onSelected: (_) =>
-                                setSheet(() => tEmp = '${e['mobile']}'),
-                          ),
                       ],
                     ),
                   ],
@@ -832,7 +771,6 @@ class _TeamReportScreenState extends State<TeamReportScreen> {
                             tRange = null;
                             tFrom = null;
                             tTo = null;
-                            tEmp = 'all';
                             tActivity = _Activity.all;
                             tRole = _RoleFilter.all;
                             tSort = _Sort.active;
@@ -874,7 +812,6 @@ class _TeamReportScreenState extends State<TeamReportScreen> {
       setState(() {
         _dateFilter = tDate;
         _customRange = tDate == CallDateFilter.custom ? tRange : null;
-        _employeeFilter = tEmp;
         _activity = tActivity;
         _roleFilter = tRole;
         _sort = tSort;
