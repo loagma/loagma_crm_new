@@ -23,6 +23,49 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
   String _error = '';
   int _total = 0;
   List<Map<String, dynamic>> _items = [];
+  // Status chip filter: all/pending/visited/productive/revisit — mirrors the
+  // single per-card status tag (productive > visited > revisit > pending).
+  String _statusFilter = 'all';
+
+  static const _statusFilters = <(String, String)>[
+    ('all', 'All'),
+    ('pending', 'Pending'),
+    ('visited', 'Visited'),
+    ('productive', 'Productive'),
+    ('revisit', 'Revisit'),
+  ];
+
+  String _statusOf(Map<String, dynamic> item) {
+    final status = item['status'] as String?;
+    if (status != null) return status;
+    // Fallback for an older cached response without `status`.
+    if (item['visited_today'] == true) return 'visited';
+    if (item['follow_up_due'] == true) return 'revisit';
+    return 'pending';
+  }
+
+  List<Map<String, dynamic>> get _visibleItems => _statusFilter == 'all'
+      ? _items
+      : _items.where((i) => _statusOf(i) == _statusFilter).toList();
+
+  int _countFor(String key) => key == 'all'
+      ? _items.length
+      : _items.where((i) => _statusOf(i) == key).length;
+
+  Color _statusChipColor(String key) {
+    switch (key) {
+      case 'productive':
+        return const Color(0xFF2E7D32);
+      case 'visited':
+        return const Color(0xFF1976D2);
+      case 'revisit':
+        return const Color(0xFFE53935);
+      case 'pending':
+        return const Color(0xFF757575);
+      default:
+        return _gold;
+    }
+  }
 
   @override
   void initState() {
@@ -140,28 +183,71 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
                             ),
                           ],
                         ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Total Planned: $_total',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        // Status filter chips — tapping one shows only the
+                        // cards with that status tag (same precedence:
+                        // productive > visited > revisit > pending).
+                        SizedBox(
+                          height: 34,
+                          child: ListView(
+                            scrollDirection: Axis.horizontal,
+                            children: [
+                              for (final f in _statusFilters)
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: GestureDetector(
+                                    onTap: () => setState(() => _statusFilter = f.$1),
+                                    child: Container(
+                                      alignment: Alignment.center,
+                                      padding: const EdgeInsets.symmetric(horizontal: 13),
+                                      decoration: BoxDecoration(
+                                        color: _statusFilter == f.$1
+                                            ? _statusChipColor(f.$1)
+                                            : Colors.white,
+                                        borderRadius: BorderRadius.circular(20),
+                                        border: Border.all(
+                                          color: _statusFilter == f.$1
+                                              ? _statusChipColor(f.$1)
+                                              : const Color(0xFFE7E7E7),
+                                          width: 1.4,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        '${f.$2} (${_countFor(f.$1)})',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                          color: _statusFilter == f.$1
+                                              ? Colors.white
+                                              : const Color(0xFF5A6472),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
                         const SizedBox(height: 10),
                         Row(
                           children: [
-                            _Chip(
-                              label: 'Total Planned: $_total',
-                              color: const Color(0xFF1976D2),
-                            ),
-                            const SizedBox(width: 8),
-                            _Chip(
-                              label: 'Shown: ${_items.length}',
-                              color: const Color(0xFF43A047),
-                            ),
-                            const SizedBox(width: 8),
                             OutlinedButton.icon(
-                              onPressed: _items.isEmpty
+                              onPressed: _visibleItems.isEmpty
                                   ? null
                                   : () => Navigator.push(
                                       context,
                                       MaterialPageRoute(
                                         builder: (_) => AccountMapScreen(
                                           title: "Today's Beat Plan — Map",
-                                          accounts: _items.map((item) {
+                                          accounts: _visibleItems.map((item) {
                                             final acc =
                                                 Map<String, dynamic>.from(
                                                   item['account'] as Map? ?? {},
@@ -201,7 +287,7 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
                   ),
                   const SizedBox(height: 12),
 
-                  if (_items.isEmpty)
+                  if (_visibleItems.isEmpty)
                     Center(
                       child: Padding(
                         padding: const EdgeInsets.only(top: 40),
@@ -215,7 +301,9 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
                             ),
                             const SizedBox(height: 14),
                             Text(
-                              'No accounts scheduled for today',
+                              _items.isEmpty
+                                  ? 'No accounts scheduled for today'
+                                  : 'No accounts with this status',
                               style: TextStyle(
                                 fontSize: 15,
                                 color: Colors.grey.shade500,
@@ -227,11 +315,11 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
                     )
                   else
                     ...List.generate(
-                      _items.length,
+                      _visibleItems.length,
                       (i) => Padding(
                         padding: const EdgeInsets.only(bottom: 10),
                         child: _CustomerCard(
-                          item: _items[i],
+                          item: _visibleItems[i],
                           todaysItems: _items,
                           onReturn: _load,
                         ),
@@ -450,6 +538,12 @@ class _CustomerCard extends StatelessWidget {
     final days = item['days'] as List?;
     final visited = item['visited_today'] == true;
     final followUpDue = item['follow_up_due'] == true;
+    // Single status per card: productive > visited > revisit > pending,
+    // computed server-side (BeatPlanController). Falls back to the legacy
+    // booleans if an older cached response doesn't carry `status` yet.
+    final status = item['status'] as String? ??
+        (visited ? 'visited' : (followUpDue ? 'revisit' : 'pending'));
+    final isProductive = status == 'productive';
     final stage = acc['customerStage'] as String? ?? accountType;
     final st = stageStyle(stage);
     final prio = priorityForStage(stage);
@@ -461,10 +555,14 @@ class _CustomerCard extends StatelessWidget {
     // to trigger by accident and made Proceed feel redundant.
     return Container(
       decoration: BoxDecoration(
-        color: visited ? const Color(0xFFF0FFF4) : _cardBg,
+        color: isProductive
+            ? const Color(0xFFE8F5E9)
+            : (visited ? const Color(0xFFF0FFF4) : _cardBg),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: visited ? const Color(0xFFC8E6C9) : const Color(0xFFFFD8D2),
+          color: isProductive
+              ? const Color(0xFFA5D6A7)
+              : (visited ? const Color(0xFFC8E6C9) : const Color(0xFFFFD8D2)),
         ),
         boxShadow: const [
           BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2)),
@@ -505,24 +603,37 @@ class _CustomerCard extends StatelessWidget {
                           ? const Color(0xFF1976D2)
                           : const Color(0xFFF57C00),
                     ),
-                    if (followUpDue)
-                      _Tag(
-                        label: 'Follow-up due',
-                        bg: const Color(0xFFFFEBEE),
-                        fg: const Color(0xFFE53935),
-                      ),
-                    if (visited)
-                      _Tag(
-                        label: '✓ Visited',
-                        bg: const Color(0xFFE8F5E9),
-                        fg: const Color(0xFF2E7D32),
-                      )
-                    else
-                      _Tag(
-                        label: _freqLabel(freq, days),
-                        bg: const Color(0xFFE8F5E9),
-                        fg: const Color(0xFF2E7D32),
-                      ),
+                    // Schedule is always shown — the status tag below is a
+                    // separate, explicit signal (Pending/Visited/Productive/
+                    // Revisit) rather than replacing this info.
+                    _Tag(
+                      label: _freqLabel(freq, days),
+                      bg: const Color(0xFFF3F3F3),
+                      fg: const Color(0xFF5B5B5B),
+                    ),
+                    _Tag(
+                      label: isProductive
+                          ? '✓ Productive'
+                          : visited
+                          ? '✓ Visited'
+                          : followUpDue
+                          ? 'Revisit due'
+                          : 'Pending',
+                      bg: isProductive
+                          ? const Color(0xFFC8E6C9)
+                          : visited
+                          ? const Color(0xFFE8F5E9)
+                          : followUpDue
+                          ? const Color(0xFFFFEBEE)
+                          : const Color(0xFFF5F5F5),
+                      fg: isProductive
+                          ? const Color(0xFF1B5E20)
+                          : visited
+                          ? const Color(0xFF2E7D32)
+                          : followUpDue
+                          ? const Color(0xFFE53935)
+                          : const Color(0xFF757575),
+                    ),
                   ],
                 ),
               ),
@@ -567,7 +678,7 @@ class _CustomerCard extends StatelessWidget {
                         vertical: 7,
                       ),
                       decoration: BoxDecoration(
-                        color: visited ? const Color(0xFF2E7D32) : _gold,
+                        color: (visited || isProductive) ? const Color(0xFF2E7D32) : _gold,
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
@@ -728,25 +839,6 @@ class _Tag extends StatelessWidget {
     child: Text(
       label,
       style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: fg),
-    ),
-  );
-}
-
-class _Chip extends StatelessWidget {
-  final String label;
-  final Color color;
-  const _Chip({required this.label, required this.color});
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.10),
-      borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: color.withValues(alpha: 0.30)),
-    ),
-    child: Text(
-      label,
-      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
     ),
   );
 }

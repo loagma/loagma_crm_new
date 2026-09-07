@@ -34,6 +34,27 @@ class TelecallerController extends Controller
         return (string) JWTAuth::parseToken()->authenticate()->mobile;
     }
 
+    // "Productive" = an order was placed today for that (customer) account.
+    // `orders` has no created_at — creation time is the unix-epoch `start_time`
+    // column (set by SalesOrderController::create()) — so "today" is a
+    // start_time range, not a date column. Leads can't place orders, so only
+    // customer (user) ids are worth querying.
+    private function productiveAccountIdsToday(array $customerUserIds): \Illuminate\Support\Collection
+    {
+        if (empty($customerUserIds)) {
+            return collect();
+        }
+
+        $today = Carbon::today();
+
+        return DB::table('orders')
+            ->whereIn('buyer_userid', $customerUserIds)
+            ->whereBetween('start_time', [$today->copy()->startOfDay()->timestamp, $today->copy()->endOfDay()->timestamp])
+            ->distinct()
+            ->pluck('buyer_userid')
+            ->flip();
+    }
+
     // ── Hierarchy helpers (same pattern as AttendanceController/ComplaintController) ─
 
     // Returns mobile strings of the children directly assigned to this parent
@@ -617,6 +638,10 @@ class TelecallerController extends Controller
         // Follow-ups now live in beat_plan_followup_crm (written at check-out).
         $openFollow  = BeatPlanFollowup::where('staff_id', $mobile)
             ->where('done', false)->pluck('account_id')->flip();
+        // Orders placed today, for the customer accounts on this worklist.
+        $productiveIds = $this->productiveAccountIdsToday(
+            $customers->pluck('userid')->map(fn ($id) => (string) $id)->all()
+        );
 
         // Last contact (max called_at) per account.
         $lastContact = CallLog::where('employee_mobile', $mobile)->whereNotNull('account_id')
@@ -628,15 +653,21 @@ class TelecallerController extends Controller
             ->select('account_id', DB::raw('MIN(due_date) as next_at'))
             ->groupBy('account_id')->pluck('next_at', 'account_id');
 
-        $deriveLabel = function (string $id) use ($labels, $calledToday, $openFollow): string {
+        // Precedence: an explicit manual label (wrong_number/do_not_call, set
+        // via setLabel()) always wins since it's a deliberate override; then
+        // productive > called_today > follow_up > not_called (pending).
+        $deriveLabel = function (string $id) use ($labels, $calledToday, $openFollow, $productiveIds): string {
             if (isset($labels[$id])) {
                 return $labels[$id]->label;
             }
-            if ($openFollow->has($id)) {
-                return 'follow_up';
+            if ($productiveIds->has($id)) {
+                return 'productive';
             }
             if ($calledToday->has($id)) {
                 return 'called_today';
+            }
+            if ($openFollow->has($id)) {
+                return 'follow_up';
             }
             return 'not_called';
         };

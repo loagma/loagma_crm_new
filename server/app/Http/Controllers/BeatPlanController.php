@@ -43,6 +43,25 @@ class BeatPlanController extends Controller
             ->groupBy('user_id');
     }
 
+    // "Productive" = an order was placed today for that (customer) account.
+    // `orders` has no created_at — creation time is the unix-epoch `start_time`
+    // column (set by SalesOrderController::create()) — so "today" is a
+    // start_time range, not a date column. Leads can't place orders, so only
+    // customer-type account ids are worth querying.
+    private function productiveAccountIdsInRange(array $customerUserIds, Carbon $start, Carbon $end): \Illuminate\Support\Collection
+    {
+        if (empty($customerUserIds)) {
+            return collect();
+        }
+
+        return \DB::table('orders')
+            ->whereIn('buyer_userid', $customerUserIds)
+            ->whereBetween('start_time', [$start->timestamp, $end->timestamp])
+            ->distinct()
+            ->pluck('buyer_userid')
+            ->flip();
+    }
+
     // Address 1 is the account's own `user.address` column; Address 2+ are
     // the saved entries in `user_addresses` (default first).
     private function buildAddressList(object $user, \Illuminate\Support\Collection $savedAddresses): \Illuminate\Support\Collection
@@ -258,7 +277,24 @@ class BeatPlanController extends Controller
             ->get()
             ->keyBy('account_id');
 
-        $data = $plans->map(function (BeatPlan $plan) use ($visitedAccountIds, $followups, $leads, $customers, $addressesByUser) {
+        // Orders placed today, for the customer-type accounts on today's plan.
+        $productiveAccountIds = $this->productiveAccountIdsInRange(
+            $customerIds,
+            $today->copy()->startOfDay(),
+            $today->copy()->endOfDay()
+        );
+
+        // Single status per account: productive > visited > revisit > pending.
+        // $productiveAccountIds is captured by reference — it grows below when
+        // synthetic follow-up accounts outside today's plan are appended.
+        $statusFor = function ($accountId) use (&$productiveAccountIds, $visitedAccountIds, $followups) {
+            if ($productiveAccountIds->has($accountId)) return 'productive';
+            if ($visitedAccountIds->has($accountId)) return 'visited';
+            if ($followups->has($accountId)) return 'revisit';
+            return 'pending';
+        };
+
+        $data = $plans->map(function (BeatPlan $plan) use ($visitedAccountIds, $followups, $leads, $customers, $addressesByUser, $statusFor) {
             $account = null;
             if ($plan->account_type === 'customer') {
                 $user = $customers->get($plan->account_id);
@@ -294,6 +330,7 @@ class BeatPlanController extends Controller
                 'interval_days'  => $plan->interval_days,
                 'visited_today'  => $visitedAccountIds->has($plan->account_id),
                 'follow_up_due'  => $followups->has($plan->account_id),
+                'status'         => $statusFor($plan->account_id),
                 'account_type'   => $plan->account_type,
                 'account'        => $account,
             ];
@@ -314,6 +351,16 @@ class BeatPlanController extends Controller
             $fLeads = !empty($fLeadIds) ? LeadsAccount::whereIn('id', $fLeadIds)->get()->keyBy('id') : collect();
             $fCust  = !empty($fCustIds) ? DB::table('user')->whereIn('userid', $fCustIds)->get()->keyBy('userid') : collect();
             $fAddr  = $this->addressesByUserIds($fCustIds);
+
+            // These accounts weren't in $customerIds, so pull in their
+            // "productive today" status too, or $statusFor below would
+            // wrongly fall through to revisit for one that placed an order.
+            $newCustIds = array_values(array_diff($fCustIds, $customerIds));
+            if (!empty($newCustIds)) {
+                $productiveAccountIds = $productiveAccountIds->union(
+                    $this->productiveAccountIdsInRange($newCustIds, $today->copy()->startOfDay(), $today->copy()->endOfDay())
+                );
+            }
 
             foreach ($extraFollow as $accId => $f) {
                 $account = null; $type = $f->account_type;
@@ -342,6 +389,7 @@ class BeatPlanController extends Controller
                     'interval_days'    => null,
                     'visited_today'    => $visitedAccountIds->has($accId),
                     'follow_up_due'    => true,
+                    'status'           => $statusFor($accId),
                     'account_type'     => $type,
                     'account'          => $account,
                 ]);
@@ -398,7 +446,26 @@ class BeatPlanController extends Controller
                     ->pluck('account_id')
                     ->flip();
 
-                $data = $plans->map(function (BeatPlan $plan) use ($visitedIds, $leads, $customers, $addressesByUser) {
+                $revisitIds = BeatPlanFollowup::where('staff_id', $salesman)
+                    ->where('done', false)
+                    ->whereDate('due_date', '<=', $date->toDateString())
+                    ->pluck('account_id')
+                    ->flip();
+
+                $productiveIds = $this->productiveAccountIdsInRange(
+                    $customerIds,
+                    $date->copy()->startOfDay(),
+                    $date->copy()->endOfDay()
+                );
+
+                $statusFor = function ($accountId) use ($productiveIds, $visitedIds, $revisitIds) {
+                    if ($productiveIds->has($accountId)) return 'productive';
+                    if ($visitedIds->has($accountId)) return 'visited';
+                    if ($revisitIds->has($accountId)) return 'revisit';
+                    return 'pending';
+                };
+
+                $data = $plans->map(function (BeatPlan $plan) use ($visitedIds, $statusFor, $leads, $customers, $addressesByUser) {
                     $account = null;
                     if ($plan->account_type === 'customer') {
                         $user = $customers->get($plan->account_id);
@@ -422,6 +489,7 @@ class BeatPlanController extends Controller
                     return [
                         'beat_plan_id'   => $plan->id,
                         'visited_today'  => $visitedIds->has($plan->account_id),
+                        'status'         => $statusFor($plan->account_id),
                         'frequency'      => $plan->frequency,
                         'days'           => $plan->days,
                         'month_date'     => $plan->month_date,
@@ -466,19 +534,50 @@ class BeatPlanController extends Controller
             // Visits logged this week (distinct accounts checked out)
             $weekStart = $monday->toDateString();
             $weekEnd   = $monday->copy()->addDays(6)->toDateString();
-            $visited   = ActionLog::where('employee_mobile', $salesman)
+            $visitedIds = ActionLog::where('employee_mobile', $salesman)
                 ->whereNotNull('check_out_at')
                 ->whereBetween('check_out_at', [
                     Carbon::parse($weekStart, self::TZ)->startOfDay(),
                     Carbon::parse($weekEnd, self::TZ)->endOfDay(),
                 ])
-                ->distinct('account_id')
-                ->count('account_id');
+                ->distinct()
+                ->pluck('account_id')
+                ->flip();
+            $visited = $visitedIds->count();
+
+            // Per-account status this week (productive > visited > revisit >
+            // pending), same precedence as today()/week(?date=...).
+            $plannedAccountIds  = $allPlans->pluck('account_id')->unique()->values();
+            $plannedCustomerIds = $allPlans->where('account_type', 'customer')->pluck('account_id')->unique()->values()->all();
+            $productiveIds = $this->productiveAccountIdsInRange(
+                $plannedCustomerIds,
+                Carbon::parse($weekStart, self::TZ)->startOfDay(),
+                Carbon::parse($weekEnd, self::TZ)->endOfDay()
+            );
+            $revisitIds = BeatPlanFollowup::where('staff_id', $salesman)
+                ->where('done', false)
+                ->whereDate('due_date', '<=', $weekEnd)
+                ->pluck('account_id')
+                ->flip();
+
+            $statusCounts = ['pending' => 0, 'visited' => 0, 'productive' => 0, 'revisit' => 0];
+            foreach ($plannedAccountIds as $accId) {
+                if ($productiveIds->has($accId)) {
+                    $statusCounts['productive']++;
+                } elseif ($visitedIds->has($accId)) {
+                    $statusCounts['visited']++;
+                } elseif ($revisitIds->has($accId)) {
+                    $statusCounts['revisit']++;
+                } else {
+                    $statusCounts['pending']++;
+                }
+            }
 
             return response()->json([
                 'success'      => true,
                 'week_start'   => $weekStart,
                 'week_end'     => $weekEnd,
+                'status_counts' => $statusCounts,
                 'total'        => $allPlans->count(),
                 'planned'      => $totalPlanned,
                 'visited'      => $visited,

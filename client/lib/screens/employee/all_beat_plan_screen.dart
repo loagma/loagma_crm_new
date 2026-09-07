@@ -17,12 +17,15 @@ class _AllBeatPlanScreenState extends State<AllBeatPlanScreen> {
   bool   _loading = true;
   String _error   = '';
 
-  int    _total     = 0;
-  int    _planned   = 0;
   int    _visited   = 0;
-  int    _remaining = 0;
   String _weekStart = '';
   String _weekEnd   = '';
+
+  // Per-account status this week: productive > visited > revisit > pending
+  // (server-computed, BeatPlanController::week()).
+  int _pending    = 0;
+  int _productive = 0;
+  int _revisit    = 0;
 
   // {dayName: {date, count}}
   Map<String, Map<String, dynamic>> _days = {};
@@ -53,12 +56,13 @@ class _AllBeatPlanScreenState extends State<AllBeatPlanScreen> {
           };
         }
         setState(() {
-          _total     = (res['total']     as int?) ?? 0;
-          _planned   = (res['planned']   as int?) ?? 0;
           _visited   = (res['visited']   as int?) ?? 0;
-          _remaining = (res['remaining'] as int?) ?? 0;
           _weekStart = (res['week_start'] as String?) ?? '';
           _weekEnd   = (res['week_end']   as String?) ?? '';
+          final statusCounts = res['status_counts'] as Map<String, dynamic>? ?? {};
+          _pending    = (statusCounts['pending']    as int?) ?? 0;
+          _productive = (statusCounts['productive'] as int?) ?? 0;
+          _revisit    = (statusCounts['revisit']    as int?) ?? 0;
           _days      = days;
           _loading   = false;
         });
@@ -177,10 +181,10 @@ class _AllBeatPlanScreenState extends State<AllBeatPlanScreen> {
                             const SizedBox(height: 10),
                             Row(children: [
                               Flexible(child: Wrap(spacing: 6, runSpacing: 4, children: [
-                                _Chip(label: 'Total: $_total',       color: _gold),
-                                _Chip(label: 'Planned: $_planned',   color: const Color(0xFF43A047)),
-                                _Chip(label: 'Visited: $_visited',   color: const Color(0xFF1976D2)),
-                                _Chip(label: 'Unassigned: $_remaining', color: const Color(0xFFEF5350)),
+                                _Chip(label: 'Pending: $_pending',       color: const Color(0xFF757575)),
+                                _Chip(label: 'Visited: $_visited',       color: const Color(0xFF1976D2)),
+                                _Chip(label: 'Productive: $_productive', color: const Color(0xFF2E7D32)),
+                                _Chip(label: 'Revisit: $_revisit',       color: const Color(0xFFE53935)),
                               ])),
                               const SizedBox(width: 8),
                               OutlinedButton.icon(

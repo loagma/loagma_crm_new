@@ -21,6 +21,48 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
   String _error   = '';
   List<Map<String, dynamic>> _items = [];
 
+  // Status chip filter: all/pending/visited/productive/revisit — mirrors the
+  // single per-card status tag (productive > visited > revisit > pending).
+  String _statusFilter = 'all';
+
+  static const _statusFilters = <(String, String)>[
+    ('all', 'All'),
+    ('pending', 'Pending'),
+    ('visited', 'Visited'),
+    ('productive', 'Productive'),
+    ('revisit', 'Revisit'),
+  ];
+
+  String _statusOf(Map<String, dynamic> item) {
+    final status = item['status'] as String?;
+    if (status != null) return status;
+    if (item['visited_today'] == true) return 'visited';
+    return 'pending';
+  }
+
+  List<Map<String, dynamic>> get _visibleItems => _statusFilter == 'all'
+      ? _items
+      : _items.where((i) => _statusOf(i) == _statusFilter).toList();
+
+  int _countFor(String key) => key == 'all'
+      ? _items.length
+      : _items.where((i) => _statusOf(i) == key).length;
+
+  Color _statusChipColor(String key) {
+    switch (key) {
+      case 'productive':
+        return const Color(0xFF2E7D32);
+      case 'visited':
+        return const Color(0xFF1976D2);
+      case 'revisit':
+        return const Color(0xFFE53935);
+      case 'pending':
+        return const Color(0xFF757575);
+      default:
+        return _gold;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -96,7 +138,7 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                 MaterialPageRoute(
                   builder: (_) => AccountMapScreen(
                     title: '$_displayDate — Map',
-                    accounts: _items.map((item) {
+                    accounts: _visibleItems.map((item) {
                       final acc = Map<String, dynamic>.from(
                           item['account'] as Map? ?? {});
                       acc['_type'] = item['account_type'] ?? 'lead';
@@ -141,16 +183,67 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                                   color: _gold)),
                         ]),
                       ),
+                      // Status filter chips — tapping one shows only the
+                      // cards with that status tag (same precedence:
+                      // productive > visited > revisit > pending).
+                      SizedBox(
+                        height: 46,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          children: [
+                            for (final f in _statusFilters)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: GestureDetector(
+                                  onTap: () => setState(() => _statusFilter = f.$1),
+                                  child: Container(
+                                    alignment: Alignment.center,
+                                    padding: const EdgeInsets.symmetric(horizontal: 13),
+                                    decoration: BoxDecoration(
+                                      color: _statusFilter == f.$1
+                                          ? _statusChipColor(f.$1)
+                                          : Colors.white,
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                        color: _statusFilter == f.$1
+                                            ? _statusChipColor(f.$1)
+                                            : const Color(0xFFE7E7E7),
+                                        width: 1.4,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      '${f.$2} (${_countFor(f.$1)})',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: _statusFilter == f.$1
+                                            ? Colors.white
+                                            : const Color(0xFF5A6472),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                       Expanded(
-                        child: RefreshIndicator(
+                        child: _visibleItems.isEmpty
+                            ? Center(
+                                child: Text('No accounts with this status',
+                                    style: TextStyle(
+                                        fontSize: 14, color: Colors.grey.shade500)),
+                              )
+                            : RefreshIndicator(
                           onRefresh: _load,
                           child: ListView.separated(
                             padding: const EdgeInsets.all(12),
-                            itemCount: _items.length,
+                            itemCount: _visibleItems.length,
                             separatorBuilder: (_, _) =>
                                 const SizedBox(height: 8),
                             itemBuilder: (_, i) {
-                              final item    = _items[i];
+                              final item    = _visibleItems[i];
                               final acc     = (item['account'] as Map<String, dynamic>?) ?? {};
                               final name    = acc['businessName']  as String? ?? '—';
                               final code    = acc['accountCode']   as String? ?? '';
@@ -165,6 +258,11 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                               final area    = acc['area']          as String? ?? '';
                               final pin     = acc['pincode']       as String? ?? '';
                               final visited    = item['visited_today'] == true;
+                              // Single status: productive > visited > revisit
+                              // > pending (server-computed, BeatPlanController).
+                              final status = item['status'] as String? ?? (visited ? 'visited' : 'pending');
+                              final isProductive = status == 'productive';
+                              final isRevisit = status == 'revisit';
                               final sched      = _scheduleLabel(item);
                               final accountType = item['account_type'] as String? ?? 'lead';
 
@@ -180,14 +278,16 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                                 },
                                 child: Container(
                                   decoration: BoxDecoration(
-                                    color: visited
-                                        ? const Color(0xFFF0FFF4)
-                                        : Colors.white,
+                                    color: isProductive
+                                        ? const Color(0xFFE8F5E9)
+                                        : (visited ? const Color(0xFFF0FFF4) : Colors.white),
                                     borderRadius: BorderRadius.circular(12),
                                     border: Border.all(
-                                        color: visited
-                                            ? const Color(0xFFC8E6C9)
-                                            : const Color(0xFFEEEEEE)),
+                                        color: isProductive
+                                            ? const Color(0xFFA5D6A7)
+                                            : (visited
+                                                ? const Color(0xFFC8E6C9)
+                                                : const Color(0xFFEEEEEE))),
                                     boxShadow: const [BoxShadow(
                                         color: Colors.black12,
                                         blurRadius: 4,
@@ -249,7 +349,28 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                                                               0xFFF57C00))),
                                             ),
                                             const SizedBox(width: 6),
-                                            if (visited)
+                                            if (isProductive)
+                                              Container(
+                                                padding: const EdgeInsets
+                                                    .symmetric(
+                                                    horizontal: 8,
+                                                    vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(
+                                                      0xFFC8E6C9),
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          10),
+                                                ),
+                                                child: const Text('✓ Productive',
+                                                    style: TextStyle(
+                                                        fontSize: 10,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                        color: Color(
+                                                            0xFF1B5E20))),
+                                              )
+                                            else if (visited)
                                               Container(
                                                 padding: const EdgeInsets
                                                     .symmetric(
@@ -269,6 +390,48 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                                                             FontWeight.w700,
                                                         color: Color(
                                                             0xFF2E7D32))),
+                                              )
+                                            else if (isRevisit)
+                                              Container(
+                                                padding: const EdgeInsets
+                                                    .symmetric(
+                                                    horizontal: 8,
+                                                    vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(
+                                                      0xFFFFEBEE),
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          10),
+                                                ),
+                                                child: const Text('Revisit due',
+                                                    style: TextStyle(
+                                                        fontSize: 10,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                        color: Color(
+                                                            0xFFE53935))),
+                                              )
+                                            else
+                                              Container(
+                                                padding: const EdgeInsets
+                                                    .symmetric(
+                                                    horizontal: 8,
+                                                    vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(
+                                                      0xFFF5F5F5),
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          10),
+                                                ),
+                                                child: const Text('Pending',
+                                                    style: TextStyle(
+                                                        fontSize: 10,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                        color: Color(
+                                                            0xFF757575))),
                                               ),
                                           ]),
                                           Text(code,

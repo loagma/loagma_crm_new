@@ -52,13 +52,15 @@ const kComplaintCategories = <String>[
 const kLabelNotCalled = 'not_called';
 const kLabelCalledToday = 'called_today';
 const kLabelFollowUp = 'follow_up';
+const kLabelProductive = 'productive';
 const kLabelWrongNumber = 'wrong_number';
 const kLabelDoNotCall = 'do_not_call';
 
 const kWorklistLabels = <String, ({String text, Color color})>{
-  kLabelNotCalled: (text: 'Not Called', color: Color(0xFF757575)),
-  kLabelCalledToday: (text: 'Called Today', color: Color(0xFF43A047)),
+  kLabelNotCalled: (text: 'Pending', color: Color(0xFF757575)),
+  kLabelCalledToday: (text: 'Called', color: Color(0xFF43A047)),
   kLabelFollowUp: (text: 'Follow-up Due', color: Color(0xFFFB8C00)),
+  kLabelProductive: (text: 'Productive', color: Color(0xFF2F9E57)),
   kLabelWrongNumber: (text: 'Wrong Number', color: Color(0xFFE53935)),
   kLabelDoNotCall: (text: 'Do Not Call', color: Color(0xFF212121)),
 };
