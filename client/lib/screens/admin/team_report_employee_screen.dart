@@ -7,14 +7,21 @@ import '../../services/user_service.dart';
 import '../../widgets/attendance_day_card.dart';
 import '../../widgets/call_recording_player.dart';
 import '../../widgets/single_location_map_screen.dart';
+import '../telecaller/call_date_filter.dart';
 import '../telecaller/telecaller_mock_data.dart'
     show kGold, kGoldDark, kBg, kOutcomeColors, kOutcomeLabels, money;
 
-/// Team Report drill-in — one subordinate's full day(s), read-only: every
-/// attendance record (via the shared [AttendanceDayCard]), every completed
-/// shop visit, and every call. Reached from [TeamReportScreen]; no actions.
+/// A single person's full day(s), read-only: every attendance record (via the
+/// shared [AttendanceDayCard]), every completed shop visit, and every call.
+///
+/// Two modes:
+///  - **Team drill-in** — [mobile] is a subordinate; date range comes fixed via
+///    [from]/[to] from [TeamReportScreen]. No date filter here.
+///  - **Self ("My Report")** — [mobile] omitted; uses the logged-in staff
+///    member and carries its own date-range filter. Any salesman / telecaller
+///    can open it; the server's `/team/my-report` has no role gate.
 class TeamReportEmployeeScreen extends StatefulWidget {
-  final String mobile;
+  final String? mobile;
   final String name;
   final String role;
   final String? from;
@@ -22,9 +29,9 @@ class TeamReportEmployeeScreen extends StatefulWidget {
 
   const TeamReportEmployeeScreen({
     super.key,
-    required this.mobile,
-    required this.name,
-    required this.role,
+    this.mobile,
+    this.name = '',
+    this.role = '',
     this.from,
     this.to,
   });
@@ -33,10 +40,29 @@ class TeamReportEmployeeScreen extends StatefulWidget {
   State<TeamReportEmployeeScreen> createState() => _TeamReportEmployeeScreenState();
 }
 
+enum _Show { all, attendance, visits, calls }
+
+const _showLabels = <_Show, String>{
+  _Show.all: 'Everything',
+  _Show.attendance: 'Attendance',
+  _Show.visits: 'Visits',
+  _Show.calls: 'Calls',
+};
+
 class _TeamReportEmployeeScreenState extends State<TeamReportEmployeeScreen> {
   bool _loading = true;
   String _error = '';
   Map<String, dynamic>? _data;
+
+  // Self-mode ("My Report") date filter — ignored in team drill-in mode.
+  CallDateFilter _dateFilter = CallDateFilter.today;
+  DateTimeRange? _customRange;
+  _Show _show = _Show.all;
+
+  bool get _selfMode => widget.mobile == null || widget.mobile!.isEmpty;
+  String get _mobile => _selfMode ? (UserService.currentMobile ?? '') : widget.mobile!;
+  String get _name =>
+      _selfMode ? (UserService.currentName ?? 'My Report') : widget.name;
 
   bool get _isTeleadminViewer =>
       (UserService.currentRole ?? '').toLowerCase().replaceAll(' ', '') == 'teleadmin';
@@ -49,14 +75,22 @@ class _TeamReportEmployeeScreenState extends State<TeamReportEmployeeScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final res = await ApiService.getTeamReportEmployee(widget.mobile,
-        from: widget.from, to: widget.to);
+    final Map<String, dynamic>? res;
+    if (_selfMode) {
+      final r = callDateRangeYmd(_dateFilter, _customRange);
+      res = await ApiService.getMyReport(from: r.from, to: r.to);
+    } else {
+      res = await ApiService.getTeamReportEmployee(widget.mobile!,
+          from: widget.from, to: widget.to);
+    }
     if (!mounted) return;
     setState(() {
       _loading = false;
       if (res == null) {
-        _error = "Couldn't load this employee's report — you may not have access, "
-            'or the connection dropped.';
+        _error = _selfMode
+            ? "Couldn't load your report — check your connection and retry."
+            : "Couldn't load this employee's report — you may not have access, "
+                'or the connection dropped.';
         _data = null;
       } else {
         _error = '';
@@ -125,16 +159,45 @@ class _TeamReportEmployeeScreenState extends State<TeamReportEmployeeScreen> {
           .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
           .join(' ');
 
+  bool _showAtt() => _show == _Show.all || _show == _Show.attendance;
+  bool _showVis() => _show == _Show.all || _show == _Show.visits;
+  bool _showCal() => _show == _Show.all || _show == _Show.calls;
+
   @override
   Widget build(BuildContext context) {
-    final title = widget.name.isEmpty ? widget.mobile : widget.name;
+    final title = _selfMode
+        ? 'My Report'
+        : (_name.isEmpty ? (_mobile.isEmpty ? 'Report' : _mobile) : _name);
+    final hasActiveFilter = _selfMode &&
+        (_dateFilter != CallDateFilter.today || _show != _Show.all);
+
     return Scaffold(
       backgroundColor: kBg,
       appBar: AppBar(
         backgroundColor: kGold,
         foregroundColor: Colors.white,
-        title: Text(title, overflow: TextOverflow.ellipsis),
+        title: _selfMode
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('My Report',
+                      style: TextStyle(fontWeight: FontWeight.w700)),
+                  Text(callDateChipLabel(_dateFilter, _customRange),
+                      style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.white70)),
+                ],
+              )
+            : Text(title, overflow: TextOverflow.ellipsis),
         actions: [
+          if (_selfMode)
+            IconButton(
+              icon: Icon(Icons.filter_list_rounded,
+                  color: hasActiveFilter ? Colors.white : Colors.white70),
+              tooltip: 'Filter',
+              onPressed: _openFilterSheet,
+            ),
           IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load),
         ],
       ),
@@ -148,18 +211,203 @@ class _TeamReportEmployeeScreenState extends State<TeamReportEmployeeScreen> {
                     padding: const EdgeInsets.fromLTRB(12, 12, 12, 28),
                     children: [
                       _headerCard(),
-                      const SizedBox(height: 14),
-                      _section('Attendance', Icons.fingerprint_rounded),
-                      ..._attendanceSection(),
-                      const SizedBox(height: 14),
-                      _section('Visits', Icons.storefront_rounded),
-                      ..._visitsSection(),
-                      const SizedBox(height: 14),
-                      _section('Calls', Icons.call_rounded),
-                      ..._callsSection(),
+                      if (_showAtt()) ...[
+                        const SizedBox(height: 14),
+                        _section('Attendance', Icons.fingerprint_rounded),
+                        ..._attendanceSection(),
+                      ],
+                      if (_showVis()) ...[
+                        const SizedBox(height: 14),
+                        _section('Visits', Icons.storefront_rounded),
+                        ..._visitsSection(),
+                      ],
+                      if (_showCal()) ...[
+                        const SizedBox(height: 14),
+                        _section('Calls', Icons.call_rounded),
+                        ..._callsSection(),
+                      ],
                     ],
                   ),
                 ),
+    );
+  }
+
+  // ── filter sheet (self mode) ─────────────────────────────────────────────
+  Future<void> _openFilterSheet() async {
+    var tDate = _dateFilter;
+    var tRange = _customRange;
+    DateTime? tFrom = _customRange?.start;
+    DateTime? tTo = _customRange?.end;
+    var tShow = _show;
+
+    await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => SafeArea(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Filter my report',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 14),
+                  _sheetLabel('Period'),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: CallDateFilter.values.map((f) {
+                      final sel = tDate == f;
+                      return ChoiceChip(
+                        label: Text(callDateFilterLabels[f]!),
+                        selected: sel,
+                        selectedColor: kGold.withValues(alpha: 0.25),
+                        labelStyle: TextStyle(
+                            fontSize: 12,
+                            color: sel ? kGoldDark : Colors.black87,
+                            fontWeight: FontWeight.w600),
+                        onSelected: (_) => setSheet(() => tDate = f),
+                      );
+                    }).toList(),
+                  ),
+                  if (tDate == CallDateFilter.custom) ...[
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Expanded(
+                        child: _dateField(ctx, 'From', tFrom, (d) => setSheet(() {
+                              tFrom = d;
+                              if (tTo != null && tTo!.isBefore(d)) tTo = d;
+                            })),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _dateField(ctx, 'To', tTo, (d) => setSheet(() {
+                              tTo = d;
+                              if (tFrom != null && tFrom!.isAfter(d)) tFrom = d;
+                            })),
+                      ),
+                    ]),
+                  ],
+                  const SizedBox(height: 16),
+                  _sheetLabel('Show'),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _Show.values.map((s) {
+                      final sel = tShow == s;
+                      return ChoiceChip(
+                        label: Text(_showLabels[s]!),
+                        selected: sel,
+                        selectedColor: kGold.withValues(alpha: 0.25),
+                        labelStyle: TextStyle(
+                            fontSize: 12,
+                            color: sel ? kGoldDark : Colors.black87,
+                            fontWeight: FontWeight.w600),
+                        onSelected: (_) => setSheet(() => tShow = s),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => setSheet(() {
+                          tDate = CallDateFilter.today;
+                          tRange = null;
+                          tFrom = null;
+                          tTo = null;
+                          tShow = _Show.all;
+                        }),
+                        child: const Text('Reset'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: kGold, foregroundColor: Colors.white),
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Apply'),
+                      ),
+                    ),
+                  ]),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ).then((applied) {
+      if (applied != true || !mounted) return;
+      if (tDate == CallDateFilter.custom) {
+        final a = tFrom ?? tTo ?? DateTime.now();
+        final b = tTo ?? tFrom ?? DateTime.now();
+        tRange = DateTimeRange(
+            start: a.isAfter(b) ? b : a, end: a.isAfter(b) ? a : b);
+      }
+      final needsRefetch =
+          tDate != _dateFilter || tRange != _customRange;
+      setState(() {
+        _dateFilter = tDate;
+        _customRange = tDate == CallDateFilter.custom ? tRange : null;
+        _show = tShow;
+      });
+      if (needsRefetch) _load();
+    });
+  }
+
+  Widget _sheetLabel(String t) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(t,
+            style: const TextStyle(
+                fontSize: 12, fontWeight: FontWeight.w700, color: Colors.black54)),
+      );
+
+  Widget _dateField(
+    BuildContext ctx,
+    String label,
+    DateTime? value,
+    ValueChanged<DateTime> onPick,
+  ) {
+    final now = DateTime.now();
+    return OutlinedButton(
+      onPressed: () async {
+        final d = await showDatePicker(
+          context: ctx,
+          initialDate: value ?? now,
+          firstDate: DateTime(now.year - 2),
+          lastDate: now,
+        );
+        if (d != null) onPick(d);
+      },
+      style: OutlinedButton.styleFrom(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        side: BorderSide(color: Colors.grey.shade300),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 9.5, color: Colors.grey.shade500)),
+          const SizedBox(height: 2),
+          Row(children: [
+            Icon(Icons.event_rounded, size: 13, color: Colors.grey.shade500),
+            const SizedBox(width: 5),
+            Text(value == null ? 'Pick date' : fmtDay(value),
+                style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: value == null ? Colors.grey.shade400 : Colors.black87)),
+          ]),
+        ],
+      ),
     );
   }
 
@@ -167,7 +415,7 @@ class _TeamReportEmployeeScreenState extends State<TeamReportEmployeeScreen> {
   Widget _headerCard() {
     final emp = (_data?['employee'] as Map?)?.cast<String, dynamic>() ?? const {};
     final range = (_data?['range'] as Map?)?.cast<String, dynamic>() ?? const {};
-    final role = '${emp['role'] ?? widget.role}';
+    final role = '${emp['role'] ?? (widget.role.isNotEmpty ? widget.role : (UserService.currentRole ?? '')).toLowerCase()}';
     final isTele = role == 'telecaller';
     final rangeLabel = (range['from'] == range['to'])
         ? _fmtDate('${range['from']}')
@@ -179,7 +427,7 @@ class _TeamReportEmployeeScreenState extends State<TeamReportEmployeeScreen> {
         Row(
           children: [
             Expanded(
-              child: Text(widget.name.isEmpty ? widget.mobile : widget.name,
+              child: Text(_name.isEmpty ? _mobile : _name,
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
             ),
             Container(
@@ -200,7 +448,7 @@ class _TeamReportEmployeeScreenState extends State<TeamReportEmployeeScreen> {
           ],
         ),
         const SizedBox(height: 4),
-        Text('${emp['mobile'] ?? widget.mobile}'
+        Text('${emp['mobile'] ?? _mobile}'
             '${(emp['city'] ?? '').toString().isEmpty ? '' : ' · ${emp['city']}'}',
             style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
         const SizedBox(height: 6),
@@ -244,13 +492,13 @@ class _TeamReportEmployeeScreenState extends State<TeamReportEmployeeScreen> {
               fmtTime: _fmtTime,
               fmtMins: _fmtMins,
             ),
-            if (hasRoute && !_isTeleadminViewer)
+            if (hasRoute && !_selfMode && !_isTeleadminViewer)
               Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton.icon(
                   onPressed: () => context.push('/route-view', extra: {
-                    'mobile': widget.mobile,
-                    'name': widget.name,
+                    'mobile': _mobile,
+                    'name': _name,
                     'date': date,
                   }),
                   icon: const Icon(Icons.map_rounded, size: 15),

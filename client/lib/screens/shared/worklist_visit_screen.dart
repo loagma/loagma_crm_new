@@ -64,7 +64,9 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
   bool get _live => _checkedIn && !_checkedOut;
 
   // ── Tabs ──────────────────────────────────────────────────────────────────
-  int _tab = 0; // 0 Overview · 1 Orders · 2 Log · 3 Calls · 4 Account
+  // Overview is no longer a tab — its content opens as a top sheet from the
+  // details icon on the account card (see _showDetailsSheet).
+  int _tab = 0; // 0 Orders · 1 Log · 2 Calls · 3 Account
 
   // ── Data ──────────────────────────────────────────────────────────────────
   List<Map<String, dynamic>> _stages = [];
@@ -89,6 +91,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
     super.initState();
     if (_isSalesman) _loadStages();
     _restoreOpenVisit();
+    _loadOrders(); // first tab is now Order History
   }
 
   @override
@@ -687,16 +690,16 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
   void _switchTab(int i) {
     setState(() => _tab = i);
     switch (i) {
-      case 1:
+      case 0:
         _loadOrders();
         break;
-      case 2:
+      case 1:
         _loadLogs();
         break;
-      case 3:
+      case 2:
         _loadCalls();
         break;
-      case 4:
+      case 3:
         _loadLedger();
         break;
     }
@@ -738,11 +741,10 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
           const SizedBox(height: 12),
           _tabBar(),
           const SizedBox(height: 12),
-          if (_tab == 0) _overviewTab(),
-          if (_tab == 1) _ordersTab(),
-          if (_tab == 2) _logsTab(),
-          if (_tab == 3) _callsTab(),
-          if (_tab == 4) _ledgerTab(),
+          if (_tab == 0) _ordersTab(),
+          if (_tab == 1) _logsTab(),
+          if (_tab == 2) _callsTab(),
+          if (_tab == 3) _ledgerTab(),
         ],
       ),
     );
@@ -764,8 +766,10 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
         children: [
           Row(
             children: [
-              if (code.isNotEmpty)
-                Text(code, style: const TextStyle(fontSize: 11, color: Colors.grey, letterSpacing: .4)),
+              if (code.isNotEmpty) ...[
+                _pill('ID: $code', Colors.grey.shade600),
+                const SizedBox(width: 6),
+              ],
               const Spacer(),
               _pill(st.text, st.color),
             ],
@@ -789,6 +793,20 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
                 ),
               ),
               const SizedBox(width: 8),
+              // Opens the customer details as a sheet from the top (replaces
+              // the old Overview tab).
+              GestureDetector(
+                onTap: _showDetailsSheet,
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F1F1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.expand_more_rounded, size: 18, color: Colors.grey.shade700),
+                ),
+              ),
+              const SizedBox(width: 6),
               // Stays live whenever there's no open visit — after a check-out
               // it re-enables so the same customer can be visited again.
               _smallBtn(_checkedOut ? 'Check In Again' : 'Check In',
@@ -833,17 +851,18 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
                         {..._acc, '_type': widget.accountType},
                       ])))
                   : null),
-              // Salesman: complaint moved to an icon (its button slot is now
-              // Merchandise). Telecaller: quick follow-up scheduler.
-              if (_isSalesman)
-                _act(Icons.report_problem_rounded, Colors.red.shade600, _live ? _raiseComplaint : null)
-              else
+              // Complaint is an icon for BOTH roles now (its button slot is
+              // Merchandise for the salesman; the telecaller has no second
+              // button). Telecaller also keeps the quick follow-up scheduler.
+              _act(Icons.report_problem_rounded, Colors.red.shade600, _live ? _raiseComplaint : null),
+              if (!_isSalesman)
                 _act(Icons.event_available_rounded, const Color(0xFFD98A2B), _scheduleFollowUp),
             ],
           ),
           const SizedBox(height: 10),
-          // Main actions — Take Order is primary for both roles. Second slot:
-          // salesman → Merchandise, telecaller → Complaint.
+          // Main actions — Take Order is primary for both roles. Salesman gets
+          // a second Merchandise button; the telecaller's Take Order is full
+          // width (Complaint moved to the icon row above).
           Row(
             children: [
               Expanded(
@@ -860,8 +879,8 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
-              if (_isSalesman)
+              if (_isSalesman) ...[
+                const SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: _live ? _merchandise : null,
@@ -874,21 +893,8 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
                   ),
-                )
-              else
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _live ? _raiseComplaint : null,
-                    icon: const Icon(Icons.report_problem_rounded, size: 16),
-                    label: const Text('Complaint', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red.shade600,
-                      side: BorderSide(color: _live ? Colors.red.shade300 : Colors.grey.shade300),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                  ),
                 ),
+              ],
             ],
           ),
           if (!_live) ...[
@@ -913,11 +919,22 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
     );
   }
 
-  // ── Customer Overview tab ───────────────────────────────────────────────
-  Widget _overviewTab() {
+  // ── Customer details (opened as a top sheet from the account card) ──────
+  Widget _detailsContent() {
+    Widget block(String title, List<(String, String)> rows) => Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFEEEEEE)),
+          ),
+          child: _infoGrid(title, rows),
+        );
     return Column(
       children: [
-        _card(_infoGrid('Basic information', [
+        block('Basic information', [
           ('Phone', '${_acc['contactNumber'] ?? _acc['phone'] ?? '—'}'),
           ('Email', '${_acc['email'] ?? '—'}'),
           ('Address', '${_acc['address'] ?? '—'}'),
@@ -926,15 +943,79 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
           ('GST', '${_acc['gstNumber'] ?? '—'}'),
           ('PAN', '${_acc['panCard'] ?? '—'}'),
           ('Type', '${_acc['businessType'] ?? '—'}'),
-        ])),
-        _card(_infoGrid('Sales information', [
+        ]),
+        block('Sales information', [
           ('Account code', '${_acc['accountCode'] ?? '—'}'),
           ('Stage', '${_acc['customerStage'] ?? widget.accountType}'),
           ('Funnel', '${_acc['funnelStage'] ?? '—'}'),
           ('Assigned to', '${_acc['assignedToId'] ?? '—'}'),
           ('Created', '${_acc['createdAt'] ?? '—'}'),
-        ])),
+        ]),
       ],
+    );
+  }
+
+  // Drops the customer details down from the top of the screen — replaces the
+  // old "Overview" tab.
+  Future<void> _showDetailsSheet() {
+    final name = '${_acc['businessName'] ?? _acc['name'] ?? _acc['personName'] ?? '—'}';
+    return showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Details',
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 220),
+      pageBuilder: (ctx, _, _) => Align(
+        alignment: Alignment.topCenter,
+        child: Material(
+          color: kBg,
+          clipBehavior: Clip.antiAlias,
+          borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
+          child: SafeArea(
+            bottom: false,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(ctx).size.height * 0.82),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 4, 6, 0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 14.5, fontWeight: FontWeight.w800)),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          tooltip: 'Close',
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.keyboard_arrow_up_rounded),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                      child: _detailsContent(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+      transitionBuilder: (ctx, anim, _, child) => SlideTransition(
+        position: Tween<Offset>(begin: const Offset(0, -1), end: Offset.zero)
+            .animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+        child: child,
+      ),
     );
   }
 
@@ -942,12 +1023,12 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Colors.black87)),
-        const SizedBox(height: 8),
+        Text(title, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Colors.black87)),
+        const SizedBox(height: 6),
         Wrap(
-          runSpacing: 10,
+          runSpacing: 8,
           children: rows.map((r) {
-            final w = (MediaQuery.of(context).size.width - 24 - 28) / 2 - 1;
+            final w = (MediaQuery.of(context).size.width - 20 - 24) / 2 - 1;
             return SizedBox(
               width: r.$1 == 'Address' ? double.infinity : w,
               child: Column(
@@ -968,7 +1049,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
 
   // ── Tab bar ──────────────────────────────────────────────────────────────
   Widget _tabBar() {
-    const labels = ['Overview', 'Order History', 'Log History', 'Call History', 'Account'];
+    const labels = ['Order History', 'Log History', 'Call History', 'Account'];
     return SizedBox(
       height: 38,
       child: ListView.separated(

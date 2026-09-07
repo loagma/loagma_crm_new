@@ -1133,6 +1133,25 @@ class ApiService {
     return null;
   }
 
+  /// The logged-in staff member's OWN report ("My Report" for a salesman /
+  /// telecaller) — same shape as [getTeamReportEmployee] but self-scoped, no
+  /// role gate. `self_view: true` in the payload.
+  static Future<Map<String, dynamic>?> getMyReport({String? from, String? to}) async {
+    final query = <String, String>{'from': ?from, 'to': ?to};
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/team/my-report')
+        .replace(queryParameters: query.isEmpty ? null : query);
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 25));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('getMyReport failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getMyReport error: $e');
+    }
+    return null;
+  }
+
   /// Fetches a call recording's raw audio bytes through the authenticated
   /// backend proxy - the underlying Knowlarity URL 401s without the server's
   /// own API credentials, which no player/browser can attach directly.

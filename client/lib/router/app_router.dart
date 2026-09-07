@@ -246,13 +246,18 @@ final appRouter = GoRouter(
       builder: (context, state) {
         final extra = state.extra as Map<String, dynamic>? ?? const {};
         return TeamReportEmployeeScreen(
-          mobile: extra['mobile'] as String? ?? '',
+          mobile: extra['mobile'] as String?,
           name: extra['name'] as String? ?? '',
           role: extra['role'] as String? ?? '',
           from: extra['from'] as String?,
           to: extra['to'] as String?,
         );
       },
+    ),
+    // "My Report" — salesman / telecaller self-view (same screen, self mode).
+    GoRoute(
+      path: '/my-report',
+      builder: (context, state) => const TeamReportEmployeeScreen(),
     ),
     GoRoute(
       path: '/incharge-profile',

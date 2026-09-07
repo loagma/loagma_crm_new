@@ -277,6 +277,7 @@ class TeamReportController extends Controller
 
     // ── One employee's day(s) ────────────────────────────────────────────────
 
+    /** A senior drilling into a subordinate. */
     public function employee(string $employeeMobile): JsonResponse
     {
         $viewer = $this->viewer();
@@ -294,6 +295,18 @@ class TeamReportController extends Controller
             return response()->json(['success' => false, 'message' => 'Employee not found'], 404);
         }
 
+        return $this->report($target, selfView: false);
+    }
+
+    /** Any staff member's own report — no role gate, you can always see yourself. */
+    public function selfReport(): JsonResponse
+    {
+        return $this->report($this->viewer(), selfView: true);
+    }
+
+    private function report(DeliStaff $target, bool $selfView): JsonResponse
+    {
+        $employeeMobile = (string) $target->mobile;
         [$from, $to, $fromYmd, $toYmd] = $this->range();
 
         // ── attendance rows (one per day, full shape for AttendanceDayCard) ──
@@ -407,16 +420,31 @@ class TeamReportController extends Controller
         $timeline = $timeline->filter(fn ($t) => !empty($t['at']))
             ->sortByDesc('at')->values();
 
+        $todayYmd = Carbon::today(config('app.timezone'))->toDateString();
+        $role = strtolower(trim($target->role ?? ''));
+
         return response()->json([
             'success' => true,
             'data' => [
                 'employee' => [
-                    'mobile' => (string) $target->mobile,
-                    'name'   => $target->name ?: (string) $target->mobile,
-                    'role'   => strtolower(trim($target->role ?? '')),
+                    'mobile' => $employeeMobile,
+                    'name'   => $target->name ?: $employeeMobile,
+                    'role'   => $role,
                     'city'   => $target->city,
                 ],
-                'range'      => ['from' => $fromYmd, 'to' => $toYmd, 'is_single_day' => $fromYmd === $toYmd],
+                'self_view' => $selfView,
+                'range'      => [
+                    'from'          => $fromYmd,
+                    'to'            => $toYmd,
+                    'is_single_day' => $fromYmd === $toYmd,
+                    'is_today'      => $fromYmd === $toYmd && $fromYmd === $todayYmd,
+                ],
+                // A salesman can't call /api/tracking/route (role-gated), so a
+                // self-view salesman gets no "view route" deep link even on days
+                // that have GPS.
+                'capabilities' => [
+                    'show_route' => !$selfView && $role === 'salesman',
+                ],
                 'attendance' => $attendance,
                 'visits'     => $visits,
                 'calls'      => $calls,

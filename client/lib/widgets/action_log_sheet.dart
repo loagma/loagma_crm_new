@@ -295,6 +295,16 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
                 const Spacer(),
                 Text(_isSalesman ? 'Visit' : 'Call',
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                const SizedBox(width: 4),
+                // Same as Cancel — dismisses and leaves the user checked in.
+                IconButton(
+                  onPressed: () => Navigator.pop(context, null),
+                  tooltip: 'Close',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  icon: Icon(Icons.close_rounded, size: 20, color: Colors.grey.shade600),
+                ),
               ],
             ),
             const SizedBox(height: 4),

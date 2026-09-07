@@ -434,13 +434,8 @@ class _CustomerCard extends StatelessWidget {
     final acc = _account;
     final code = acc['accountCode'] as String? ?? '';
     final accountType = item['account_type'] as String? ?? 'lead';
-    // "Customer id" (user_id) only makes sense for a customer account — a
-    // lead has no user_id, just its own record id, so the code line there
-    // stays code-only instead of appending a meaningless "ID: <uuid>".
-    final id = '${acc['id'] ?? ''}';
-    final codeLine = accountType == 'customer'
-        ? [if (code.isNotEmpty) code, if (id.isNotEmpty) 'ID: $id'].join(' · ')
-        : code;
+    // "ID" chip in the card's top-left corner = the account code.
+    final showId = code.isNotEmpty;
     final name = acc['businessName'] as String? ?? '—';
     final person = acc['personName'] as String? ?? '';
     final phone = acc['contactNumber'] as String? ?? '';
@@ -488,18 +483,12 @@ class _CustomerCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Flexible(
-                child: Text(
-                  codeLine,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Colors.grey,
-                    letterSpacing: 0.5,
-                  ),
+              if (showId)
+                _Tag(
+                  label: 'ID: $code',
+                  bg: const Color(0xFFEAEAEA),
+                  fg: const Color(0xFF5B5B5B),
                 ),
-              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Wrap(

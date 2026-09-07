@@ -158,12 +158,18 @@ Route::prefix('tracking')->middleware('jwtauth')->group(function () {
 // Union of the tracking + telecaller-senior role lists so every senior branch
 // can open it; the payload adapts (capabilities.show_calls / show_route).
 // ---------------------------------------------------------------------------
-Route::prefix('team')
-    ->middleware(['jwtauth', 'role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin'])
-    ->group(function () {
-        Route::get('/report',                  [TeamReportController::class, 'roster']);
-        Route::get('/report/{employeeMobile}', [TeamReportController::class, 'employee']);
-    });
+Route::prefix('team')->middleware('jwtauth')->group(function () {
+    // Any staff member's own report (salesman / telecaller "My Report") — no
+    // role gate, you can always see yourself.
+    Route::get('/my-report', [TeamReportController::class, 'selfReport']);
+
+    // Senior-only: the roster + drilling into a subordinate.
+    Route::middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin')
+        ->group(function () {
+            Route::get('/report',                  [TeamReportController::class, 'roster']);
+            Route::get('/report/{employeeMobile}', [TeamReportController::class, 'employee']);
+        });
+});
 
 // ---------------------------------------------------------------------------
 // Area Assign (salesman + incharge: get / save / delete)

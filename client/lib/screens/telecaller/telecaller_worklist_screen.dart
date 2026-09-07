@@ -485,15 +485,8 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     final person = '${w['person_name'] ?? ''}'.trim();
     final accountCode = '${w['account_code'] ?? ''}'.trim();
     final accountType = '${w['account_type'] ?? 'lead'}';
-    // "Customer id" (user_id) only makes sense for a customer account — a
-    // lead has no user_id, so the code line there stays code-only instead
-    // of appending a meaningless "ID: <uuid>". Same rule as Beat Plan's card.
-    final codeLine = accountType == 'customer'
-        ? [
-            if (accountCode.isNotEmpty) accountCode,
-            if ('${w['account_id'] ?? ''}'.isNotEmpty) 'ID: ${w['account_id']}',
-          ].join(' · ')
-        : accountCode;
+    // "ID" chip in the card's top-left corner = the account code.
+    final showId = accountCode.isNotEmpty;
     final city = '${w['city'] ?? w['area'] ?? ''}'.trim();
     final area = '${w['area'] ?? ''}'.trim();
     final pincode = '${w['pincode'] ?? ''}'.trim();
@@ -558,18 +551,12 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Flexible(
-                  child: Text(
-                    codeLine,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey,
-                      letterSpacing: 0.5,
-                    ),
+                if (showId)
+                  _tag(
+                    'ID: $accountCode',
+                    bg: const Color(0xFFEAEAEA),
+                    fg: const Color(0xFF5B5B5B),
                   ),
-                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Wrap(
