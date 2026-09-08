@@ -85,6 +85,37 @@ class SalesOrderController extends Controller
             && stripos($e->getMessage(), 'PRIMARY') !== false;
     }
 
+    /**
+     * GET /api/sales-orders/delivery-rule
+     *
+     * Read-only lookup into `cart_type`, the consumer app's registry of
+     * per-category min-order/delivery-charge/express rules (see TABLES.md
+     * "Deliberately not used"). The CRM never writes to `cart_type` — this
+     * only reads the single row picked to govern all CRM-placed orders.
+     */
+    public function deliveryRule(): JsonResponse
+    {
+        $rule = DB::table('cart_type')
+            ->where('ctype_id', 'balaji_grocery')
+            ->first(['ctype_id', 'type_name', 'min_total', 'delivery_charge', 'has_express', 'express_charge']);
+
+        if (!$rule) {
+            return response()->json(['success' => true, 'data' => null]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'ctype_id'        => $rule->ctype_id,
+                'type_name'       => $rule->type_name,
+                'min_total'       => (float) $rule->min_total,
+                'delivery_charge' => (float) $rule->delivery_charge,
+                'has_express'     => (bool) $rule->has_express,
+                'express_charge'  => (float) $rule->express_charge,
+            ],
+        ]);
+    }
+
     public function store(): JsonResponse
     {
         $data = request()->all();

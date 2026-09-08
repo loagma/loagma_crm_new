@@ -170,6 +170,15 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   // item-list + Bill Details cart layout — most orders never need it.
   bool _showAddons = false;
 
+  // Min-order/delivery-charge/express rule from `cart_type` (via
+  // ApiService.getDeliveryRule) — see SalesOrderController::deliveryRule.
+  // Null until loaded (or if the fetch failed), in which case no auto
+  // delivery/express charge is applied rather than blocking order creation.
+  Map<String, dynamic>? _deliveryRule;
+  // Salesman-toggled express delivery — only meaningful (and only shown)
+  // when the loaded rule has has_express == true.
+  bool _isExpress = false;
+
   bool get _isCustomer => widget.accountType == 'customer';
 
   // -- Draft persistence (sales_order_draft_crm) ---------------------------
@@ -197,6 +206,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     super.initState();
     _loadVoucherPreview();
     _loadUnits();
+    _loadDeliveryRule();
     // Leads restore too - the draft table is keyed by (staff, account) and
     // never touches `user`, so nothing here depends on the account being a
     // registered customer.
@@ -399,6 +409,12 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     });
   }
 
+  Future<void> _loadDeliveryRule() async {
+    final rule = await ApiService.getDeliveryRule();
+    if (!mounted || rule == null) return;
+    setState(() => _deliveryRule = rule);
+  }
+
   Future<void> _pickUnit(OrderLineItem item) async {
     final picked = await showUnitPickerSheet(
       context,
@@ -442,7 +458,34 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   double get _grossAmount => _lineItems.fold(0, (s, i) => s + i.grossAmount);
   double get _totalTax => _lineItems.fold(0, (s, i) => s + i.taxNum);
   double get _addonsTotal => _addons.fold(0, (s, a) => s + a.amountNum);
-  double get _grandTotal => _grossAmount + _totalTax + _addonsTotal;
+
+  double get _deliveryRuleMinTotal =>
+      (_deliveryRule?['min_total'] as num?)?.toDouble() ?? 0;
+  double get _deliveryRuleCharge =>
+      (_deliveryRule?['delivery_charge'] as num?)?.toDouble() ?? 0;
+  bool get _deliveryRuleHasExpress => _deliveryRule?['has_express'] == true;
+  double get _deliveryRuleExpressCharge =>
+      (_deliveryRule?['express_charge'] as num?)?.toDouble() ?? 0;
+
+  // Order value the min-order threshold is measured against — the goods
+  // total the customer pays (gross + tax), not counting addons/delivery.
+  double get _orderValueForDelivery => _grossAmount + _totalTax;
+
+  // Free once the order value reaches the rule's min_total; below that, the
+  // rule's flat delivery_charge applies. No rule loaded => no auto charge.
+  double get _autoDeliveryCharge => _deliveryRule == null
+      ? 0
+      : (_orderValueForDelivery >= _deliveryRuleMinTotal
+            ? 0
+            : _deliveryRuleCharge);
+
+  double get _expressCharge =>
+      (_isExpress && _deliveryRuleHasExpress) ? _deliveryRuleExpressCharge : 0;
+
+  double get _deliveryTotal => _autoDeliveryCharge + _expressCharge;
+
+  double get _grandTotal =>
+      _grossAmount + _totalTax + _addonsTotal + _deliveryTotal;
   int get _itemCount =>
       _lineItems.where((i) => i.product.text.trim().isNotEmpty).length;
 
@@ -752,7 +795,9 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
       // Addons (Hamali/Transport/Packing/etc.) are extra charges, not a discount —
       // the backend has no dedicated "charges" field yet, so fold them into
       // delivery_charge (which the order-total formula adds, matching intent).
-      deliveryCharge: _addonsTotal,
+      // The auto-computed min-order delivery charge and express charge (from
+      // `cart_type` via _deliveryRule) are folded in the same way.
+      deliveryCharge: _addonsTotal + _deliveryTotal,
       narration: _narration.text.trim().isEmpty ? null : _narration.text.trim(),
       department: null,
       areaName: widget.areaName,
@@ -1303,6 +1348,10 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                         }),
                       const SizedBox(height: 2),
                       _addChargesSection(setModalState),
+                      if (_deliveryRuleHasExpress) ...[
+                        const SizedBox(height: 10),
+                        _expressDeliveryToggle(setModalState),
+                      ],
                       const SizedBox(height: 10),
                       _billDetailsCard(),
                       const SizedBox(height: 10),
@@ -1884,9 +1933,9 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  _addonsTotal > 0
-                      ? 'Delivery charge ₹${_addonsTotal.toStringAsFixed(0)}  ·  Expected by ${_fmtDate(_expectedDate)}'
-                      : 'Expected by ${_fmtDate(_expectedDate)}',
+                  _deliveryTotal > 0
+                      ? 'Delivery charge ₹${_deliveryTotal.toStringAsFixed(0)}  ·  Expected by ${_fmtDate(_expectedDate)}'
+                      : 'Free delivery  ·  Expected by ${_fmtDate(_expectedDate)}',
                   style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
@@ -1946,6 +1995,45 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
           ),
         ],
       ],
+    );
+  }
+
+  // Only rendered when the loaded cart_type rule has has_express == true.
+  Widget _expressDeliveryToggle(StateSetter setModalState) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(13),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.bolt_rounded, size: 16, color: kGoldDark),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Express Delivery',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                ),
+                Text(
+                  '+ ₹${_deliveryRuleExpressCharge.toStringAsFixed(0)}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _isExpress,
+            activeThumbColor: kGoldDark,
+            onChanged: (v) =>
+                _bump(setModalState, () => _isExpress = v),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2009,23 +2097,75 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
               ),
             ],
           ),
+          if (_addonsTotal > 0) ...[
+            const SizedBox(height: 5),
+            Row(
+              children: [
+                Text(
+                  'Extra Charges',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+                const Spacer(),
+                Text(
+                  _addonsTotal.toStringAsFixed(2),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 5),
           Row(
             children: [
               Text(
-                'Delivery Charges',
+                'Delivery Charge',
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
               ),
               const Spacer(),
               Text(
-                _addonsTotal.toStringAsFixed(2),
-                style: const TextStyle(
+                _autoDeliveryCharge > 0
+                    ? _autoDeliveryCharge.toStringAsFixed(2)
+                    : 'Free',
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
+                  color: _autoDeliveryCharge > 0
+                      ? null
+                      : const Color(0xFF2F9E57),
                 ),
               ),
             ],
           ),
+          if (_deliveryRule != null &&
+              _autoDeliveryCharge > 0 &&
+              _deliveryRuleMinTotal > 0) ...[
+            const SizedBox(height: 2),
+            Text(
+              'Free above ₹${_deliveryRuleMinTotal.toStringAsFixed(0)} — add ₹${(_deliveryRuleMinTotal - _orderValueForDelivery).toStringAsFixed(0)} more',
+              style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
+            ),
+          ],
+          if (_isExpress && _expressCharge > 0) ...[
+            const SizedBox(height: 5),
+            Row(
+              children: [
+                Text(
+                  'Express Delivery',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+                const Spacer(),
+                Text(
+                  _expressCharge.toStringAsFixed(2),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 8),
           Divider(height: 1, color: kGold.withValues(alpha: 0.2)),
           const SizedBox(height: 8),
