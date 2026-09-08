@@ -539,6 +539,25 @@ class ApiService {
     return null;
   }
 
+  /// Fetch the min-order/delivery-charge/express rule (from `cart_type`) that
+  /// governs Create Sales Order's auto delivery-charge calculation. Returns
+  /// null on any failure — the sheet treats that as "no rule available" and
+  /// charges nothing rather than blocking order creation.
+  static Future<Map<String, dynamic>?> getDeliveryRule() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/sales-orders/delivery-rule');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return decoded['data'] as Map<String, dynamic>?;
+      }
+      print('getDeliveryRule status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getDeliveryRule error: $e');
+    }
+    return null;
+  }
+
   /// Fetch a single lead account by id.
   static Future<Map<String, dynamic>?> getLeadAccount(String id) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/$id');

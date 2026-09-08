@@ -66,6 +66,7 @@ Route::get('/orders/{orderId}', [OrderListController::class, 'show']);
 
 // Sales Order create (draft/pending only — see server/app/Http/Controllers/SalesOrderController.php)
 Route::get('/sales-orders/next-order-id', [SalesOrderController::class, 'nextOrderId']); // must be before POST /sales-orders in case of future {id} routes
+Route::get('/sales-orders/delivery-rule', [SalesOrderController::class, 'deliveryRule']); // cart_type min-order/delivery/express rule for the CRM order sheet
 Route::post('/sales-orders', [SalesOrderController::class, 'store']);
 Route::put('/orders/{orderId}/items', [SalesOrderController::class, 'updateItems']); // edit items on an existing pending order
 Route::get('/products/search', [ProductController::class, 'search']);
