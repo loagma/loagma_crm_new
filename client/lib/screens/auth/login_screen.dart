@@ -14,8 +14,16 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _phoneController = TextEditingController();
+  final FocusNode _phoneFocus = FocusNode();
 
   bool isLoading = false;
+
+  @override
+  void dispose() {
+    _phoneController.dispose();
+    _phoneFocus.dispose();
+    super.dispose();
+  }
 
   // ----------------------------------------------------------------
   // SEND OTP LOGIN
@@ -116,6 +124,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 // Phone Input
                 TextField(
                   controller: _phoneController,
+                  focusNode: _phoneFocus,
+                  autofocus: true,
                   keyboardType: TextInputType.number,
                   textInputAction: TextInputAction.done,
                   inputFormatters: [

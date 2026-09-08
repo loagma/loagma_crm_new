@@ -69,6 +69,93 @@ const kWorklistLabels = <String, ({String text, Color color})>{
 ({String text, Color color}) worklistLabelStyle(String key) =>
     kWorklistLabels[key] ?? (text: key, color: const Color(0xFF757575));
 
+// ── Unified visit / call status styling ─────────────────────────────────────
+// One palette shared by the salesman Beat Plan (pending / visited / revisit /
+// productive) and the telecaller Worklist (pending / called / follow-up /
+// productive). Each status maps to one hue used for the status chip AND the
+// whole card (tinted background + matching border), so a glance down the list
+// reads as colour-coded:
+//   • pending  → slate grey  (not started)
+//   • visited / called → blue (contacted today)
+//   • revisit / follow-up → amber (needs another touch)
+//   • productive → green (order placed — best outcome)
+typedef StatusStyle = ({
+  String text,
+  Color accent,   // chip text + border, strong colour
+  Color chipBg,   // chip fill
+  Color cardBg,   // card background tint
+  Color cardBorder,
+});
+
+const _kStatusStyles = <String, StatusStyle>{
+  'pending': (
+    text: 'Pending',
+    accent: Color(0xFF5B6B7F),
+    chipBg: Color(0xFFEDF1F6),
+    cardBg: Color(0xFFEEF2F7),
+    cardBorder: Color(0xFFCED8E4),
+  ),
+  'visited': (
+    text: 'Visited',
+    accent: Color(0xFF1D66C2),
+    chipBg: Color(0xFFE3F0FD),
+    cardBg: Color(0xFFEFF6FF),
+    cardBorder: Color(0xFFBBD7F5),
+  ),
+  'called': (
+    text: 'Called',
+    accent: Color(0xFF1D66C2),
+    chipBg: Color(0xFFE3F0FD),
+    cardBg: Color(0xFFEFF6FF),
+    cardBorder: Color(0xFFBBD7F5),
+  ),
+  'revisit': (
+    text: 'Revisit',
+    accent: Color(0xFFD97706),
+    chipBg: Color(0xFFFEF1E0),
+    cardBg: Color(0xFFFFF9F1),
+    cardBorder: Color(0xFFF7D9AE),
+  ),
+  'followup': (
+    text: 'Follow-up',
+    accent: Color(0xFFD97706),
+    chipBg: Color(0xFFFEF1E0),
+    cardBg: Color(0xFFFFF9F1),
+    cardBorder: Color(0xFFF7D9AE),
+  ),
+  'productive': (
+    text: 'Productive',
+    accent: Color(0xFF2E7D32),
+    chipBg: Color(0xFFE6F4EA),
+    cardBg: Color(0xFFF1F9F2),
+    cardBorder: Color(0xFFA9D8B0),
+  ),
+};
+
+/// Canonical status style for any salesman/telecaller status key. Accepts both
+/// vocabularies — server label keys (`not_called`, `called_today`, `follow_up`)
+/// and the plain salesman keys (`pending`, `visited`, `revisit`, `productive`).
+StatusStyle statusStyle(String? key) {
+  switch ((key ?? '').toLowerCase().trim()) {
+    case 'productive':
+      return _kStatusStyles['productive']!;
+    case 'visited':
+      return _kStatusStyles['visited']!;
+    case 'called':
+    case 'called_today':
+      return _kStatusStyles['called']!;
+    case 'revisit':
+      return _kStatusStyles['revisit']!;
+    case 'followup':
+    case 'follow_up':
+      return _kStatusStyles['followup']!;
+    case 'pending':
+    case 'not_called':
+    default:
+      return _kStatusStyles['pending']!;
+  }
+}
+
 // ── Pipeline / customer-stage styling (matches LeadsAccount.customerStage) ────
 const kStageStyles = <String, ({String text, Color color})>{
   'lead':        (text: 'Lead',        color: Color(0xFF5A6472)),

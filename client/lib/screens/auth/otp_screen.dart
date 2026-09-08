@@ -17,8 +17,16 @@ class OtpScreen extends StatefulWidget {
 }
 
 class _OtpScreenState extends State<OtpScreen> {
-  final _otpController = TextEditingController();
+  static const int _otpLength = 4;
+  final List<TextEditingController> _digitControllers =
+      List.generate(_otpLength, (_) => TextEditingController());
+  final List<FocusNode> _digitFocusNodes =
+      List.generate(_otpLength, (_) => FocusNode());
+  final List<FocusNode> _keyFocusNodes =
+      List.generate(_otpLength, (_) => FocusNode());
   bool _isLoading = false;
+
+  String get _otp => _digitControllers.map((c) => c.text).join();
   int _resendSeconds = 30;
   Timer? _timer;
 
@@ -26,13 +34,48 @@ class _OtpScreenState extends State<OtpScreen> {
   void initState() {
     super.initState();
     _startResendTimer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _digitFocusNodes.first.requestFocus();
+    });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _otpController.dispose();
+    for (final c in _digitControllers) {
+      c.dispose();
+    }
+    for (final f in _digitFocusNodes) {
+      f.dispose();
+    }
+    for (final f in _keyFocusNodes) {
+      f.dispose();
+    }
     super.dispose();
+  }
+
+  void _onDigitChanged(int index, String value) {
+    if (value.length > 1) {
+      // Handle paste / autofill of the whole code
+      final digits = value.replaceAll(RegExp(r'[^\d]'), '');
+      for (int i = 0; i < _otpLength; i++) {
+        _digitControllers[i].text = i < digits.length ? digits[i] : '';
+      }
+      final next =
+          digits.length >= _otpLength ? _otpLength - 1 : digits.length;
+      _digitFocusNodes[next].requestFocus();
+      setState(() {});
+      if (_otp.length == _otpLength) _verifyOtp();
+      return;
+    }
+
+    if (value.isNotEmpty && index < _otpLength - 1) {
+      _digitFocusNodes[index + 1].requestFocus();
+    } else if (value.isEmpty && index > 0) {
+      _digitFocusNodes[index - 1].requestFocus();
+    }
+    setState(() {});
+    if (_otp.length == _otpLength) _verifyOtp();
   }
 
   void _startResendTimer() {
@@ -54,6 +97,11 @@ class _OtpScreenState extends State<OtpScreen> {
       if (res['success'] == true) {
         Fluttertoast.showToast(
             msg: 'OTP resent', backgroundColor: Colors.green);
+        for (final c in _digitControllers) {
+          c.clear();
+        }
+        _digitFocusNodes.first.requestFocus();
+        setState(() {});
         _startResendTimer();
       } else {
         Fluttertoast.showToast(
@@ -67,7 +115,7 @@ class _OtpScreenState extends State<OtpScreen> {
   }
 
   Future<void> _verifyOtp() async {
-    final otp = _otpController.text.trim();
+    final otp = _otp.trim();
     if (otp.length < 4) {
       Fluttertoast.showToast(msg: 'Enter 4-digit OTP');
       return;
@@ -142,25 +190,58 @@ class _OtpScreenState extends State<OtpScreen> {
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 30),
-                TextField(
-                  controller: _otpController,
-                  keyboardType: TextInputType.number,
-                  textAlign: TextAlign.center,
-                  maxLength: 4,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  style: const TextStyle(
-                    fontSize: 28,
-                    letterSpacing: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  decoration: InputDecoration(
-                    counterText: '',
-                    hintText: '- - - -',
-                    hintStyle: const TextStyle(color: Colors.black26),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onSubmitted: (_) => _verifyOtp(),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(_otpLength, (i) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: SizedBox(
+                        width: 60,
+                        child: KeyboardListener(
+                          focusNode: _keyFocusNodes[i],
+                          onKeyEvent: (event) {
+                            if (event is KeyDownEvent &&
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.backspace &&
+                                _digitControllers[i].text.isEmpty &&
+                                i > 0) {
+                              _digitControllers[i - 1].clear();
+                              _digitFocusNodes[i - 1].requestFocus();
+                              setState(() {});
+                            }
+                          },
+                          child: TextField(
+                            controller: _digitControllers[i],
+                            focusNode: _digitFocusNodes[i],
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                            obscureText: true,
+                            obscuringCharacter: '•',
+                            maxLength: 1,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            style: const TextStyle(
+                              fontSize: 40,
+                              height: 1.0,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFFD7BE69),
+                            ),
+                            decoration: InputDecoration(
+                              counterText: '',
+                              contentPadding:
+                                  const EdgeInsets.symmetric(vertical: 12),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            onChanged: (v) => _onDigitChanged(i, v),
+                            onSubmitted: (_) => _verifyOtp(),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
                 ),
                 const SizedBox(height: 20),
                 ElevatedButton(

@@ -423,23 +423,27 @@ class _TelecallerWorklistDayScreenState extends State<TelecallerWorklistDayScree
               padding: const EdgeInsets.only(right: 8),
               child: GestureDetector(
                 onTap: () => setState(() => _filter = f.$1),
-                child: Container(
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(horizontal: 15),
-                  decoration: BoxDecoration(
-                    color: _filter == f.$1 ? kGold : Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: _filter == f.$1 ? kGold : const Color(0xFFE7E7E7), width: 1.4),
-                  ),
-                  child: Text(
-                    '${f.$2} (${_countFor(f.$1)})',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                      color: _filter == f.$1 ? Colors.white : const Color(0xFF5A6472),
+                child: Builder(builder: (_) {
+                  final selected = _filter == f.$1;
+                  final accent = f.$1 == 'all' ? kGold : statusStyle(f.$1).accent;
+                  return Container(
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 15),
+                    decoration: BoxDecoration(
+                      color: selected ? accent : Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: selected ? accent : const Color(0xFFE7E7E7), width: 1.4),
                     ),
-                  ),
-                ),
+                    child: Text(
+                      '${f.$2} (${_countFor(f.$1)})',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: selected ? Colors.white : const Color(0xFF5A6472),
+                      ),
+                    ),
+                  );
+                }),
               ),
             ),
         ],
@@ -470,23 +474,17 @@ class _TelecallerWorklistDayScreenState extends State<TelecallerWorklistDayScree
     final status       = _statusFor(w);
     final isProductive = status == kLabelProductive;
     final wasCalled    = status == kLabelCalledToday || isProductive;
-    final isFollowUp   = status == kLabelFollowUp;
+    // One colour drives the whole card + its status chip.
+    final ss = statusStyle(status);
     final title = business.isNotEmpty ? business : (person.isNotEmpty ? person : name);
     final owner = (person.isNotEmpty && person != title) ? person : '';
-
-    final cardBg = isProductive
-        ? const Color(0xFFE8F5E9)
-        : (wasCalled ? const Color(0xFFF0FFF4) : const Color(0xFFFFF0EE));
-    final cardBorder = isProductive
-        ? const Color(0xFFA5D6A7)
-        : (wasCalled ? const Color(0xFFC8E6C9) : const Color(0xFFFFD8D2));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 11),
       decoration: BoxDecoration(
-        color: cardBg,
+        color: ss.cardBg,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: cardBorder),
+        border: Border.all(color: ss.cardBorder),
         boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
       ),
       child: InkWell(
@@ -506,14 +504,11 @@ class _TelecallerWorklistDayScreenState extends State<TelecallerWorklistDayScree
                     fg: accountType == 'customer' ? const Color(0xFF1976D2) : const Color(0xFFF57C00),
                   ),
                   const SizedBox(width: 6),
-                  if (isProductive)
-                    _tag('✓ Productive', bg: const Color(0xFFC8E6C9), fg: const Color(0xFF1B5E20))
-                  else if (wasCalled)
-                    _tag('✓ Called', bg: const Color(0xFFE8F5E9), fg: const Color(0xFF2E7D32))
-                  else if (isFollowUp)
-                    _tag('Follow-up due', bg: const Color(0xFFFFEBEE), fg: const Color(0xFFE53935))
-                  else
-                    _tag('Pending', bg: const Color(0xFFF5F5F5), fg: const Color(0xFF757575)),
+                  _tag(
+                    (isProductive || wasCalled) ? '✓ ${ss.text}' : ss.text,
+                    bg: ss.chipBg,
+                    fg: ss.accent,
+                  ),
                 ],
               ),
               const SizedBox(height: 6),
