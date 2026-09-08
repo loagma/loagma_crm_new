@@ -32,6 +32,13 @@ class AppDrawer extends StatelessWidget {
       case 'admin':
         return [
           {
+            'title': 'Incharge Profile',
+            'icon': Icons.badge_rounded,
+            'route': '/incharge-profile',
+            'color': const Color(0xFFAB47BC),
+            'subtitle': 'My details & reporting line',
+          },
+          {
             'title': 'Dashboard',
             'icon': Icons.dashboard_rounded,
             'route': '/admin/dashboard',
@@ -111,11 +118,11 @@ class AppDrawer extends StatelessWidget {
             'subtitle': 'Goals vs achievement',
           },
           {
-            'title': 'Reports',
-            'icon': Icons.bar_chart_rounded,
-            'route': '/admin/reports',
+            'title': 'Team Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/team-report',
             'color': const Color(0xFF5C6BC0),
-            'subtitle': 'KPIs & trends',
+            'subtitle': "Today's activity",
           },
           {
             'title': 'Settings',
@@ -126,6 +133,13 @@ class AppDrawer extends StatelessWidget {
         ];
       case 'manager':
         return [
+          {
+            'title': 'Incharge Profile',
+            'icon': Icons.badge_rounded,
+            'route': '/incharge-profile',
+            'color': const Color(0xFFAB47BC),
+            'subtitle': 'My details & reporting line',
+          },
           {
             'title': 'Team',
             'icon': Icons.groups_rounded,
@@ -157,6 +171,13 @@ class AppDrawer extends StatelessWidget {
       case 'head_incharge':
         return [
           {
+            'title': 'Incharge Profile',
+            'icon': Icons.badge_rounded,
+            'route': '/incharge-profile',
+            'color': const Color(0xFFAB47BC),
+            'subtitle': 'My details & reporting line',
+          },
+          {
             'title': 'My Team',
             'icon': Icons.supervisor_account_rounded,
             'route': '/my-incharges',
@@ -181,11 +202,25 @@ class AppDrawer extends StatelessWidget {
             'route': '/team-call-history',
             'color': const Color(0xFF7E57C2),
             'subtitle': 'Calls & recordings',
+          },
+          {
+            'title': 'Team Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/team-report',
+            'color': const Color(0xFF5C6BC0),
+            'subtitle': "Today's activity",
           },
         ];
       case 'zonal_incharge':
         return [
           {
+            'title': 'Incharge Profile',
+            'icon': Icons.badge_rounded,
+            'route': '/incharge-profile',
+            'color': const Color(0xFFAB47BC),
+            'subtitle': 'My details & reporting line',
+          },
+          {
             'title': 'My Team',
             'icon': Icons.supervisor_account_rounded,
             'route': '/my-incharges',
@@ -211,9 +246,23 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF7E57C2),
             'subtitle': 'Calls & recordings',
           },
+          {
+            'title': 'Team Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/team-report',
+            'color': const Color(0xFF5C6BC0),
+            'subtitle': "Today's activity",
+          },
         ];
       case 'area_incharge':
         return [
+          {
+            'title': 'Incharge Profile',
+            'icon': Icons.badge_rounded,
+            'route': '/incharge-profile',
+            'color': const Color(0xFFAB47BC),
+            'subtitle': 'My details & reporting line',
+          },
           {
             'title': 'My Team',
             'icon': Icons.supervisor_account_rounded,
@@ -236,9 +285,23 @@ class AppDrawer extends StatelessWidget {
           // No "Team Call History": calls belong to the telecaller hierarchy's
           // seniors. Area Incharge owns salesmen, not telecallers — the server
           // 403s /api/telecaller/team-call-history for this role too.
+          {
+            'title': 'Team Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/team-report',
+            'color': const Color(0xFF5C6BC0),
+            'subtitle': "Today's activity",
+          },
         ];
       case 'teleadmin':
         return [
+          {
+            'title': 'Incharge Profile',
+            'icon': Icons.badge_rounded,
+            'route': '/incharge-profile',
+            'color': const Color(0xFFAB47BC),
+            'subtitle': 'My details & reporting line',
+          },
           {
             'title': 'Pending Leads',
             'icon': Icons.fact_check_rounded,
@@ -274,6 +337,13 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF7E57C2),
             'subtitle': 'Calls & recordings',
           },
+          {
+            'title': 'Team Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/team-report',
+            'color': const Color(0xFF5C6BC0),
+            'subtitle': "Today's activity",
+          },
         ];
       case 'salesman':
         return [
@@ -282,7 +352,7 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.badge_rounded,
             'route': '/incharge-profile',
             'color': const Color(0xFFAB47BC),
-            'subtitle': 'Your reporting incharge',
+            'subtitle': 'My details & reporting incharge',
           },
           // {
           //   'title': 'Create Lead Accounts',
@@ -322,10 +392,24 @@ class AppDrawer extends StatelessWidget {
             'route': '/complaints',
             'color': const Color(0xFFE53935),
           },
+          {
+            'title': 'My Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/my-report',
+            'color': const Color(0xFF5C6BC0),
+            'subtitle': 'My visits, calls & attendance',
+          },
           // {'title': 'Apply  Leave',      'icon': Icons.beach_access_rounded,          'route': '/apply-leave',              'color': const Color(0xFFFF7043)},
         ];
       case 'telecaller':
         return [
+          {
+            'title': 'Incharge Profile',
+            'icon': Icons.badge_rounded,
+            'route': '/incharge-profile',
+            'color': const Color(0xFFAB47BC),
+            'subtitle': 'My details & reporting incharge',
+          },
           {
             'title': 'Home',
             'icon': Icons.home_rounded,
@@ -399,6 +483,13 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.report_problem_rounded,
             'route': '/complaints',
             'color': const Color(0xFFE53935),
+          },
+          {
+            'title': 'My Report',
+            'icon': Icons.assessment_rounded,
+            'route': '/my-report',
+            'color': const Color(0xFF5C6BC0),
+            'subtitle': 'My calls, visits & attendance',
           },
         ];
       default:

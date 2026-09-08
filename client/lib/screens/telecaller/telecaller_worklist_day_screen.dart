@@ -34,8 +34,14 @@ class _TelecallerWorklistDayScreenState extends State<TelecallerWorklistDayScree
   String _search = '';
   final _searchCtrl = TextEditingController();
 
+  // (key, label) — status chips mirror the single per-card status
+  // (productive > called > follow-up due > pending), so tapping a chip
+  // filters to exactly the accounts showing that tag on their card.
   static const _filters = <(String, String)>[
     ('all', 'All'),
+    ('not_called', 'Pending'),
+    ('called_today', 'Called'),
+    ('productive', 'Productive'),
     ('follow_up', 'Follow-up due'),
   ];
 
@@ -136,6 +142,24 @@ class _TelecallerWorklistDayScreenState extends State<TelecallerWorklistDayScree
     });
   }
 
+  // Single status per account: productive > called > follow-up due > pending.
+  // Prefers the server-computed `label` (from getTelecallerWorklist(), which
+  // already applies this precedence) but falls back to the local in-session
+  // `_calledToday`/`_followUpIds` sets so a card updates immediately after an
+  // action, before the next background refresh lands.
+  String _statusFor(Map<String, dynamic> w) {
+    final accountId = '${w['account_id']}';
+    final serverLabel = '${w['label']}';
+    if (serverLabel == kLabelProductive) return kLabelProductive;
+    if (serverLabel == kLabelCalledToday || _calledToday.contains(accountId)) {
+      return kLabelCalledToday;
+    }
+    if (serverLabel == kLabelFollowUp || _followUpIds.contains(accountId)) {
+      return kLabelFollowUp;
+    }
+    return kLabelNotCalled;
+  }
+
   // Silent background refresh — same data logic as _load() but no spinner.
   Future<void> _backgroundSync() async {
     final worklistF  = ApiService.getTelecallerWorklist();
@@ -229,8 +253,14 @@ class _TelecallerWorklistDayScreenState extends State<TelecallerWorklistDayScree
 
   bool _matchesFilter(Map<String, dynamic> w) {
     switch (_filter) {
+      case 'not_called':
+      case 'called_today':
+      case 'productive':
       case 'follow_up':
-        return _followUpIds.contains('${w['account_id']}');
+        // Status chips are mutually exclusive, same precedence as the card's
+        // single status tag (productive > called > follow-up due > pending).
+        final key = _filter == 'follow_up' ? kLabelFollowUp : _filter;
+        return _statusFor(w) == key;
       default:
         return true;
     }
@@ -437,14 +467,19 @@ class _TelecallerWorklistDayScreenState extends State<TelecallerWorklistDayScree
     final stage = '${w['stage'] ?? ''}';
     final st = stageStyle(stage);
     final prio = priorityForStage(stage);
-    final accountId    = '${w['account_id']}';
-    final wasCalled    = _calledToday.contains(accountId);
-    final isFollowUp   = _followUpIds.contains(accountId);
+    final status       = _statusFor(w);
+    final isProductive = status == kLabelProductive;
+    final wasCalled    = status == kLabelCalledToday || isProductive;
+    final isFollowUp   = status == kLabelFollowUp;
     final title = business.isNotEmpty ? business : (person.isNotEmpty ? person : name);
     final owner = (person.isNotEmpty && person != title) ? person : '';
 
-    final cardBg     = wasCalled ? const Color(0xFFF0FFF4) : const Color(0xFFFFF0EE);
-    final cardBorder = wasCalled ? const Color(0xFFC8E6C9) : const Color(0xFFFFD8D2);
+    final cardBg = isProductive
+        ? const Color(0xFFE8F5E9)
+        : (wasCalled ? const Color(0xFFF0FFF4) : const Color(0xFFFFF0EE));
+    final cardBorder = isProductive
+        ? const Color(0xFFA5D6A7)
+        : (wasCalled ? const Color(0xFFC8E6C9) : const Color(0xFFFFD8D2));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 11),
@@ -471,10 +506,14 @@ class _TelecallerWorklistDayScreenState extends State<TelecallerWorklistDayScree
                     fg: accountType == 'customer' ? const Color(0xFF1976D2) : const Color(0xFFF57C00),
                   ),
                   const SizedBox(width: 6),
-                  if (wasCalled)
+                  if (isProductive)
+                    _tag('✓ Productive', bg: const Color(0xFFC8E6C9), fg: const Color(0xFF1B5E20))
+                  else if (wasCalled)
                     _tag('✓ Called', bg: const Color(0xFFE8F5E9), fg: const Color(0xFF2E7D32))
                   else if (isFollowUp)
-                    _tag('Follow-up due', bg: const Color(0xFFFFEBEE), fg: const Color(0xFFE53935)),
+                    _tag('Follow-up due', bg: const Color(0xFFFFEBEE), fg: const Color(0xFFE53935))
+                  else
+                    _tag('Pending', bg: const Color(0xFFF5F5F5), fg: const Color(0xFF757575)),
                 ],
               ),
               const SizedBox(height: 6),

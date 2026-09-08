@@ -35,9 +35,14 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
   String _search = '';
   final _searchCtrl = TextEditingController();
 
-  // (key, label)
+  // (key, label) — status chips mirror the single per-card status
+  // (productive > called > follow-up due > pending), so tapping a chip
+  // filters to exactly the accounts showing that tag on their card.
   static const _filters = <(String, String)>[
     ('all', 'All'),
+    ('not_called', 'Pending'),
+    ('called_today', 'Called'),
+    ('productive', 'Productive'),
     ('follow_up', 'Follow-up due'),
   ];
 
@@ -232,6 +237,24 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     );
   }
 
+  // Single status per account: productive > called > follow-up due > pending.
+  // Prefers the server-computed `label` (which already applies this
+  // precedence) but falls back to the local in-session `_calledToday`/
+  // `_followUpIds` sets so a card updates immediately after an action,
+  // before the next background refresh lands.
+  String _statusFor(Map<String, dynamic> w) {
+    final accountId = '${w['account_id']}';
+    final serverLabel = '${w['label']}';
+    if (serverLabel == kLabelProductive) return kLabelProductive;
+    if (serverLabel == kLabelCalledToday || _calledToday.contains(accountId)) {
+      return kLabelCalledToday;
+    }
+    if (serverLabel == kLabelFollowUp || _followUpIds.contains(accountId)) {
+      return kLabelFollowUp;
+    }
+    return kLabelNotCalled;
+  }
+
   // Today = in beat plan for today OR has a follow-up due/overdue today.
   bool _isToday(Map<String, dynamic> w) {
     final id = '${w['account_id']}';
@@ -242,8 +265,14 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
   bool _matchesFilter(Map<String, dynamic> w) {
     final stage = '${w['stage'] ?? ''}';
     switch (_filter) {
+      case 'not_called':
+      case 'called_today':
+      case 'productive':
       case 'follow_up':
-        return _followUpIds.contains('${w['account_id']}');
+        // Status chips are mutually exclusive, same precedence as the card's
+        // single status tag (productive > called > follow-up due > pending).
+        final key = _filter == 'follow_up' ? kLabelFollowUp : _filter;
+        return _statusFor(w) == key;
       case 'hot':
         return tempForStage(stage).text == 'Hot';
       case 'high_value':
@@ -485,15 +514,8 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     final person = '${w['person_name'] ?? ''}'.trim();
     final accountCode = '${w['account_code'] ?? ''}'.trim();
     final accountType = '${w['account_type'] ?? 'lead'}';
-    // "Customer id" (user_id) only makes sense for a customer account — a
-    // lead has no user_id, so the code line there stays code-only instead
-    // of appending a meaningless "ID: <uuid>". Same rule as Beat Plan's card.
-    final codeLine = accountType == 'customer'
-        ? [
-            if (accountCode.isNotEmpty) accountCode,
-            if ('${w['account_id'] ?? ''}'.isNotEmpty) 'ID: ${w['account_id']}',
-          ].join(' · ')
-        : accountCode;
+    // "ID" chip in the card's top-left corner = the account code.
+    final showId = accountCode.isNotEmpty;
     final city = '${w['city'] ?? w['area'] ?? ''}'.trim();
     final area = '${w['area'] ?? ''}'.trim();
     final pincode = '${w['pincode'] ?? ''}'.trim();
@@ -508,9 +530,12 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     final stage = '${w['stage'] ?? ''}';
     final st = stageStyle(stage);
     final prio = priorityForStage(stage);
-    final accountId = '${w['account_id']}';
-    final wasCalled = _calledToday.contains(accountId) || '${w['label']}' == 'called_today';
-    final isFollowUp = _followUpIds.contains(accountId);
+    // Single status per card, same precedence the server uses:
+    // productive > called > follow-up due > pending.
+    final status = _statusFor(w);
+    final isProductive = status == kLabelProductive;
+    final wasCalled = status == kLabelCalledToday || isProductive;
+    final isFollowUp = status == kLabelFollowUp;
     // Shop / business name on top (dark); owner name goes beside it, like
     // Beat Plan's name+person row, instead of stacked underneath.
     final title = business.isNotEmpty
@@ -526,12 +551,12 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     // with a thin left accent stripe — green once called today, soft
     // pink/red while still needing a call, mirroring that screen's
     // visited-vs-pending states.
-    final cardBg = wasCalled
-        ? const Color(0xFFF0FFF4)
-        : const Color(0xFFFFF0EE);
-    final cardBorder = wasCalled
-        ? const Color(0xFFC8E6C9)
-        : const Color(0xFFFFD8D2);
+    final cardBg = isProductive
+        ? const Color(0xFFE8F5E9)
+        : (wasCalled ? const Color(0xFFF0FFF4) : const Color(0xFFFFF0EE));
+    final cardBorder = isProductive
+        ? const Color(0xFFA5D6A7)
+        : (wasCalled ? const Color(0xFFC8E6C9) : const Color(0xFFFFD8D2));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 11),
@@ -558,18 +583,12 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Flexible(
-                  child: Text(
-                    codeLine,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey,
-                      letterSpacing: 0.5,
-                    ),
+                if (showId)
+                  _tag(
+                    'ID: $accountCode',
+                    bg: const Color(0xFFEAEAEA),
+                    fg: const Color(0xFF5B5B5B),
                   ),
-                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Wrap(
@@ -592,7 +611,13 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
                           bg: const Color(0xFFE8F5E9),
                           fg: const Color(0xFF2E7D32),
                         ),
-                      if (wasCalled)
+                      if (isProductive)
+                        _tag(
+                          '✓ Productive',
+                          bg: const Color(0xFFC8E6C9),
+                          fg: const Color(0xFF1B5E20),
+                        )
+                      else if (wasCalled)
                         _tag(
                           '✓ Called',
                           bg: const Color(0xFFE8F5E9),
@@ -603,6 +628,12 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
                           'Follow-up due',
                           bg: const Color(0xFFFFEBEE),
                           fg: const Color(0xFFE53935),
+                        )
+                      else
+                        _tag(
+                          'Pending',
+                          bg: const Color(0xFFF5F5F5),
+                          fg: const Color(0xFF757575),
                         ),
                     ],
                   ),

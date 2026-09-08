@@ -24,6 +24,7 @@ use App\Http\Controllers\SalesOrderController;
 use App\Http\Controllers\TelecallerController;
 use App\Http\Controllers\CallScriptController;
 use App\Http\Controllers\TrackingController;
+use App\Http\Controllers\TeamReportController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -70,8 +71,9 @@ Route::post('/sales-orders', [SalesOrderController::class, 'store']);
 Route::put('/orders/{orderId}/items', [SalesOrderController::class, 'updateItems']); // edit items on an existing pending order
 Route::get('/products/search', [ProductController::class, 'search']);
 
-// Un-submitted Create Sales Order cart, per (staff member, account) — backed
-// by sales_order_draft_crm, NOT the shared `cart` table (see that migration).
+// Un-submitted Create Sales Order cart, per (staff member, account) — stored as
+// one JSON row on the shared `cart` table (ctype_id = 'crm_sales_draft'); see
+// 2026_09_05_000001_move_sales_order_draft_to_cart.
 Route::get('/order-draft',    [SalesOrderDraftController::class, 'show']);
 Route::put('/order-draft',    [SalesOrderDraftController::class, 'store']);
 Route::delete('/order-draft', [SalesOrderDraftController::class, 'destroy']);
@@ -149,6 +151,25 @@ Route::prefix('tracking')->middleware('jwtauth')->group(function () {
         ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge');
     Route::get('/roster', [TrackingController::class, 'roster'])
         ->middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge');
+});
+
+// ---------------------------------------------------------------------------
+// Team Report — read-only, hierarchy-scoped rollup of a senior's subordinates'
+// activity (attendance + visits + calls) for a day / date range. No mutations.
+// Union of the tracking + telecaller-senior role lists so every senior branch
+// can open it; the payload adapts (capabilities.show_calls / show_route).
+// ---------------------------------------------------------------------------
+Route::prefix('team')->middleware('jwtauth')->group(function () {
+    // Any staff member's own report (salesman / telecaller "My Report") — no
+    // role gate, you can always see yourself.
+    Route::get('/my-report', [TeamReportController::class, 'selfReport']);
+
+    // Senior-only: the roster + drilling into a subordinate.
+    Route::middleware('role:admin,manager,incharge,head_incharge,zonal_incharge,area_incharge,teleadmin')
+        ->group(function () {
+            Route::get('/report',                  [TeamReportController::class, 'roster']);
+            Route::get('/report/{employeeMobile}', [TeamReportController::class, 'employee']);
+        });
 });
 
 // ---------------------------------------------------------------------------

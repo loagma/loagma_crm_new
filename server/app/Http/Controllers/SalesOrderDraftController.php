@@ -7,29 +7,29 @@ use Illuminate\Support\Facades\DB;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 /**
- * Server-side persistence for the Create Sales Order sheet's cart, backed by
- * `sales_order_draft_crm` — a CRM-owned table, NOT the shared `cart` table
- * (see that migration for why `cart` can't hold this).
+ * Server-side persistence for the Create Sales Order sheet's cart.
  *
- * Scoped to (staff member, account): the salesman's in-person draft for a
- * shop and the telecaller's phone draft for that same shop never see each
- * other. Works identically for lead and customer accounts, since nothing here
- * depends on the account having a `user` row.
+ * Stored on the shared `cart` table (see the
+ * 2026_09_05_000001_move_sales_order_draft_to_cart migration for the layout and
+ * why it is safe alongside the consumer app). One row per (staff member,
+ * account), tagged `ctype_id = self::CTYPE`, holding the whole draft as JSON in
+ * `draft_payload`. The salesman's in-person draft and the telecaller's phone
+ * draft for the same shop stay independent because `staff_id` is part of the
+ * key. Works identically for lead and customer accounts.
  *
  * The draft is written on every cart edit and deleted the moment an order is
- * actually created from it, so re-opening the sheet after a checkout starts
- * clean while re-opening it after a plain close restores exactly what was
- * there.
+ * actually created from it.
  */
 class SalesOrderDraftController extends Controller
 {
+    /** `cart.ctype_id` sentinel for CRM draft rows — maps to no `cart_type`. */
+    private const CTYPE = 'crm_sales_draft';
+
     /**
      * GET /api/order-draft?account_id=...&account_type=lead|customer
      *
      * The stored payload verbatim, except that every catalog-sourced line's
-     * `max_qty` is re-resolved against live `vendor_products` stock — a draft
-     * can sit for days, and letting it submit against a stale stock figure is
-     * the one thing worth not restoring faithfully.
+     * `max_qty` is re-resolved against live `vendor_products` stock.
      */
     public function show(): JsonResponse
     {
@@ -44,26 +44,22 @@ class SalesOrderDraftController extends Controller
             return response()->json(['success' => false, 'message' => 'account_id and account_type are required'], 422);
         }
 
-        $row = DB::table('sales_order_draft_crm')
-            ->where('staff_id', $staffId)
-            ->where('account_id', $accountId)
-            ->where('account_type', $accountType)
-            ->first(['payload', 'updated_at']);
+        $row = $this->rowQuery($staffId, $accountId, $accountType)
+            ->first(['draft_payload', 'created_at']);
 
         if (!$row) {
             return response()->json(['success' => true, 'data' => null]);
         }
 
-        $payload = json_decode($row->payload, true);
+        $payload = json_decode((string) $row->draft_payload, true);
         if (!is_array($payload)) {
-            // A payload we can't parse is worse than no draft at all — drop it
-            // rather than handing the client something it will choke on.
+            // A payload we can't parse is worse than no draft at all.
             $this->deleteFor($staffId, $accountId, $accountType);
             return response()->json(['success' => true, 'data' => null]);
         }
 
         $payload['items']      = $this->withLiveStock($payload['items'] ?? []);
-        $payload['updated_at'] = $row->updated_at;
+        $payload['updated_at'] = $row->created_at;
 
         return response()->json(['success' => true, 'data' => $payload]);
     }
@@ -72,9 +68,8 @@ class SalesOrderDraftController extends Controller
      * PUT /api/order-draft
      * body: { account_id, account_type, payload: {...} }
      *
-     * Upserts the whole draft. The sheet calls this (debounced) on every cart
-     * edit, so it must stay cheap and must never partially apply — hence one
-     * JSON column rather than a diffed row-per-item table.
+     * Upserts the whole draft. Called (debounced) on every cart edit, so it
+     * stays a single-row write and never partially applies.
      */
     public function store(): JsonResponse
     {
@@ -99,28 +94,47 @@ class SalesOrderDraftController extends Controller
             return response()->json(['success' => false, 'message' => 'payload is not encodable'], 422);
         }
 
-        $match = [
-            'staff_id'     => $staffId,
-            'account_id'   => $accountId,
-            'account_type' => $accountType,
-        ];
+        DB::transaction(function () use ($staffId, $accountId, $accountType, $encoded) {
+            $existing = $this->rowQuery($staffId, $accountId, $accountType)
+                ->lockForUpdate()
+                ->first(['cart_id']);
 
-        // updateOrInsert matches the table's own unique key, so two rapid
-        // autosaves can't race into a duplicate row.
-        DB::table('sales_order_draft_crm')->updateOrInsert($match, [
-            'payload'    => $encoded,
-            'updated_at' => now(),
-            'created_at' => now(),
-        ]);
+            if ($existing) {
+                DB::table('cart')->where('cart_id', $existing->cart_id)->update([
+                    'draft_payload' => $encoded,
+                    'created_at'    => now(),
+                ]);
+                return;
+            }
+
+            // `cart.cart_id` has no AUTO_INCREMENT — allocate MAX+1 under lock.
+            $nextId = (int) DB::table('cart')->lockForUpdate()->max('cart_id') + 1;
+
+            DB::table('cart')->insert([
+                'cart_id'           => $nextId,
+                'userid'            => $accountType === 'customer' ? (int) $accountId : 0,
+                'addressId'         => 0,
+                'product_id'        => 0,
+                'vendor_product_id' => 0,
+                'pack_id'           => "crmdraft:{$staffId}|{$accountType}|{$accountId}",
+                'quantity'          => 0,
+                'total'             => 0,
+                'ctype_id'          => self::CTYPE,
+                'created_at'        => now(),
+                'staff_id'          => $staffId,
+                'account_ref'       => $accountId,
+                'account_type'      => $accountType,
+                'draft_payload'     => $encoded,
+            ]);
+        });
 
         return response()->json(['success' => true]);
     }
 
     /**
      * DELETE /api/order-draft?account_id=...&account_type=...
-     *
-     * Called once an order is actually created from the draft (and when the
-     * cart is emptied back to nothing), so the next open starts clean.
+     * Called once an order is created from the draft (and when the cart is
+     * emptied back to nothing).
      */
     public function destroy(): JsonResponse
     {
@@ -140,19 +154,24 @@ class SalesOrderDraftController extends Controller
         return response()->json(['success' => true]);
     }
 
+    /** The (staff, account) draft row on `cart`. */
+    private function rowQuery(string $staffId, string $accountId, string $accountType)
+    {
+        return DB::table('cart')
+            ->where('ctype_id', self::CTYPE)
+            ->where('staff_id', $staffId)
+            ->where('account_ref', $accountId)
+            ->where('account_type', $accountType);
+    }
+
     private function deleteFor(string $staffId, string $accountId, string $accountType): void
     {
-        DB::table('sales_order_draft_crm')
-            ->where('staff_id', $staffId)
-            ->where('account_id', $accountId)
-            ->where('account_type', $accountType)
-            ->delete();
+        $this->rowQuery($staffId, $accountId, $accountType)->delete();
     }
 
     /**
-     * Refresh each line's `max_qty` from the pack it was added from. Lines
-     * with no vendor pack (hand-typed items) are passed through untouched —
-     * they never had a stock figure to go stale.
+     * Refresh each line's `max_qty` from the pack it was added from. Hand-typed
+     * lines (no vendor pack) are passed through untouched.
      *
      * @param  mixed  $items
      * @return list<array<string, mixed>>
@@ -200,9 +219,7 @@ class SalesOrderDraftController extends Controller
     }
 
     /**
-     * The logged-in staff member's `deli_staff.mobile` — the same identity
-     * BeatPlanController::salesmanId() and beat_plan_followup_crm.staff_id
-     * use, so a draft belongs to the person, not the device or the role.
+     * The logged-in staff member's `deli_staff.mobile`.
      */
     private static function staffId(): ?string
     {
