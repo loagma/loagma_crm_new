@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
 import '../../widgets/account_map_screen.dart';
+import '../telecaller/telecaller_mock_data.dart' show statusStyle;
 
 class AllBeatPlanScreen extends StatefulWidget {
   const AllBeatPlanScreen({super.key});
@@ -181,10 +182,10 @@ class _AllBeatPlanScreenState extends State<AllBeatPlanScreen> {
                             const SizedBox(height: 10),
                             Row(children: [
                               Flexible(child: Wrap(spacing: 6, runSpacing: 4, children: [
-                                _Chip(label: 'Pending: $_pending',       color: const Color(0xFF757575)),
-                                _Chip(label: 'Visited: $_visited',       color: const Color(0xFF1976D2)),
-                                _Chip(label: 'Productive: $_productive', color: const Color(0xFF2E7D32)),
-                                _Chip(label: 'Revisit: $_revisit',       color: const Color(0xFFE53935)),
+                                _Chip(label: 'Pending: $_pending',       color: statusStyle('pending').accent),
+                                _Chip(label: 'Visited: $_visited',       color: statusStyle('visited').accent),
+                                _Chip(label: 'Productive: $_productive', color: statusStyle('productive').accent),
+                                _Chip(label: 'Revisit: $_revisit',       color: statusStyle('revisit').accent),
                               ])),
                               const SizedBox(width: 8),
                               OutlinedButton.icon(

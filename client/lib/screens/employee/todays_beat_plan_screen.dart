@@ -7,7 +7,7 @@ import '../../services/api_service.dart';
 import '../../services/open_visit_store.dart';
 import '../../widgets/account_map_screen.dart';
 import '../telecaller/telecaller_mock_data.dart'
-    show stageStyle, priorityForStage;
+    show stageStyle, priorityForStage, statusStyle;
 
 class TodaysBeatPlanScreen extends StatefulWidget {
   const TodaysBeatPlanScreen({super.key});
@@ -52,20 +52,8 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
       ? _items.length
       : _items.where((i) => _statusOf(i) == key).length;
 
-  Color _statusChipColor(String key) {
-    switch (key) {
-      case 'productive':
-        return const Color(0xFF2E7D32);
-      case 'visited':
-        return const Color(0xFF1976D2);
-      case 'revisit':
-        return const Color(0xFFE53935);
-      case 'pending':
-        return const Color(0xFF757575);
-      default:
-        return _gold;
-    }
-  }
+  Color _statusChipColor(String key) =>
+      key == 'all' ? _gold : statusStyle(key).accent;
 
   @override
   void initState() {
@@ -344,7 +332,6 @@ class _CustomerCard extends StatelessWidget {
   const _CustomerCard({required this.item, required this.todaysItems, this.onReturn});
 
   static const _gold = Color(0xFFD7BE69);
-  static const _cardBg = Color(0xFFFFF0EE);
 
   Map<String, dynamic> get _account =>
       (item['account'] as Map<String, dynamic>?) ?? {};
@@ -544,6 +531,8 @@ class _CustomerCard extends StatelessWidget {
     final status = item['status'] as String? ??
         (visited ? 'visited' : (followUpDue ? 'revisit' : 'pending'));
     final isProductive = status == 'productive';
+    // One colour drives the whole card + its status chip.
+    final ss = statusStyle(status);
     final stage = acc['customerStage'] as String? ?? accountType;
     final st = stageStyle(stage);
     final prio = priorityForStage(stage);
@@ -555,15 +544,9 @@ class _CustomerCard extends StatelessWidget {
     // to trigger by accident and made Proceed feel redundant.
     return Container(
       decoration: BoxDecoration(
-        color: isProductive
-            ? const Color(0xFFE8F5E9)
-            : (visited ? const Color(0xFFF0FFF4) : _cardBg),
+        color: ss.cardBg,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isProductive
-              ? const Color(0xFFA5D6A7)
-              : (visited ? const Color(0xFFC8E6C9) : const Color(0xFFFFD8D2)),
-        ),
+        border: Border.all(color: ss.cardBorder),
         boxShadow: const [
           BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2)),
         ],
@@ -612,27 +595,9 @@ class _CustomerCard extends StatelessWidget {
                       fg: const Color(0xFF5B5B5B),
                     ),
                     _Tag(
-                      label: isProductive
-                          ? '✓ Productive'
-                          : visited
-                          ? '✓ Visited'
-                          : followUpDue
-                          ? 'Revisit due'
-                          : 'Pending',
-                      bg: isProductive
-                          ? const Color(0xFFC8E6C9)
-                          : visited
-                          ? const Color(0xFFE8F5E9)
-                          : followUpDue
-                          ? const Color(0xFFFFEBEE)
-                          : const Color(0xFFF5F5F5),
-                      fg: isProductive
-                          ? const Color(0xFF1B5E20)
-                          : visited
-                          ? const Color(0xFF2E7D32)
-                          : followUpDue
-                          ? const Color(0xFFE53935)
-                          : const Color(0xFF757575),
+                      label: (isProductive || visited) ? '✓ ${ss.text}' : ss.text,
+                      bg: ss.chipBg,
+                      fg: ss.accent,
                     ),
                   ],
                 ),

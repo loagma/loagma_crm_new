@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../widgets/account_map_screen.dart';
+import '../telecaller/telecaller_mock_data.dart' show statusStyle;
 
 class BeatPlanDayScreen extends StatefulWidget {
   final String date; // YYYY-MM-DD
@@ -48,20 +49,8 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
       ? _items.length
       : _items.where((i) => _statusOf(i) == key).length;
 
-  Color _statusChipColor(String key) {
-    switch (key) {
-      case 'productive':
-        return const Color(0xFF2E7D32);
-      case 'visited':
-        return const Color(0xFF1976D2);
-      case 'revisit':
-        return const Color(0xFFE53935);
-      case 'pending':
-        return const Color(0xFF757575);
-      default:
-        return _gold;
-    }
-  }
+  Color _statusChipColor(String key) =>
+      key == 'all' ? _gold : statusStyle(key).accent;
 
   @override
   void initState() {
@@ -262,7 +251,8 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                               // > pending (server-computed, BeatPlanController).
                               final status = item['status'] as String? ?? (visited ? 'visited' : 'pending');
                               final isProductive = status == 'productive';
-                              final isRevisit = status == 'revisit';
+                              // One colour drives the whole card + its chip.
+                              final ss = statusStyle(status);
                               final sched      = _scheduleLabel(item);
                               final accountType = item['account_type'] as String? ?? 'lead';
 
@@ -278,16 +268,9 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                                 },
                                 child: Container(
                                   decoration: BoxDecoration(
-                                    color: isProductive
-                                        ? const Color(0xFFE8F5E9)
-                                        : (visited ? const Color(0xFFF0FFF4) : Colors.white),
+                                    color: ss.cardBg,
                                     borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                        color: isProductive
-                                            ? const Color(0xFFA5D6A7)
-                                            : (visited
-                                                ? const Color(0xFFC8E6C9)
-                                                : const Color(0xFFEEEEEE))),
+                                    border: Border.all(color: ss.cardBorder),
                                     boxShadow: const [BoxShadow(
                                         color: Colors.black12,
                                         blurRadius: 4,
@@ -349,90 +332,26 @@ class _BeatPlanDayScreenState extends State<BeatPlanDayScreen> {
                                                               0xFFF57C00))),
                                             ),
                                             const SizedBox(width: 6),
-                                            if (isProductive)
-                                              Container(
-                                                padding: const EdgeInsets
-                                                    .symmetric(
-                                                    horizontal: 8,
-                                                    vertical: 2),
-                                                decoration: BoxDecoration(
-                                                  color: const Color(
-                                                      0xFFC8E6C9),
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                          10),
-                                                ),
-                                                child: const Text('✓ Productive',
-                                                    style: TextStyle(
-                                                        fontSize: 10,
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                        color: Color(
-                                                            0xFF1B5E20))),
-                                              )
-                                            else if (visited)
-                                              Container(
-                                                padding: const EdgeInsets
-                                                    .symmetric(
-                                                    horizontal: 8,
-                                                    vertical: 2),
-                                                decoration: BoxDecoration(
-                                                  color: const Color(
-                                                      0xFFE8F5E9),
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                          10),
-                                                ),
-                                                child: const Text('✓ Visited',
-                                                    style: TextStyle(
-                                                        fontSize: 10,
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                        color: Color(
-                                                            0xFF2E7D32))),
-                                              )
-                                            else if (isRevisit)
-                                              Container(
-                                                padding: const EdgeInsets
-                                                    .symmetric(
-                                                    horizontal: 8,
-                                                    vertical: 2),
-                                                decoration: BoxDecoration(
-                                                  color: const Color(
-                                                      0xFFFFEBEE),
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                          10),
-                                                ),
-                                                child: const Text('Revisit due',
-                                                    style: TextStyle(
-                                                        fontSize: 10,
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                        color: Color(
-                                                            0xFFE53935))),
-                                              )
-                                            else
-                                              Container(
-                                                padding: const EdgeInsets
-                                                    .symmetric(
-                                                    horizontal: 8,
-                                                    vertical: 2),
-                                                decoration: BoxDecoration(
-                                                  color: const Color(
-                                                      0xFFF5F5F5),
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                          10),
-                                                ),
-                                                child: const Text('Pending',
-                                                    style: TextStyle(
-                                                        fontSize: 10,
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                        color: Color(
-                                                            0xFF757575))),
+                                            Container(
+                                              padding: const EdgeInsets
+                                                  .symmetric(
+                                                  horizontal: 8,
+                                                  vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: ss.chipBg,
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
                                               ),
+                                              child: Text(
+                                                  (isProductive || visited)
+                                                      ? '✓ ${ss.text}'
+                                                      : ss.text,
+                                                  style: TextStyle(
+                                                      fontSize: 10,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      color: ss.accent)),
+                                            ),
                                           ]),
                                           Text(code,
                                               style: TextStyle(
