@@ -78,6 +78,13 @@ class AppDrawer extends StatelessWidget {
             'subtitle': 'Salesman & Telecaller',
           },
           {
+            'title': 'Customer Assign',
+            'icon': Icons.assignment_ind_rounded,
+            'route': '/customer-assign',
+            'color': const Color(0xFF26A69A),
+            'subtitle': 'Single customer → employee',
+          },
+          {
             'title': 'Assign',
             'icon': Icons.supervisor_account_rounded,
             'route': '/incharge-assign',

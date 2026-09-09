@@ -8,6 +8,7 @@ use App\Http\Controllers\LeadsAccountController;
 use App\Http\Controllers\AreaController;
 use App\Http\Controllers\AreaAssignController;
 use App\Http\Controllers\InchargeAssignController;
+use App\Http\Controllers\CustomerAssignController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\BeatPlanController;
 use App\Http\Controllers\SalesOrderDraftController;
@@ -180,6 +181,21 @@ Route::prefix('area-assign')->group(function () {
     Route::get('/{employeeId}',    [AreaAssignController::class, 'show']);
     Route::post('/{employeeId}',   [AreaAssignController::class, 'save']);
     Route::delete('/{employeeId}', [AreaAssignController::class, 'destroy']);
+});
+
+// ---------------------------------------------------------------------------
+// Customer Assign (admin pins a single `user` customer to a single employee)
+// ---------------------------------------------------------------------------
+Route::prefix('customer-assign')->middleware('jwtauth')->group(function () {
+    // Employee: my directly-assigned customers (merged into Allotted Customers).
+    Route::get('/mine', [CustomerAssignController::class, 'mine']); // must be before /{customerUserid} style routes
+
+    // Admin only: list / create-move / remove.
+    Route::middleware('role:admin')->group(function () {
+        Route::get('/',                    [CustomerAssignController::class, 'index']);
+        Route::post('/',                   [CustomerAssignController::class, 'assign']);
+        Route::delete('/{customerUserid}', [CustomerAssignController::class, 'destroy']);
+    });
 });
 
 // ---------------------------------------------------------------------------

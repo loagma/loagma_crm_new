@@ -12,6 +12,7 @@ import '../screens/admin/employee_detail_screen.dart';
 import '../screens/admin/employee_create_screen.dart';
 import '../screens/admin/area_assign_screen.dart';
 import '../screens/admin/salesman_area_assign_screen.dart';
+import '../screens/admin/customer_assign_screen.dart';
 import '../screens/admin/attendance_manage_screen.dart';
 import '../screens/admin/attendance_employee_screen.dart';
 import '../screens/admin/attendance_settings_screen.dart';
@@ -323,6 +324,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/allotted-customer-accounts',
       builder: (context, state) => const AllottedCustomerAccountsScreen(),
+    ),
+    GoRoute(
+      path: '/customer-assign',
+      builder: (context, state) => const CustomerAssignScreen(),
     ),
     GoRoute(
       path: '/verify-lead-accounts',

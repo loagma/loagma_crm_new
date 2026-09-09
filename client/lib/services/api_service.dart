@@ -280,12 +280,15 @@ class ApiService {
     }
   }
 
-  /// Fetch customers from user table, optionally filtered by pincodes.
-  static Future<List<Map<String, dynamic>>> getCustomers({List<String>? pincodes}) async {
+  /// Fetch customers from user table, optionally filtered by pincodes and/or
+  /// a free-text search query ([q] matches name / shop_name / contact number).
+  static Future<List<Map<String, dynamic>>> getCustomers({List<String>? pincodes, String? q}) async {
     final uri = Uri.parse('${ApiConfig.baseUrl}/api/customers');
     var finalUri = uri;
-    if (pincodes != null && pincodes.isNotEmpty) {
-      final params = <String, List<String>>{'pincodes[]': pincodes};
+    final params = <String, dynamic>{};
+    if (pincodes != null && pincodes.isNotEmpty) params['pincodes[]'] = pincodes;
+    if (q != null && q.trim().isNotEmpty) params['q'] = q.trim();
+    if (params.isNotEmpty) {
       finalUri = uri.replace(queryParameters: params);
     }
     try {
@@ -1516,6 +1519,74 @@ class ApiService {
       print('deleteAreaAssign failed for $url: $e');
       return false;
     }
+  }
+
+  // ── Customer Assign (admin pins one customer to one employee) ────────────
+
+  /// Admin: all direct customer→employee assignments, enriched with names.
+  /// Pass [employeeMobile] to scope to one employee.
+  static Future<List<Map<String, dynamic>>> getCustomerAssigns({String? employeeMobile}) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/customer-assign').replace(queryParameters: {
+      if (employeeMobile != null && employeeMobile.isNotEmpty) 'employee_mobile': employeeMobile,
+    });
+    try {
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = (decoded['data'] as List?) ?? [];
+        return data.cast<Map<String, dynamic>>();
+      }
+      print('getCustomerAssigns status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getCustomerAssigns failed for $uri: $e');
+    }
+    return [];
+  }
+
+  /// Admin: create or move the assignment for [customerUserid] to [employeeMobile].
+  static Future<bool> assignCustomer(int customerUserid, String employeeMobile) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/customer-assign');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({
+            'customer_userid': customerUserid,
+            'employee_mobile': employeeMobile,
+          }))
+          .timeout(const Duration(seconds: 15));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('assignCustomer failed for $url: $e');
+      return false;
+    }
+  }
+
+  /// Admin: remove the direct assignment for [customerUserid].
+  static Future<bool> unassignCustomer(int customerUserid) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/customer-assign/$customerUserid');
+    try {
+      final response = await http.delete(url, headers: _authHeaders).timeout(const Duration(seconds: 12));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      print('unassignCustomer failed for $url: $e');
+      return false;
+    }
+  }
+
+  /// Employee: the customers directly assigned to me (shaped like getCustomers).
+  static Future<List<Map<String, dynamic>>> getMyAssignedCustomers() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/customer-assign/mine');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = (decoded['data'] as List?) ?? [];
+        return data.cast<Map<String, dynamic>>();
+      }
+      print('getMyAssignedCustomers status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getMyAssignedCustomers failed for $url: $e');
+    }
+    return [];
   }
 
   // ── Incharge Assign (head_incharge → incharge mapping) ───────────────────

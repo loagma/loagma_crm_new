@@ -66,6 +66,36 @@ class _AllottedCustomerAccountsScreenState
     super.dispose();
   }
 
+  // Normalise a raw `user`-table customer row (from /customers or
+  // /customer-assign/mine) into the account shape this screen renders.
+  Map<String, dynamic> _mapUserCustomer(Map<String, dynamic> u) => <String, dynamic>{
+        'id':            u['userid'].toString(),
+        'accountCode':   '',
+        'businessName':  (u['shop_name'] as String?)?.isNotEmpty == true
+            ? u['shop_name']
+            : (u['name'] ?? '').toString(),
+        'personName':    (u['name'] ?? '').toString(),
+        'contactNumber': (u['contactno'] ?? '').toString(),
+        'address':       (u['address'] ?? u['shop_address'] ?? '').toString(),
+        'addresses':     ((u['addresses'] as List?) ?? [])
+            .map((a) => (a as Map)['address']?.toString() ?? '')
+            .where((a) => a.isNotEmpty)
+            .toList(),
+        'pincode':       (u['pincode'] ?? '').toString(),
+        'latitude':      u['latitude'],
+        'longitude':     u['longitude'],
+        '_type':         'customer',
+        'userid':        u['userid'],
+        'shop_name':     (u['shop_name'] ?? '').toString(),
+        'name':          (u['name'] ?? '').toString(),
+        'contactno':     (u['contactno'] ?? '').toString(),
+        'email':         (u['email'] ?? '').toString(),
+        'shop_address':  (u['shop_address'] ?? '').toString(),
+        'city':          (u['city'] ?? '').toString(),
+        'state':         (u['state'] ?? '').toString(),
+        'user_type':     (u['user_type'] ?? '').toString(),
+      };
+
   Future<void> _load() async {
     setState(() { _loading = true; _error = ''; _selected.clear(); });
 
@@ -76,6 +106,15 @@ class _AllottedCustomerAccountsScreenState
     }
 
     try {
+      // Customers pinned directly to this employee by an admin (customer_assign_crm).
+      // These are merged into the pincode groups below alongside the area-based
+      // allotment and flagged with `_assigned_to_me` so the card shows a badge.
+      final directCustomersRaw = await ApiService.getMyAssignedCustomers();
+      final directCustomers = directCustomersRaw.map(_mapUserCustomer).map((m) {
+        m['_assigned_to_me'] = true;
+        return m;
+      }).toList();
+
       // Step 1 — get salesman's assigned area IDs from area_assign_crm
       final assignRes  = await ApiService.getAreaAssign(mobile);
       final assignData = assignRes?['data'];
@@ -91,7 +130,7 @@ class _AllottedCustomerAccountsScreenState
         }
       }
 
-      if (areaIds.isEmpty) {
+      if (areaIds.isEmpty && directCustomers.isEmpty) {
         setState(() { _loading = false; _groups = []; });
         return;
       }
@@ -125,56 +164,41 @@ class _AllottedCustomerAccountsScreenState
 
       // Step 3 — ONE request: match by areaId OR by pincode (OR logic in backend)
       //   Handles accounts with areaId set AND older accounts with only pincode set
-      final result = await ApiService.getLeadAccounts(
-        areaIds: areaIds,
-        pincodes: pincodes, // empty list is fine — backend ignores it
-        perPage: 1000,
-      );
-      final raw = result['data'];
-      final leads = raw is List
-          ? raw.map((e) {
-              final m = Map<String, dynamic>.from(e as Map);
-              m['_type'] = 'lead';
-              return m;
-            }).toList()
-          : <Map<String, dynamic>>[];
+      //   Skipped entirely when this employee has no area allotment — an empty
+      //   filter would make the backend return every lead/customer.
+      final hasAreaScope = areaIds.isNotEmpty || pincodes.isNotEmpty;
 
-      // Also fetch customers from user table (same pincodes)
-      final customerRaw = await ApiService.getCustomers(pincodes: pincodes);
-      final customers = customerRaw.map((u) => <String, dynamic>{
-        'id':            u['userid'].toString(),
-        'accountCode':   '',
-        'businessName':  (u['shop_name'] as String?)?.isNotEmpty == true
-            ? u['shop_name']
-            : (u['name'] ?? '').toString(),
-        'personName':    (u['name'] ?? '').toString(),
-        'contactNumber': (u['contactno'] ?? '').toString(),
-        'address':       (u['address'] ?? u['shop_address'] ?? '').toString(),
-        'addresses':     ((u['addresses'] as List?) ?? [])
-            .map((a) => (a as Map)['address']?.toString() ?? '')
-            .where((a) => a.isNotEmpty)
-            .toList(),
-        'pincode':       (u['pincode'] ?? '').toString(),
-        'latitude':      u['latitude'],
-        'longitude':     u['longitude'],
-        '_type':         'customer',
-        // Raw user-table field names — kept alongside the normalised keys
-        // above so CustomerDetailScreen (which reads userid/shop_name/name/
-        // contactno/email/city/state/user_type) shows real values instead
-        // of blanks.
-        'userid':        u['userid'],
-        'shop_name':     (u['shop_name'] ?? '').toString(),
-        'name':          (u['name'] ?? '').toString(),
-        'contactno':     (u['contactno'] ?? '').toString(),
-        'email':         (u['email'] ?? '').toString(),
-        'shop_address':  (u['shop_address'] ?? '').toString(),
-        'city':          (u['city'] ?? '').toString(),
-        'state':         (u['state'] ?? '').toString(),
-        'user_type':     (u['user_type'] ?? '').toString(),
-      }).toList();
+      final leads = <Map<String, dynamic>>[];
+      final customers = <Map<String, dynamic>>[];
+      if (hasAreaScope) {
+        final result = await ApiService.getLeadAccounts(
+          areaIds: areaIds,
+          pincodes: pincodes, // empty list is fine — backend ignores it
+          perPage: 1000,
+        );
+        final raw = result['data'];
+        if (raw is List) {
+          leads.addAll(raw.map((e) {
+            final m = Map<String, dynamic>.from(e as Map);
+            m['_type'] = 'lead';
+            return m;
+          }));
+        }
 
-      // Merge leads + customers
-      final allAccounts = [...leads, ...customers];
+        // Also fetch customers from user table (same pincodes)
+        final customerRaw = await ApiService.getCustomers(pincodes: pincodes);
+        customers.addAll(customerRaw.map(_mapUserCustomer));
+      }
+
+      // Merge leads + area customers + directly-assigned customers.
+      // Direct assignments win on duplicate userid so the "assigned to you"
+      // badge is kept.
+      final directIds = directCustomers.map((c) => c['id'].toString()).toSet();
+      final allAccounts = [
+        ...leads,
+        ...customers.where((c) => !directIds.contains(c['id'].toString())),
+        ...directCustomers,
+      ];
 
       // Step 3 — group client-side by pincode
       // Pre-seed with ALL pincodes from areas so empty ones still appear
@@ -1290,7 +1314,31 @@ class _AccountCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             // Lead/Customer type chip
-            _buildTypeChip((account['_type'] ?? 'lead').toString()),
+            Row(
+              children: [
+                _buildTypeChip((account['_type'] ?? 'lead').toString()),
+                if (account['_assigned_to_me'] == true) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD7BE69).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: const Color(0xFFD7BE69)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.assignment_ind_rounded, size: 11, color: Color(0xFFB89A3E)),
+                        SizedBox(width: 3),
+                        Text('Assigned to you',
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFFB89A3E))),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
             const SizedBox(height: 6),
             Text(name,
                 style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
