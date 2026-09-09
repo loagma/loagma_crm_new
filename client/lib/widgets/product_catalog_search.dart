@@ -489,11 +489,11 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: const Color(0xFFE0E0E0)),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: const Color(0xFFCFCFCF), width: 0.8),
         ),
         child: Text.rich(
           TextSpan(
@@ -501,8 +501,8 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
               TextSpan(
                 text: '$label : ',
                 style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
                   color: Color(0xFF20242B),
                 ),
               ),
@@ -510,8 +510,8 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
                 text:
                     '₹${price.toStringAsFixed(price == price.roundToDouble() ? 0 : 2)}',
                 style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
                   color: Color(0xFF20242B),
                 ),
               ),
@@ -522,15 +522,13 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
     );
   }
 
-  // Green fill marks the *default* pack (vendor_products.default_pack_id,
-  // surfaced as `is_default` by ProductController::parsePacks) — a fixed,
-  // data-driven attribute that never moves just because the user tapped a
-  // different pack. Which pack is actively selected (drives price/qty/Add)
-  // is a separate, independent state shown via the gold border + check
-  // instead, so the two concepts don't get visually conflated.
+  // Green fill follows the *selected* pack — tapping a chip moves the
+  // highlight (and the check) onto whatever was tapped. This is UI-only:
+  // the initial selection is seeded from the data default
+  // (vendor_products.default_pack_id / `is_default`) in initState, so a
+  // search/refresh comes back green on whatever the DB default is.
   Widget _packChip(Map<String, dynamic> pack) {
     final selected = pack['id'] == _selectedPackId;
-    final isDefault = pack['is_default'] == true;
     final label = (pack['label'] as String?) ?? '';
     return GestureDetector(
       onTap: () => setState(() {
@@ -546,12 +544,10 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: isDefault ? _chipGreen : Colors.white,
+          color: selected ? _chipGreen : Colors.white,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: selected
-                ? kGoldDark
-                : (isDefault ? _chipGreen : const Color(0xFFE0E0E0)),
+            color: selected ? _chipGreen : const Color(0xFFE0E0E0),
             width: selected ? 1.6 : 1,
           ),
         ),
@@ -559,10 +555,10 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (selected) ...[
-              Icon(
+              const Icon(
                 Icons.check_circle_rounded,
                 size: 12,
-                color: isDefault ? Colors.white : kGoldDark,
+                color: Colors.white,
               ),
               const SizedBox(width: 4),
             ],
@@ -571,7 +567,7 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
               style: TextStyle(
                 fontSize: 11.5,
                 fontWeight: FontWeight.w600,
-                color: isDefault ? Colors.white : const Color(0xFF5B5B5B),
+                color: selected ? Colors.white : const Color(0xFF5B5B5B),
               ),
             ),
           ],
