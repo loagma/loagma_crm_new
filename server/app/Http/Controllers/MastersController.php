@@ -70,11 +70,14 @@ class MastersController extends Controller
         )->orderBy('name');
 
         if ($q) {
-            $query->where(function ($sub) use ($q) {
-                $sub->where('name',   'like', "%{$q}%")
-                    ->orWhere('role',   'like', "%{$q}%")
-                    ->orWhere('mobile', 'like', "%{$q}%")
-                    ->orWhere('city',   'like', "%{$q}%");
+            // Columns use a case-sensitive collation on this DB — lower-case
+            // both sides so "ram" / "RAM" / "Ram" match the same rows.
+            $needle = '%' . mb_strtolower($q) . '%';
+            $query->where(function ($sub) use ($needle) {
+                $sub->whereRaw('LOWER(name) LIKE ?', [$needle])
+                    ->orWhereRaw('LOWER(role) LIKE ?', [$needle])
+                    ->orWhereRaw('LOWER(mobile) LIKE ?', [$needle])
+                    ->orWhereRaw('LOWER(city) LIKE ?', [$needle]);
             });
         }
 

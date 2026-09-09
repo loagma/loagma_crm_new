@@ -1560,6 +1560,28 @@ class ApiService {
     }
   }
 
+  /// Admin: assign many customers to one employee in a single call.
+  /// Returns the number actually assigned, or null on failure.
+  static Future<int?> assignCustomersBulk(List<int> customerUserids, String employeeMobile) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/customer-assign/bulk');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({
+            'customer_userids': customerUserids,
+            'employee_mobile': employeeMobile,
+          }))
+          .timeout(const Duration(seconds: 30));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        return (decoded['assigned'] as num?)?.toInt() ?? customerUserids.length;
+      }
+      print('assignCustomersBulk status ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('assignCustomersBulk failed for $url: $e');
+    }
+    return null;
+  }
+
   /// Admin: remove the direct assignment for [customerUserid].
   static Future<bool> unassignCustomer(int customerUserid) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/customer-assign/$customerUserid');

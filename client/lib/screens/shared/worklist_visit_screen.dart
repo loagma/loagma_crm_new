@@ -258,7 +258,9 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
       accountType: widget.accountType,
       stages: _stages,
       callPrefill: _lastCall,
-      placedOrderIds: _placedOrderIds,
+      // Newest first — the sheet auto-selects the first as the placed-order
+      // number (it can't be typed by hand).
+      placedOrderIds: _placedOrderIds.reversed.toList(),
       uploadImage: ApiService.uploadActionLogImage,
     );
     if (body == null || !mounted) return; // cancelled — stay checked in

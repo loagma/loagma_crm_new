@@ -69,7 +69,10 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
 
   // salesman
   String? _stageSlug;
-  final _orderNo = TextEditingController();
+  // The placed-order number is never typed by hand — it's auto-picked from the
+  // orders actually created during this visit (widget.placedOrderIds). Only the
+  // selection (when there are several) is user-controlled.
+  String? _selectedOrderId;
   final _generalNotes = TextEditingController();
   String? _notesRelatedTo;
   final _images = <String>[];
@@ -123,15 +126,15 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
       if (_outcomeOptions.any((e) => e.$1 == o)) _callOutcome = o;
       _isInvalid = p['is_invalid_call'] == true || o == 'invalid';
     }
-    // Pre-fill the order number with the last order placed during this visit.
+    // Auto-select the order placed during this visit (newest first — the
+    // caller passes them in that order). Never entered by hand.
     if (widget.placedOrderIds.isNotEmpty) {
-      _orderNo.text = widget.placedOrderIds.last;
+      _selectedOrderId = widget.placedOrderIds.first;
     }
   }
 
   @override
   void dispose() {
-    _orderNo.dispose();
     _generalNotes.dispose();
     _paymentCollected.dispose();
     _marketNote.dispose();
@@ -203,8 +206,8 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
       _err('Pick a stage before checking out');
       return;
     }
-    if (_isSalesman && _isPlacedOrder && _orderNo.text.trim().isEmpty) {
-      _err('Enter the order number for the placed order');
+    if (_isSalesman && _isPlacedOrder && _selectedOrderId == null) {
+      _err('No order was placed in this visit. Use "Take Order" to create it first — the number fills in automatically.');
       return;
     }
     if (!_isSalesman && _callOutcome == null) {
@@ -227,7 +230,7 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
 
     if (_isSalesman) {
       body['outcome_slug'] = _stageSlug;
-      if (_isPlacedOrder) body['order_no'] = _orderNo.text.trim();
+      if (_isPlacedOrder && _selectedOrderId != null) body['order_no'] = _selectedOrderId;
       if (_generalNotes.text.trim().isNotEmpty) body['general_notes'] = _generalNotes.text.trim();
       if (_notesRelatedTo != null) body['notes_related_to'] = _notesRelatedTo;
       if (_images.isNotEmpty) body['images'] = List<String>.from(_images);
@@ -424,34 +427,70 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
         ),
       if (_isPlacedOrder) ...[
         const SizedBox(height: 14),
-        _label('Order number *'),
+        _label('Order placed *'),
         const SizedBox(height: 6),
-        TextField(
-          controller: _orderNo,
-          keyboardType: TextInputType.text,
-          decoration: _inputDecor(widget.placedOrderIds.isNotEmpty
-              ? 'Order placed this visit'
-              : 'Enter the placed order number'),
-        ),
-        if (widget.placedOrderIds.length > 1) ...[
+        if (widget.placedOrderIds.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF4E5),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFF7D9AE)),
+            ),
+            child: const Text(
+              'No order recorded in this visit yet. Close this, tap "Take Order" '
+              'to place the order, then check out — the order number is filled '
+              'in automatically.',
+              style: TextStyle(fontSize: 12, color: Color(0xFF8A5A00), height: 1.35),
+            ),
+          )
+        else if (widget.placedOrderIds.length == 1)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F9F2),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFA9D8B0)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, size: 16, color: Color(0xFF2E7D32)),
+                const SizedBox(width: 8),
+                Text('Order #${widget.placedOrderIds.first}',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                const Spacer(),
+                Text('auto-filled',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+              ],
+            ),
+          )
+        else ...[
+          Text('This visit has more than one order — pick the one to log:',
+              style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 6,
             runSpacing: 6,
-            children: widget.placedOrderIds
-                .map((id) => GestureDetector(
-                      onTap: () => setState(() => _orderNo.text = id),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: _orderNo.text == id ? kGold.withValues(alpha: 0.16) : Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: _orderNo.text == id ? kGold : const Color(0xFFE0E0E0)),
-                        ),
-                        child: Text('#$id', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                      ),
-                    ))
-                .toList(),
+            children: widget.placedOrderIds.map((id) {
+              final sel = _selectedOrderId == id;
+              return GestureDetector(
+                onTap: () => setState(() => _selectedOrderId = id),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: sel ? kGold.withValues(alpha: 0.16) : Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: sel ? kGold : const Color(0xFFE0E0E0), width: 1.4),
+                  ),
+                  child: Text('#$id',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: sel ? kGoldDark : Colors.black87)),
+                ),
+              );
+            }).toList(),
           ),
         ],
       ],

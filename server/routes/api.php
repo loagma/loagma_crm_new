@@ -194,6 +194,7 @@ Route::prefix('customer-assign')->middleware('jwtauth')->group(function () {
     Route::middleware('role:admin')->group(function () {
         Route::get('/',                    [CustomerAssignController::class, 'index']);
         Route::post('/',                   [CustomerAssignController::class, 'assign']);
+        Route::post('/bulk',               [CustomerAssignController::class, 'bulkAssign']);
         Route::delete('/{customerUserid}', [CustomerAssignController::class, 'destroy']);
     });
 });

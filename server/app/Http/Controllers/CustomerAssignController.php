@@ -96,6 +96,41 @@ class CustomerAssignController extends Controller
         ], $assign->wasRecentlyCreated ? 201 : 200);
     }
 
+    // ── Admin: create / move many assignments to one employee at once ────────
+    public function bulkAssign(): JsonResponse
+    {
+        $validated = validator(request()->all(), [
+            'customer_userids'   => 'required|array|min:1',
+            'customer_userids.*' => 'integer',
+            'employee_mobile'    => 'required|string|max:20',
+        ])->validate();
+
+        if (!DeliStaff::where('mobile', $validated['employee_mobile'])->exists()) {
+            return response()->json(['success' => false, 'message' => 'Employee not found'], 404);
+        }
+
+        $userids = array_values(array_unique(array_map('intval', $validated['customer_userids'])));
+        $existing = UserCustomer::whereIn('userid', $userids)->pluck('userid')->all();
+
+        $by = $this->authMobile();
+        $count = 0;
+        foreach ($existing as $uid) {
+            CustomerAssign::updateOrCreate(
+                ['customer_userid' => $uid],
+                ['employee_mobile' => $validated['employee_mobile'], 'assigned_by' => $by],
+            );
+            $count++;
+        }
+
+        $missing = array_values(array_diff($userids, $existing));
+
+        return response()->json([
+            'success'  => true,
+            'assigned' => $count,
+            'skipped'  => $missing,
+        ]);
+    }
+
     // ── Admin: remove an assignment ──────────────────────────────────────────
     public function destroy(string $customerUserid): JsonResponse
     {

@@ -74,11 +74,12 @@ class OrderListController extends Controller
         }
 
         if ($q !== '') {
-            $query->where(function ($sub) use ($q) {
-                $sub->where('orders.order_id', 'like', "%{$q}%")
-                    ->orWhere('user.shop_name', 'like', "%{$q}%")
-                    ->orWhere('user.name', 'like', "%{$q}%")
-                    ->orWhere('user.contactno', 'like', "%{$q}%");
+            $needle = '%' . mb_strtolower($q) . '%';
+            $query->where(function ($sub) use ($needle) {
+                $sub->whereRaw('LOWER(orders.order_id) LIKE ?', [$needle])
+                    ->orWhereRaw('LOWER(user.shop_name) LIKE ?', [$needle])
+                    ->orWhereRaw('LOWER(user.name) LIKE ?', [$needle])
+                    ->orWhereRaw('LOWER(user.contactno) LIKE ?', [$needle]);
             });
         }
 

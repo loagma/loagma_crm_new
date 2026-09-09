@@ -122,13 +122,14 @@ class LeadsAccountController extends Controller
         $query = LeadsAccount::orderBy('createdAt', 'desc');
 
         if ($q) {
-            $query->where(function ($sub) use ($q) {
-                $sub->where('businessName',  'like', "%{$q}%")
-                    ->orWhere('personName',   'like', "%{$q}%")
-                    ->orWhere('contactNumber','like', "%{$q}%")
-                    ->orWhere('accountCode',  'like', "%{$q}%")
-                    ->orWhere('city',         'like', "%{$q}%")
-                    ->orWhere('area',         'like', "%{$q}%");
+            $needle = '%' . mb_strtolower($q) . '%';
+            $query->where(function ($sub) use ($needle) {
+                $sub->whereRaw('LOWER(businessName) LIKE ?',  [$needle])
+                    ->orWhereRaw('LOWER(personName) LIKE ?',   [$needle])
+                    ->orWhereRaw('LOWER(contactNumber) LIKE ?',[$needle])
+                    ->orWhereRaw('LOWER(accountCode) LIKE ?',  [$needle])
+                    ->orWhereRaw('LOWER(city) LIKE ?',         [$needle])
+                    ->orWhereRaw('LOWER(area) LIKE ?',         [$needle]);
             });
         }
 
@@ -239,10 +240,11 @@ class LeadsAccountController extends Controller
             ->where('approval_status', 'pending');
 
         if ($q) {
-            $query->where(function ($sub) use ($q) {
-                $sub->where('businessName',  'like', "%{$q}%")
-                    ->orWhere('personName',   'like', "%{$q}%")
-                    ->orWhere('contactNumber','like', "%{$q}%");
+            $needle = '%' . mb_strtolower($q) . '%';
+            $query->where(function ($sub) use ($needle) {
+                $sub->whereRaw('LOWER(businessName) LIKE ?',  [$needle])
+                    ->orWhereRaw('LOWER(personName) LIKE ?',   [$needle])
+                    ->orWhereRaw('LOWER(contactNumber) LIKE ?',[$needle]);
             });
         }
 
@@ -527,10 +529,15 @@ class LeadsAccountController extends Controller
         }
 
         if ($q) {
-            $query->where(function ($x) use ($q) {
-                $x->where('name', 'like', "%$q%")
-                  ->orWhere('shop_name', 'like', "%$q%")
-                  ->orWhere('contactno', 'like', "%$q%");
+            // The legacy `user` table columns use a case-sensitive (binary)
+            // collation, so a plain LIKE treats "ram" and "RAM" as different.
+            // Lower-case both sides in SQL so the match is case-insensitive
+            // regardless of the column's collation.
+            $needle = '%' . mb_strtolower($q) . '%';
+            $query->where(function ($x) use ($needle) {
+                $x->whereRaw('LOWER(name) LIKE ?', [$needle])
+                  ->orWhereRaw('LOWER(shop_name) LIKE ?', [$needle])
+                  ->orWhereRaw('LOWER(contactno) LIKE ?', [$needle]);
             });
         }
 

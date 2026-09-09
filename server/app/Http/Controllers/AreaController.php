@@ -14,7 +14,7 @@ class AreaController extends Controller
         $query = Area::query()->orderByDesc('id');
 
         if ($q !== '') {
-            $query->where('area_name', 'like', "%{$q}%");
+            $query->whereRaw('LOWER(area_name) LIKE ?', ['%' . mb_strtolower($q) . '%']);
         }
 
         if (request()->has('page')) {
