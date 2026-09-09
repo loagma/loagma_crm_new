@@ -1,6 +1,6 @@
 # Complaint Management — End-to-End Process Design
 
-**Prepared for:** Loagma CRM · 25 July 2026
+**Prepared for:** Loagma CMS · 25 July 2026
 **Status:** Research / proposal — no complaint module exists in the CRM today. This document designs one from scratch, grounded in the modules that already exist (Telecaller, Salesman/Delivery staff, Order Funnel, Incharge hierarchy, Call Logs).
 
 ---

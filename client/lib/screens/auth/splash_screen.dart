@@ -51,9 +51,9 @@ class _SplashScreenState extends State<SplashScreen> {
               fit: BoxFit.contain,
             ),
             const SizedBox(height: 24),
-            // CRM Text
+            // CMS Text
             const Text(
-              'CRM',
+              'CMS',
               style: TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.bold,

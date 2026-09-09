@@ -49,7 +49,7 @@ Both must return `{"status":"ok","database":{"status":"ok"}}`.
 
 | What to check | How | Pass looks like |
 |---|---|---|
-| Punch in starts tracking | Drawer → Punch In → reason → photo | Persistent notification **"LoagmaCRM — On Duty · Recording your route"** appears |
+| Punch in starts tracking | Drawer → Punch In → reason → photo | Persistent notification **"LoagmaCMS — On Duty · Recording your route"** appears |
 | Tracking survives background | Press Home, lock screen, use other apps | Notification stays; pings keep arriving (see §2) |
 | Punch out stops tracking | Drawer → Punch Out | Notification disappears, no new pings after |
 | Session expiry | (dev-only test, see §4) | Notification changes to "Session expired — please punch in again" and tracking stops |

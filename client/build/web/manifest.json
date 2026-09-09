@@ -1,11 +1,11 @@
 {
-    "name": "Loagma CRM",
-    "short_name": "Loagma CRM",
+    "name": "Loagma CMS",
+    "short_name": "Loagma CMS",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#ffffff",
     "theme_color": "#D7BE69",
-    "description": "Loagma CRM",
+    "description": "Loagma CMS",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

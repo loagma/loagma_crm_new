@@ -1,4 +1,4 @@
-# Database Tables — Loagma CRM (Simple Reference)
+# Database Tables — Loagma CMS (Simple Reference)
 
 The database (`loagma_new`, TiDB Cloud) has ~123 tables. The Laravel backend in `server/`
 only touches **28 real tables**: **15 created and owned by this CRM** (the `_crm` suffix)

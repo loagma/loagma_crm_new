@@ -1,6 +1,6 @@
 # Telecaller — Modules We Have & Modules We Can Add
 
-**Prepared for:** Loagma CRM · 18 June 2026
+**Prepared for:** Loagma CMS · 18 June 2026
 
 | | Count |
 |---|---|

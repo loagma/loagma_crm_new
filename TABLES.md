@@ -1,4 +1,4 @@
-# Database Tables — Loagma CRM
+# Database Tables — Loagma CMS
 
 **Only the tables and columns this codebase actually reads or writes.** The database
 (`loagma_new`, TiDB Cloud) has **123 tables**; the Laravel backend in `server/` touches

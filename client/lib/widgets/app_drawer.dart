@@ -567,7 +567,7 @@ class AppDrawer extends StatelessWidget {
                       const SizedBox(width: 10),
                       const Expanded(
                         child: Text(
-                          'LoagmaCRM',
+                          'LoagmaCMS',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 20,

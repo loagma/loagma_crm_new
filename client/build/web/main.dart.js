@@ -62262,7 +62262,7 @@ if(q.d<280)return r}q.d=u.t.charCodeAt((q.d&-4)+18)
 return s}}
 A.a1q.prototype={
 C(a){var s=null,r=A.El(s,A.bys(B.bX,s,s,B.w),!0)
-return new A.CB($.bJB(),"Loagma CRM",r,!1,s)}}
+return new A.CB($.bJB(),"Loagma CMS",r,!1,s)}}
 A.bq9.prototype={
 $2(a,b){return B.b6N},
 $S:914}
@@ -156141,7 +156141,7 @@ B.Y_=new A.u(!0,B.di,null,null,null,null,16,B.b_,null,null,null,null,null,null,n
 B.bfo=new A.U("Cart",null,B.Y_,null,null,null,null,null,null,null)
 B.a8u=new A.eo(1,B.cc,B.bfo,null)
 B.b8e=new A.u(!0,B.r,null,null,null,null,20,B.S,null,0.4,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.bio=new A.U("LoagmaCRM",null,B.b8e,null,null,null,null,null,null,null)
+B.bio=new A.U("LoagmaCMS",null,B.b8e,null,null,null,null,null,null,null)
 B.a8v=new A.eo(1,B.cc,B.bio,null)
 B.tR=new A.u(!0,B.a8,null,null,null,null,14,B.S,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
 B.bez=new A.U("Call in progress \u2014 live SR log",null,B.tR,null,null,null,null,null,null,null)
@@ -163054,7 +163054,7 @@ B.bgO=new A.U("Yes",null,B.dZ,null,null,null,null,null,null,null)
 B.bgP=new A.U("Aging (unpaid balance)",null,B.lr,null,null,null,null,null,null,null)
 B.bgQ=new A.U("Agent",null,B.f3,null,null,null,null,null,null,null)
 B.bbJ=new A.u(!0,B.w,null,null,null,null,32,B.S,null,2,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.bgR=new A.U("CRM",null,B.bbJ,null,null,null,null,null,null,null)
+B.bgR=new A.U("CMS",null,B.bbJ,null,null,null,null,null,null,null)
 B.tU=new A.U("Reset",null,null,null,null,null,null,null,null,null)
 B.Yd=new A.U("Assign Anyway",null,null,null,null,null,null,null,null,null)
 B.bgT=new A.U("Assign anyway",null,null,null,null,null,null,null,null,null)

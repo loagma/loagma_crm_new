@@ -1,4 +1,4 @@
-#define MyAppName "Loagma CRM"
+#define MyAppName "Loagma CMS"
 #define MyAppVersion "1.0.10"
 #define MyAppPublisher "Loagma"
 #define MyAppExeName "client.exe"
@@ -14,7 +14,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=installer_output
-OutputBaseFilename=LoagmaCRM_Setup_v{#MyAppVersion}
+OutputBaseFilename=LoagmaCMS_Setup_v{#MyAppVersion}
 SetupIconFile={#MyAppIcon}
 Compression=lzma2/ultra64
 SolidCompression=yes

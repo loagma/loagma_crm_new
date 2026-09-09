@@ -137,7 +137,7 @@ class TrackingService {
 
     await FlutterForegroundTask.startService(
       serviceTypes: const [ForegroundServiceTypes.location],
-      notificationTitle: 'LoagmaCRM — On Duty',
+      notificationTitle: 'LoagmaCMS — On Duty',
       notificationText: 'Recording your route while punched in',
       callback: trackingTaskCallback,
     );

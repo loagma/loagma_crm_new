@@ -1,6 +1,6 @@
 # Payroll Management — Plan, Modules & Advanced Features
 
-**Prepared for:** Loagma CRM · 18 June 2026
+**Prepared for:** Loagma CMS · 18 June 2026
 
 This document explains how we can add **payroll** to the CRM: what we already have to build on, the modules we can add, the advanced features, how to implement it in stages, and how it will be used each month.
 

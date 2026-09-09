@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Loagma CRM</string>
+	<string>Loagma CMS</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Loagma CRM</string>
+	<string>Loagma CMS</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -46,16 +46,16 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Loagma CRM uses your location to record punch-in/out location and track your route while you're on duty.</string>
+	<string>Loagma CMS uses your location to record punch-in/out location and track your route while you're on duty.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Loagma CRM uses your location to track your route while you're punched in, including when the app is in the background.</string>
+	<string>Loagma CMS uses your location to track your route while you're punched in, including when the app is in the background.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Loagma CRM uses your microphone for voice search when creating a sales order.</string>
+	<string>Loagma CMS uses your microphone for voice search when creating a sales order.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Loagma CRM uses speech recognition to turn your voice into a product search.</string>
+	<string>Loagma CMS uses speech recognition to turn your voice into a product search.</string>
 </dict>
 </plist>
