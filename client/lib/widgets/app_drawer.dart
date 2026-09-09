@@ -82,7 +82,7 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.assignment_ind_rounded,
             'route': '/customer-assign',
             'color': const Color(0xFF26A69A),
-            'subtitle': 'Single customer → employee',
+            'subtitle': 'customer → employee',
           },
           {
             'title': 'Assign',
@@ -92,7 +92,7 @@ class AppDrawer extends StatelessWidget {
             'subtitle': 'Head / Zonal / Area Incharge',
           },
           {
-            'title': 'Complaints',
+            'title': 'Notes',
             'icon': Icons.report_problem_rounded,
             'route': '/complaints',
             'color': const Color(0xFFE53935),
@@ -191,7 +191,7 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFFAB47BC),
           },
           {
-            'title': 'Complaints',
+            'title': 'Notes',
             'icon': Icons.report_problem_rounded,
             'route': '/complaints',
             'color': const Color(0xFFE53935),
@@ -234,7 +234,7 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFFAB47BC),
           },
           {
-            'title': 'Complaints',
+            'title': 'Notes',
             'icon': Icons.report_problem_rounded,
             'route': '/complaints',
             'color': const Color(0xFFE53935),
@@ -277,7 +277,7 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFFAB47BC),
           },
           {
-            'title': 'Complaints',
+            'title': 'Notes',
             'icon': Icons.report_problem_rounded,
             'route': '/complaints',
             'color': const Color(0xFFE53935),
@@ -323,7 +323,7 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF42A5F5),
           },
           {
-            'title': 'Complaints',
+            'title': 'Notes',
             'icon': Icons.report_problem_rounded,
             'route': '/complaints',
             'color': const Color(0xFFE53935),
