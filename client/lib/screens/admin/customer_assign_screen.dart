@@ -27,8 +27,16 @@ class _CustomerAssignScreenState extends State<CustomerAssignScreen> {
   // Assignable staff (salesman + telecaller).
   List<Map<String, dynamic>> _staff = [];
 
+  // mobile → employee record (all roles).
+  Map<String, Map<String, dynamic>> _staffByMobile = {};
+
   // customer_userid → assignment row (from /customer-assign).
   Map<int, Map<String, dynamic>> _assignByCustomer = {};
+
+  // pincode → { employee_mobile → set of area names covering it }.
+  // A customer whose pincode is here is ALREADY reachable by that employee
+  // through their area allotment — a direct assignment would be redundant.
+  Map<String, Map<String, Set<String>>> _areaCoverByPincode = {};
 
   @override
   void initState() {
@@ -45,12 +53,50 @@ class _CustomerAssignScreenState extends State<CustomerAssignScreen> {
   Future<void> _loadMeta() async {
     final staffFuture = ApiService.getEmployees(perPage: 500);
     final assignsFuture = ApiService.getCustomerAssigns();
+    final areasFuture = ApiService.getAreas(perPage: 500);
+    final areaAssignsFuture = ApiService.getAllAreaAssigns();
 
     final staffList = await staffFuture;
     final assigns = await assignsFuture;
+    final areasRes = await areasFuture;
+    final areaAssigns = await areaAssignsFuture;
     if (!mounted) return;
 
+    // area id → {name, pincodes}
+    final areasRaw = (areasRes['data'] as List?) ?? [];
+    final areaById = <int, Map<String, dynamic>>{
+      for (final a in areasRaw)
+        if (int.tryParse('${(a as Map)['id'] ?? ''}') != null)
+          int.parse('${a['id']}'): {
+            'name': (a['area_name'] ?? '').toString(),
+            'pincodes': ((a['pincodes'] as List?) ?? []).map((p) => p.toString().trim()).toList(),
+          },
+    };
+
+    // pincode → { employee_mobile → {area names} }
+    final cover = <String, Map<String, Set<String>>>{};
+    for (final aa in areaAssigns) {
+      final empId = (aa['employee_id'] ?? '').toString();
+      if (empId.isEmpty) continue;
+      final ids = aa['area_ids'];
+      if (ids is! List) continue;
+      for (final rawId in ids) {
+        final id = int.tryParse(rawId.toString());
+        final area = id == null ? null : areaById[id];
+        if (area == null) continue;
+        final areaName = (area['name'] as String?)?.isNotEmpty == true ? area['name'] as String : 'Area $id';
+        for (final pin in (area['pincodes'] as List)) {
+          final key = pin.toString().trim();
+          if (key.isEmpty) continue;
+          cover.putIfAbsent(key, () => {}).putIfAbsent(empId, () => <String>{}).add(areaName);
+        }
+      }
+    }
+
     setState(() {
+      _staffByMobile = {
+        for (final e in staffList) (e['mobile'] ?? '').toString(): Map<String, dynamic>.from(e),
+      };
       _staff = staffList.where((e) {
         final r = (e['role'] ?? '').toString().trim().toLowerCase();
         return r == 'salesman' || r == 'telecaller';
@@ -60,7 +106,21 @@ class _CustomerAssignScreenState extends State<CustomerAssignScreen> {
           if (a['customer_userid'] != null)
             (a['customer_userid'] as num).toInt(): Map<String, dynamic>.from(a),
       };
+      _areaCoverByPincode = cover;
     });
+  }
+
+  // Employees who already reach a customer at [pincode] via their area allotment.
+  // Returns [{mobile, name, areas}].
+  List<Map<String, String>> _areaCoverersFor(String pincode) {
+    final m = _areaCoverByPincode[pincode.trim()];
+    if (m == null) return [];
+    return m.entries.map((e) => {
+          'mobile': e.key,
+          'name': (_staffByMobile[e.key]?['name'] ?? e.key).toString(),
+          'role': (_staffByMobile[e.key]?['role'] ?? '').toString(),
+          'areas': e.value.join(', '),
+        }).toList();
   }
 
   Future<void> _refreshAssigns() async {
@@ -106,9 +166,15 @@ class _CustomerAssignScreenState extends State<CustomerAssignScreen> {
     return name.isNotEmpty ? name : 'Customer';
   }
 
-  Future<void> _openAssignSheet(Map<String, dynamic> customer) async {
+  Future<void> _openAssignSheet(
+      Map<String, dynamic> customer, List<Map<String, String>> coverers) async {
     final userid = _useridOf(customer);
     if (userid == 0) return;
+
+    // mobile → area label, for the staff picker to flag redundant picks.
+    final coverByMobile = <String, String>{
+      for (final c in coverers) c['mobile']!: c['areas'] ?? '',
+    };
 
     final changed = await showModalBottomSheet<bool>(
       context: context,
@@ -122,6 +188,7 @@ class _CustomerAssignScreenState extends State<CustomerAssignScreen> {
         customerUserid: userid,
         staff: _staff,
         current: _assignByCustomer[userid],
+        areaCoverByMobile: coverByMobile,
       ),
     );
 
@@ -209,6 +276,7 @@ class _CustomerAssignScreenState extends State<CustomerAssignScreen> {
                           final c = _customers[i];
                           final userid = _useridOf(c);
                           final assign = _assignByCustomer[userid];
+                          final coverers = _areaCoverersFor((c['pincode'] ?? '').toString());
                           return _CustomerCard(
                             name: _nameOf(c),
                             person: (c['name'] ?? '').toString(),
@@ -217,7 +285,8 @@ class _CustomerAssignScreenState extends State<CustomerAssignScreen> {
                             city: (c['city'] ?? '').toString(),
                             assigneeName: assign?['employee_name']?.toString(),
                             assigneeRole: assign?['employee_role']?.toString(),
-                            onTap: () => _openAssignSheet(c),
+                            areaCoverers: coverers,
+                            onTap: () => _openAssignSheet(c, coverers),
                           );
                         },
                       ),
@@ -253,6 +322,7 @@ class _CustomerCard extends StatelessWidget {
   final String city;
   final String? assigneeName;
   final String? assigneeRole;
+  final List<Map<String, String>> areaCoverers;
   final VoidCallback onTap;
 
   const _CustomerCard({
@@ -263,6 +333,7 @@ class _CustomerCard extends StatelessWidget {
     required this.city,
     required this.assigneeName,
     required this.assigneeRole,
+    required this.areaCoverers,
     required this.onTap,
   });
 
@@ -328,6 +399,25 @@ class _CustomerCard extends StatelessWidget {
                         ],
                       ),
                     ),
+                    if (areaCoverers.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE8F5E9),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFA5D6A7)),
+                        ),
+                        child: Text(
+                          'Already in area of: '
+                          '${areaCoverers.map((c) => '${c['name']} (${c['areas']})').join(', ')}',
+                          style: const TextStyle(
+                              fontSize: 10, fontWeight: FontWeight.w600, color: Color(0xFF2E7D32)),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -347,12 +437,15 @@ class _AssignSheet extends StatefulWidget {
   final int customerUserid;
   final List<Map<String, dynamic>> staff;
   final Map<String, dynamic>? current;
+  // employee_mobile → area label(s) that already cover this customer's pincode.
+  final Map<String, String> areaCoverByMobile;
 
   const _AssignSheet({
     required this.customerName,
     required this.customerUserid,
     required this.staff,
     required this.current,
+    required this.areaCoverByMobile,
   });
 
   @override
@@ -382,6 +475,40 @@ class _AssignSheetState extends State<_AssignSheet> {
   }
 
   Future<void> _assign(String mobile) async {
+    // Picking someone who already reaches this customer through their area
+    // allotment is redundant — confirm before creating the direct pin.
+    final areas = widget.areaCoverByMobile[mobile];
+    if (areas != null && areas.isNotEmpty) {
+      final name = widget.staff.firstWhere(
+        (e) => (e['mobile'] ?? '').toString() == mobile,
+        orElse: () => const {},
+      )['name']?.toString() ?? mobile;
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: const Text('Already covered by area',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          content: Text(
+            'This customer already falls under $name\'s assigned area ($areas), '
+            'so they can already see this customer. A direct assignment is not needed.\n\n'
+            'Assign directly anyway?',
+            style: const TextStyle(fontSize: 13),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(backgroundColor: _gold, foregroundColor: Colors.white),
+              child: const Text('Assign anyway'),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true) return;
+    }
+
     setState(() => _saving = true);
     final ok = await ApiService.assignCustomer(widget.customerUserid, mobile);
     if (!mounted) return;
@@ -472,6 +599,39 @@ class _AssignSheetState extends State<_AssignSheet> {
                       ),
                     ),
                   ],
+                  if (widget.areaCoverByMobile.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE8F5E9),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFA5D6A7)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.location_on_rounded, size: 15, color: Color(0xFF2E7D32)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Already reachable via area allotment: '
+                              '${widget.areaCoverByMobile.entries.map((e) {
+                                final n = widget.staff.firstWhere(
+                                  (s) => (s['mobile'] ?? '').toString() == e.key,
+                                  orElse: () => const {},
+                                )['name']?.toString() ?? e.key;
+                                return '$n (${e.value})';
+                              }).join(', ')}',
+                              style: const TextStyle(
+                                  fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF2E7D32)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -507,6 +667,7 @@ class _AssignSheetState extends State<_AssignSheet> {
                         final mobile = (e['mobile'] ?? '').toString();
                         final role = (e['role'] ?? '').toString();
                         final isCurrent = mobile == currentMobile;
+                        final coversViaArea = (widget.areaCoverByMobile[mobile] ?? '').isNotEmpty;
                         return ListTile(
                           tileColor: Colors.white,
                           shape: RoundedRectangleBorder(
@@ -526,13 +687,26 @@ class _AssignSheetState extends State<_AssignSheet> {
                           ),
                           title: Text((e['name'] ?? mobile).toString(),
                               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                          subtitle: Text(
-                            '${role.replaceAll('_', ' ')}${mobile.isNotEmpty ? '  •  $mobile' : ''}',
-                            style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${role.replaceAll('_', ' ')}${mobile.isNotEmpty ? '  •  $mobile' : ''}',
+                                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                              ),
+                              if (coversViaArea)
+                                Text(
+                                  'Already covers via area (${widget.areaCoverByMobile[mobile]})',
+                                  style: const TextStyle(
+                                      fontSize: 10.5, fontWeight: FontWeight.w600, color: Color(0xFF2E7D32)),
+                                ),
+                            ],
                           ),
                           trailing: isCurrent
                               ? const Icon(Icons.check_circle_rounded, color: _gold)
-                              : const Icon(Icons.chevron_right_rounded, color: Colors.grey),
+                              : coversViaArea
+                                  ? const Icon(Icons.location_on_rounded, color: Color(0xFF2E7D32), size: 20)
+                                  : const Icon(Icons.chevron_right_rounded, color: Colors.grey),
                           onTap: (_saving || isCurrent || mobile.isEmpty) ? null : () => _assign(mobile),
                         );
                       },
