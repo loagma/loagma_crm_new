@@ -38,6 +38,8 @@ Route::post('/masters/roles',        [MastersController::class, 'storeRole']);
 Route::delete('/masters/roles/{id}', [MastersController::class, 'destroyRole']);
 // Unit list (units_master table) — Sales Order line-item unit dropdown
 Route::get('/masters/units', [MastersController::class, 'units']);
+// Language list (language_crm table) — Employee / Lead Account language dropdown
+Route::get('/masters/languages', [MastersController::class, 'languages']);
 // List staff/employees (simple public endpoint for dashboards)
 Route::get('/employees', [MastersController::class, 'employees']);
 Route::post('/employees', [MastersController::class, 'store']);

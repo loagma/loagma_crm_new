@@ -110,6 +110,24 @@ class ApiService {
     return [];
   }
 
+  /// Fetch languages from language_crm table. Returns list of {id, name, code}.
+  static Future<List<Map<String, dynamic>>> getLanguages() async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/masters/languages');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['data'] is List) {
+          return List<Map<String, dynamic>>.from(
+            (decoded['data'] as List).map((e) => Map<String, dynamic>.from(e as Map)));
+        }
+      }
+    } catch (e) {
+      print('getLanguages error: $e');
+    }
+    return [];
+  }
+
   /// Fetch units from units_master table. Returns list of {unit_id, unit_name}.
   static Future<List<Map<String, dynamic>>> getUnits() async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/masters/units');

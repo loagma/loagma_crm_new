@@ -24,6 +24,7 @@ class LeadsAccount extends Model
         'businessSize',
         'personName',
         'contactNumber',
+        'language',
         'dateOfBirth',
         'customerStage',
         'funnelStage',

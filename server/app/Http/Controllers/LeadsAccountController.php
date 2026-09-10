@@ -385,7 +385,7 @@ class LeadsAccountController extends Controller
     {
         $data = request()->only([
             'businessName', 'businessType', 'businessSize', 'personName',
-            'contactNumber', 'dateOfBirth', 'customerStage', 'funnelStage',
+            'contactNumber', 'language', 'dateOfBirth', 'customerStage', 'funnelStage',
             'gstNumber', 'panCard', 'ownerImage', 'shopImage', 'isActive',
             'pincode', 'country', 'state', 'district', 'city', 'area',
             'address', 'latitude', 'longitude', 'areaId',
@@ -393,6 +393,7 @@ class LeadsAccountController extends Controller
         ]);
 
         $validated = validator($data, [
+            'language'      => 'nullable|string|max:191',
             'businessName'  => 'required|string|max:191',
             'businessType'  => 'required|string|max:191',
             'businessSize'  => 'required|string|max:191',
@@ -438,7 +439,7 @@ class LeadsAccountController extends Controller
 
         $data = request()->only([
             'businessName', 'businessType', 'businessSize', 'personName',
-            'contactNumber', 'dateOfBirth', 'customerStage', 'funnelStage',
+            'contactNumber', 'language', 'dateOfBirth', 'customerStage', 'funnelStage',
             'gstNumber', 'panCard', 'ownerImage', 'shopImage', 'isActive',
             'pincode', 'country', 'state', 'district', 'city', 'area',
             'address', 'latitude', 'longitude', 'areaId',
@@ -448,6 +449,7 @@ class LeadsAccountController extends Controller
         ]);
 
         $validated = validator($data, [
+            'language'          => 'nullable|string|max:191',
             'businessName'      => 'sometimes|required|string|max:191',
             'businessType'      => 'sometimes|required|string|max:191',
             'businessSize'      => 'sometimes|required|string|max:191',

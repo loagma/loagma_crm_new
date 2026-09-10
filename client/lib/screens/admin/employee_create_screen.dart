@@ -38,6 +38,11 @@ class _EmployeeCreateScreenState extends State<EmployeeCreateScreen> {
   bool _rolesLoading = true;
   String? _selectedRole;
 
+  // languages from language_crm table
+  List<String> _languages = [];
+  bool _languagesLoading = true;
+  String? _selectedLanguage;
+
   bool get _isEditing => widget.initialData != null;
 
   @override
@@ -55,8 +60,24 @@ class _EmployeeCreateScreenState extends State<EmployeeCreateScreen> {
       _lngCtrl.text     = d['lng']?.toString()      ?? '';
       _isLocked         = d['is_locked'] == true || d['is_locked'] == 1;
       _selectedRole     = d['role']?.toString();
+      final lang        = d['language']?.toString();
+      _selectedLanguage = (lang == null || lang.isEmpty) ? null : lang;
     }
     _loadRoles();
+    _loadLanguages();
+  }
+
+  Future<void> _loadLanguages() async {
+    setState(() => _languagesLoading = true);
+    final list = await ApiService.getLanguages();
+    if (!mounted) return;
+    setState(() {
+      _languages = list.map((e) => e['name'] as String).toList();
+      if (_selectedLanguage != null && !_languages.contains(_selectedLanguage)) {
+        _languages.insert(0, _selectedLanguage!);
+      }
+      _languagesLoading = false;
+    });
   }
 
   Future<void> _loadRoles() async {
@@ -165,6 +186,7 @@ class _EmployeeCreateScreenState extends State<EmployeeCreateScreen> {
       'pincode'   : _pinCtrl.text.trim(),
       'city'      : _cityCtrl.text.trim(),
       'state'     : _stateCtrl.text.trim(),
+      'language'  : _selectedLanguage ?? '',
       'is_locked' : _isLocked,
     };
 
@@ -285,6 +307,34 @@ class _EmployeeCreateScreenState extends State<EmployeeCreateScreen> {
                         onChanged: (v) => setState(() => _selectedRole = v),
                         validator: (v) =>
                             (v == null || v.isEmpty) ? 'Role is required' : null,
+                      ),
+                _gap,
+                _languagesLoading
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 14),
+                        child: Row(children: [
+                          SizedBox(width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2)),
+                          SizedBox(width: 10),
+                          Text('Loading languages…',
+                              style: TextStyle(fontSize: 13, color: Colors.black54)),
+                        ]),
+                      )
+                    : DropdownButtonFormField<String>(
+                        initialValue: _selectedLanguage,
+                        isExpanded: true,
+                        decoration: InputDecoration(
+                          labelText: 'Language',
+                          prefixIcon: const Icon(Icons.translate_outlined, size: 20),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                          errorText: _fieldErrors['language'],
+                        ),
+                        items: _languages.map((l) => DropdownMenuItem(
+                          value: l,
+                          child: Text(l, style: const TextStyle(fontSize: 14)),
+                        )).toList(),
+                        onChanged: (v) => setState(() => _selectedLanguage = v),
                       ),
                 _gap,
                 _field(

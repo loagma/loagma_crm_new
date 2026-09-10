@@ -38,6 +38,27 @@ class MastersController extends Controller
     }
 
     /**
+     * GET /api/masters/languages
+     *
+     * Real language list from `language_crm` — used by the Create/Edit
+     * Employee and Lead Account forms (language dropdown).
+     */
+    public function languages(): JsonResponse
+    {
+        $languages = \App\Models\Language::where('is_active', 1)
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get(['id', 'name', 'code'])
+            ->map(fn ($l) => [
+                'id'   => (int) $l->id,
+                'name' => $l->name,
+                'code' => $l->code,
+            ]);
+
+        return response()->json(['success' => true, 'data' => $languages]);
+    }
+
+    /**
      * GET /api/masters/units
      *
      * Real unit list from `units_master` — used wherever a Sales Order line
@@ -65,7 +86,7 @@ class MastersController extends Controller
 
         $query = DeliStaff::select(
             'deli_id', 'mobile', 'name', 'role',
-            'city', 'state', 'pincode', 'is_locked',
+            'city', 'state', 'language', 'pincode', 'is_locked',
             'lat', 'lng', 'admin_id'
         )->orderBy('name');
 
@@ -117,7 +138,7 @@ class MastersController extends Controller
     {
         $data = request()->only([
             'name', 'mobile', 'role',
-            'pincode', 'city', 'state',
+            'pincode', 'city', 'state', 'language',
             'is_locked', 'admin_id',
             'lat', 'lng', 'password',
         ]);
@@ -129,6 +150,7 @@ class MastersController extends Controller
             'pincode'   => 'nullable|string|max:20',
             'city'      => 'nullable|string|max:100',
             'state'     => 'nullable|string|max:100',
+            'language'  => 'nullable|string|max:50',
             'is_locked' => 'nullable|boolean',
             'admin_id'  => 'nullable|integer',
             'lat'       => 'nullable|numeric|between:-90,90',
@@ -162,7 +184,7 @@ class MastersController extends Controller
     {
         $data = request()->only([
             'name', 'role',
-            'pincode', 'city', 'state',
+            'pincode', 'city', 'state', 'language',
             'is_locked', 'admin_id',
             'lat', 'lng', 'password',
         ]);
@@ -173,6 +195,7 @@ class MastersController extends Controller
             'pincode'   => 'nullable|string|max:20',
             'city'      => 'nullable|string|max:100',
             'state'     => 'nullable|string|max:100',
+            'language'  => 'nullable|string|max:50',
             'is_locked' => 'nullable|boolean',
             'admin_id'  => 'nullable|integer',
             'lat'       => 'nullable|numeric|between:-90,90',

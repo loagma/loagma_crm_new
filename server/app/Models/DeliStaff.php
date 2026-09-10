@@ -22,6 +22,7 @@ class DeliStaff extends Authenticatable implements JWTSubject
         'pincode',
         'city',
         'state',
+        'language',
         'lat',
         'lng',
         'is_locked',

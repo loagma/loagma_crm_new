@@ -44,6 +44,10 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
   String? _bizSize;
   String? _custStage;
   String? _funnelStage;
+  String? _language;
+
+  // languages from language_crm table (loaded from API)
+  List<String> _languages = [];
 
   // Toggles & loading
   bool    _isActive         = true;
@@ -100,11 +104,23 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
   void initState() {
     super.initState();
     _contactCtrl.addListener(_onContactChanged);
+    _loadLanguages();
     if (widget.initialData != null) {
       _populateFromData(widget.initialData!);
     } else if (_isEditMode && _editId != null) {
       _loadEditData(_editId!);
     }
+  }
+
+  Future<void> _loadLanguages() async {
+    final list = await ApiService.getLanguages();
+    if (!mounted) return;
+    setState(() {
+      _languages = list.map((e) => e['name'] as String).toList();
+      if (_language != null && _language!.isNotEmpty && !_languages.contains(_language)) {
+        _languages.insert(0, _language!);
+      }
+    });
   }
 
   Future<void> _loadEditData(String id) async {
@@ -135,6 +151,10 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
     _cityCtrl.text     = _str(d, 'city');
     _areaCtrl.text     = _str(d, 'area');
     _addressCtrl.text  = _str(d, 'address');
+    _language    = _str(d, 'language').isEmpty ? null : _str(d, 'language');
+    if (_language != null && !_languages.contains(_language)) {
+      _languages.insert(0, _language!);
+    }
     _bizType     = _str(d, 'businessType').isEmpty ? null : _str(d, 'businessType');
     _bizSize     = _str(d, 'businessSize').isEmpty ? null : _str(d, 'businessSize');
     _custStage   = _str(d, 'customerStage').isEmpty ? null : _str(d, 'customerStage');
@@ -526,6 +546,7 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
       'area':           _areaCtrl.text.trim(),
       'pincode':        _pincodeCtrl.text.trim(),
       'isActive':       _isActive,
+      if (_language != null && _language!.isNotEmpty) 'language': _language,
       if (_gstCtrl.text.trim().isNotEmpty)      'gstNumber': _gstCtrl.text.trim().toUpperCase(),
       if (_panCtrl.text.trim().isNotEmpty)      'panCard':   _panCtrl.text.trim().toUpperCase(),
       if (_countryCtrl.text.trim().isNotEmpty)  'country':   _countryCtrl.text.trim(),
@@ -977,6 +998,12 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
                   capitalization: TextCapitalization.words,
                   validator: (v) => _validateRequired(v, 'Person name'),
                   fieldKey: 'personName'),
+              _gap(),
+
+              _dropdown('Language', Icons.translate_rounded,
+                  _languages,
+                  _language, (v) => setState(() => _language = v),
+                  fieldKey: 'language'),
               _gap(),
 
               _dropdown('Customer Stage *', Icons.flag_rounded,
