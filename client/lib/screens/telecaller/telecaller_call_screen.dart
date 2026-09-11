@@ -569,7 +569,7 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
                     _fieldLabel('Complaint Category *'),
                     const SizedBox(height: 6),
                     DropdownButtonFormField<String>(
-                      value: _complaintCategory,
+                      initialValue: _complaintCategory,
                       isExpanded: true,
                       decoration: _inputDecor(hint: 'Select category'),
                       items: kComplaintCategories
@@ -628,7 +628,7 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
                     _fieldLabel('Customer Stage'),
                     const SizedBox(height: 6),
                     DropdownButtonFormField<String>(
-                      value: _selectedStage,
+                      initialValue: _selectedStage,
                       decoration: _inputDecor(hint: 'Select stage'),
                       items: _stageOptions.map((s) => DropdownMenuItem(
                         value: s,
@@ -644,7 +644,7 @@ class _TelecallerCallScreenState extends State<TelecallerCallScreen> {
                     _fieldLabel('Funnel Stage'),
                     const SizedBox(height: 6),
                     DropdownButtonFormField<String>(
-                      value: _selectedFunnelStage,
+                      initialValue: _selectedFunnelStage,
                       decoration: _inputDecor(hint: 'Select funnel stage'),
                       items: _funnelOptions.map((s) => DropdownMenuItem(
                         value: s,

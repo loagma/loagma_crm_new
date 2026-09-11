@@ -1158,7 +1158,7 @@ class _OutcomeSheetState extends State<_OutcomeSheet> {
           if (_isComplaint) ...[
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _category,
+              initialValue: _category,
               isExpanded: true,
               decoration: InputDecoration(
                 hintText: 'Complaint category',

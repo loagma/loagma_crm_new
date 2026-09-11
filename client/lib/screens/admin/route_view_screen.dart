@@ -207,8 +207,8 @@ class _RouteViewScreenState extends State<RouteViewScreen> {
   Widget _map(List<LatLng> allPoints) {
     final fitPoints = [
       ...allPoints,
-      if (_startPin != null) _startPin!,
-      if (_endPin != null) _endPin!,
+      ?_startPin,
+      ?_endPin,
     ];
 
     return FlutterMap(

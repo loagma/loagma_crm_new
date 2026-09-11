@@ -86,11 +86,12 @@ class _TodaysBeatPlanScreenState extends State<TodaysBeatPlanScreen> {
         });
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _loading = false;
           _error = 'Error loading beat plan.';
         });
+      }
     }
   }
 

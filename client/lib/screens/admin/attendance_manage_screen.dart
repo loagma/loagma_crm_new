@@ -135,7 +135,7 @@ class _AttendanceManageScreenState extends State<AttendanceManageScreen> {
                       controller: _scrollController,
                       padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                       itemCount: _items.length + (_hasMore ? 1 : 0),
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
                       itemBuilder: (context, index) {
                         if (index >= _items.length) {
                           return const Padding(

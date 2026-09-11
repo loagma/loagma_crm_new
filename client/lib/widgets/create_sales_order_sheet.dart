@@ -664,8 +664,9 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   // adding 3 of a pack shows "3", not a stepper reset back to 0).
   int catalogQtyFor(String productId, String? packId) {
     for (final i in _lineItems) {
-      if (i.productId == productId && i.packId == packId)
+      if (i.productId == productId && i.packId == packId) {
         return i.qtyNum.round();
+      }
     }
     return 0;
   }
@@ -2280,8 +2281,9 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                                 )
                                 .toList(),
                             onChanged: (v) {
-                              if (v != null)
+                              if (v != null) {
                                 _bump(setModalState, () => addon.name = v);
+                              }
                             },
                           ),
                         ),

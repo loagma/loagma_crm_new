@@ -430,12 +430,12 @@ class ApiService {
               'items':            items,
               'discount':         discount,
               'delivery_charge':  deliveryCharge,
-              if (narration != null)     'narration':     narration,
-              if (department != null)    'department':    department,
-              if (areaName != null)      'area_name':     areaName,
-              if (timeSlot != null)      'time_slot':     timeSlot,
-              if (documentDate != null)  'document_date': documentDate,
-              if (deliveryInfo != null)  'delivery_info': deliveryInfo,
+              'narration':     ?narration,
+              'department':    ?department,
+              'area_name':     ?areaName,
+              'time_slot':     ?timeSlot,
+              'document_date': ?documentDate,
+              'delivery_info': ?deliveryInfo,
             }),
           )
           .timeout(const Duration(seconds: 20));
@@ -664,7 +664,7 @@ class ApiService {
     final uri = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/check-contact').replace(
       queryParameters: {
         'contact_number': contactNumber,
-        if (excludeId case final id?) 'exclude_id': id,
+        'exclude_id': ?excludeId,
       },
     );
     try {
@@ -853,8 +853,8 @@ class ApiService {
   static Future<bool> updateCallLog(int id, {String? followUpDate, bool? callbackDone}) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/call-logs/$id');
     final body = <String, dynamic>{
-      if (followUpDate != null) 'follow_up_date': followUpDate,
-      if (callbackDone != null) 'callback_done': callbackDone,
+      'follow_up_date': ?followUpDate,
+      'callback_done': ?callbackDone,
     };
     try {
       final response = await http
@@ -890,7 +890,7 @@ class ApiService {
               'account_type': accountType,
               'category': category,
               'description': description,
-              if (beatPlanId != null) 'beat_plan_id': beatPlanId,
+              'beat_plan_id': ?beatPlanId,
             }),
           )
           .timeout(const Duration(seconds: 15));
@@ -943,7 +943,7 @@ class ApiService {
             headers: _authHeaders,
             body: jsonEncode({
               'status': status,
-              if (resolutionNotes != null) 'resolution_notes': resolutionNotes,
+              'resolution_notes': ?resolutionNotes,
             }),
           )
           .timeout(const Duration(seconds: 15));
@@ -1271,9 +1271,9 @@ class ApiService {
     final url = Uri.parse(id == null ? base : '$base/$id');
     final body = jsonEncode({
       'title': title,
-      if (stageLabel != null) 'stage_label': stageLabel,
+      'stage_label': ?stageLabel,
       'lines': lines,
-      if (sortOrder != null) 'sort_order': sortOrder,
+      'sort_order': ?sortOrder,
     });
     try {
       final response = await (id == null
@@ -1364,7 +1364,7 @@ class ApiService {
     try {
       final body = {
         'area_name': areaName,
-        if (pincodes != null) 'pincodes': pincodes,
+        'pincodes': ?pincodes,
       };
       final response = await http.post(url, headers: _authHeaders, body: jsonEncode(body)).timeout(const Duration(seconds: 15));
       final status = response.statusCode;
@@ -1387,8 +1387,8 @@ class ApiService {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/areas/$id');
     try {
       final body = <String, dynamic>{
-        if (areaName != null) 'area_name': areaName,
-        if (pincodes != null) 'pincodes': pincodes,
+        'area_name': ?areaName,
+        'pincodes': ?pincodes,
       };
       final response = await http.put(url, headers: _authHeaders, body: jsonEncode(body)).timeout(const Duration(seconds: 15));
       final status = response.statusCode;
@@ -1739,10 +1739,10 @@ class ApiService {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/attendance/punch-in');
     try {
       final body = <String, dynamic>{
-        if (lateReason     != null) 'late_reason':       lateReason,
-        if (earlyInReason  != null) 'early_in_reason':   earlyInReason,
-        if (punchInPhoto   != null) 'punch_in_photo':    punchInPhoto,
-        if (punchInLocation != null) 'punch_in_location': punchInLocation,
+        'late_reason':       ?lateReason,
+        'early_in_reason':   ?earlyInReason,
+        'punch_in_photo':    ?punchInPhoto,
+        'punch_in_location': ?punchInLocation,
       };
       final response = await http
           .post(url, headers: _authHeaders, body: jsonEncode(body))
@@ -1769,9 +1769,9 @@ class ApiService {
       final body = <String, dynamic>{
         'total_work_minutes':  workMinutes,
         'total_break_minutes': breakMinutes,
-        if (earlyReason != null)      'early_out_reason':    earlyReason,
-        if (punchOutPhoto != null)    'punch_out_photo':     punchOutPhoto,
-        if (punchOutLocation != null) 'punch_out_location':  punchOutLocation,
+        'early_out_reason':    ?earlyReason,
+        'punch_out_photo':     ?punchOutPhoto,
+        'punch_out_location':  ?punchOutLocation,
       };
       final response = await http
           .post(url, headers: _authHeaders, body: jsonEncode(body))
@@ -1795,8 +1795,8 @@ class ApiService {
     try {
       final body = <String, dynamic>{
         'type': type,
-        if (photo != null)    'photo':    photo,
-        if (location != null) 'location': location,
+        'photo':    ?photo,
+        'location': ?location,
       };
       final response = await http
           .post(url, headers: _authHeaders, body: jsonEncode(body))
@@ -1859,7 +1859,7 @@ class ApiService {
   }) async {
     final params = <String, String>{
       'mobile': mobile,
-      if (since != null) 'since': since,
+      'since': ?since,
     };
     final url = Uri.parse('${ApiConfig.baseUrl}/api/tracking/live-route')
         .replace(queryParameters: params);
@@ -2136,13 +2136,13 @@ class ApiService {
         'account_ids':  accountIds,
         'account_types': accountTypes,
         'frequency':    frequency,
-        if (days != null)         'days':          days,
-        if (monthDate != null)    'month_date':    monthDate,
-        if (specificDates != null) 'specific_dates': specificDates,
-        if (appointmentDate != null) 'appointment_date': appointmentDate,
-        if (weekAnchorDate != null) 'week_anchor_date': weekAnchorDate,
-        if (intervalDays != null) 'interval_days': intervalDays,
-        if (startDate != null)    'start_date':    startDate,
+        'days':          ?days,
+        'month_date':    ?monthDate,
+        'specific_dates': ?specificDates,
+        'appointment_date': ?appointmentDate,
+        'week_anchor_date': ?weekAnchorDate,
+        'interval_days': ?intervalDays,
+        'start_date':    ?startDate,
       };
       final res = await http.post(url, headers: _authHeaders, body: jsonEncode(body))
           .timeout(const Duration(seconds: 15));
@@ -2171,8 +2171,8 @@ class ApiService {
   static Future<Map<String, dynamic>> getWeekBeatPlan({String? date, String? weekOf}) async {
     var uri = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/week');
     final qp = <String, String>{
-      if (date != null) 'date': date,
-      if (weekOf != null) 'week_of': weekOf,
+      'date': ?date,
+      'week_of': ?weekOf,
     };
     if (qp.isNotEmpty) uri = uri.replace(queryParameters: qp);
     try {
@@ -2306,8 +2306,8 @@ class ApiService {
     try {
       final res = await http.post(url, headers: _authHeaders, body: jsonEncode({
         'account_id': accountId,
-        if (accountType != null) 'account_type': accountType,
-        if (beatPlanId != null) 'beat_plan_id': beatPlanId,
+        'account_type': ?accountType,
+        'beat_plan_id': ?beatPlanId,
         if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
         'images': images,
       })).timeout(const Duration(seconds: 20));
@@ -2416,7 +2416,7 @@ class ApiService {
     try {
       final res = await http.post(url, headers: _authHeaders, body: jsonEncode({
         'account_id': accountId,
-        if (accountType != null) 'account_type': accountType,
+        'account_type': ?accountType,
         'due_date': dueDate,
         if (note != null && note.isNotEmpty) 'note': note,
       })).timeout(const Duration(seconds: 12));

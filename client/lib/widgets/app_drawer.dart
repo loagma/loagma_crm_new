@@ -17,11 +17,11 @@ class AppDrawer extends StatelessWidget {
   final Future<void> Function(BuildContext)? onLogout;
 
   const AppDrawer({
-    Key? key,
+    super.key,
     required this.role,
     this.userName = '',
     this.onLogout,
-  }) : super(key: key);
+  });
 
   static const _accent1 = Color(0xFFD7BE69);
   static const _accent2 = Color(0xFFC09E3E);

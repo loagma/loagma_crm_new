@@ -178,10 +178,12 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Checked in')));
     }
     final pos = await _bestEffortPosition();
-    if (pos != null && mounted) setState(() {
+    if (pos != null && mounted) {
+      setState(() {
       _inLat = pos.latitude;
       _inLng = pos.longitude;
     });
+    }
   }
 
   // Blocked from checking in here because another visit (same role) is still
@@ -415,7 +417,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
               const Text('Raise Complaint', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
               const SizedBox(height: 14),
               DropdownButtonFormField<String>(
-                value: category,
+                initialValue: category,
                 isExpanded: true,
                 decoration: const InputDecoration(hintText: 'Category', border: OutlineInputBorder()),
                 items: kComplaintCategories
@@ -504,7 +506,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
                           borderRadius: BorderRadius.circular(8),
                           child: Image.network('${ApiConfig.baseUrl}${e.value}',
                               width: 72, height: 72, fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
+                              errorBuilder: (_, _, _) => Container(
                                   width: 72, height: 72, color: Colors.grey.shade200,
                                   child: const Icon(Icons.broken_image_rounded, color: Colors.black26))),
                         ),
@@ -1057,7 +1059,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: labels.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        separatorBuilder: (_, _) => const SizedBox(width: 6),
         itemBuilder: (_, i) => GestureDetector(
           onTap: () => _switchTab(i),
           child: Container(
@@ -1201,7 +1203,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
                       borderRadius: BorderRadius.circular(8),
                       child: Image.network('${ApiConfig.baseUrl}$p',
                           width: 60, height: 60, fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(width: 60, height: 60, color: Colors.grey.shade200)),
+                          errorBuilder: (_, _, _) => Container(width: 60, height: 60, color: Colors.grey.shade200)),
                     ))
                 .toList(),
           ),

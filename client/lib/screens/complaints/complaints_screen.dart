@@ -115,7 +115,7 @@ class _ComplaintsScreenState extends State<ComplaintsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               DropdownButtonFormField<String>(
-                value: status,
+                initialValue: status,
                 isExpanded: true,
                 decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
                 items: const [

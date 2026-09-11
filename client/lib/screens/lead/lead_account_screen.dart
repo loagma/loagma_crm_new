@@ -896,7 +896,7 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
                   child: Image.network(
                     networkUrl,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => placeholder(),
+                    errorBuilder: (_, _, _) => placeholder(),
                   ),
                 )
               : localPath != null
@@ -905,7 +905,7 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
                       child: Image.file(
                         File(localPath),
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => placeholder(),
+                        errorBuilder: (_, _, _) => placeholder(),
                       ),
                     )
                   : placeholder(showSelected: hasValue),

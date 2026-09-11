@@ -502,7 +502,7 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
       _label('Notes related to'),
       const SizedBox(height: 6),
       DropdownButtonFormField<String>(
-        value: _notesRelatedTo,
+        initialValue: _notesRelatedTo,
         isExpanded: true,
         decoration: _inputDecor('Select'),
         items: _relatedToOptions
@@ -572,7 +572,7 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
           const SizedBox(width: 10),
           Expanded(
             child: DropdownButtonFormField<String>(
-              value: _paymentMode,
+              initialValue: _paymentMode,
               isExpanded: true,
               decoration: _inputDecor('Mode'),
               items: _paymentModes
@@ -635,7 +635,7 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
         _label('Complaint category *'),
         const SizedBox(height: 6),
         DropdownButtonFormField<String>(
-          value: _complaintCategory,
+          initialValue: _complaintCategory,
           isExpanded: true,
           decoration: _inputDecor('Select category'),
           items: kComplaintCategories
@@ -663,7 +663,7 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
                   _label('Customer stage'),
                   const SizedBox(height: 6),
                   DropdownButtonFormField<String>(
-                    value: _customerStage,
+                    initialValue: _customerStage,
                     isExpanded: true,
                     decoration: _inputDecor('Stage'),
                     items: _stageOptions
@@ -682,7 +682,7 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
                   _label('Funnel stage'),
                   const SizedBox(height: 6),
                   DropdownButtonFormField<String>(
-                    value: _funnelStage,
+                    initialValue: _funnelStage,
                     isExpanded: true,
                     decoration: _inputDecor('Funnel'),
                     items: _funnelOptions
