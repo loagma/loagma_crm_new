@@ -205,8 +205,11 @@ class AttendanceController extends Controller
         $breakMinutes = (int) $request->input('total_break_minutes', 0);
 
         $status = $record->status;
-        // Also covers early_in: employee who punched in early can still punch out early
-        if ($needsApproval && \in_array($status, ['on_time', 'early_in'])) {
+        // An early punch-out is its own approval request. The approval a late
+        // punch-in already received covers only that punch-in — carrying its
+        // 'approved' status over to the punch-out let the early-out through
+        // with no review and no photo, so the reset is unconditional here.
+        if ($needsApproval) {
             $status = 'pending';
         }
 
