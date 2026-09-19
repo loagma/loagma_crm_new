@@ -564,15 +564,18 @@ class _AllottedCustomerAccountsScreenState
       startDate:    startDate,
     );
     if (!mounted) return;
-    setState(() { _actionLoading = false; _selected.clear(); });
 
     if (res != null && res['success'] == true) {
+      setState(() { _actionLoading = false; _selected.clear(); });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(res['message']?.toString() ?? 'Beat plan assigned'),
         backgroundColor: const Color(0xFF43A047),
       ));
       _load(); // refresh stats
     } else {
+      // Keep the selection intact on failure (e.g. a cold-start timeout) so
+      // the user can just retry instead of re-picking every customer.
+      setState(() => _actionLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Failed to assign beat plan. Try again.'),
         backgroundColor: Colors.red,
