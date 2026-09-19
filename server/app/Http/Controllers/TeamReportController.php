@@ -42,7 +42,16 @@ class TeamReportController extends Controller
         return $staff;
     }
 
-    /** [$fromCarbon, $toCarbon, $fromYmd, $toYmd] from ?from=&to= (default today). */
+    /**
+     * [$fromCarbon, $toCarbon, $fromYmd, $toYmd] from ?from=&to=.
+     *
+     * A missing `to` defaults to today; a missing `from` means "all time" —
+     * the client's "All time" preset sends neither param at all (see
+     * callDateRangeYmd) — which we resolve to the widest window we support
+     * (self::MAX_RANGE_DAYS ending at `to`) rather than collapsing to a
+     * single day. Defaulting an absent `from` to today was the earlier bug
+     * here: it made "All time" behave identically to "Today".
+     */
     private function range(): array
     {
         $data = request()->validate([
@@ -53,8 +62,9 @@ class TeamReportController extends Controller
         $tz    = config('app.timezone');
         $today = Carbon::today($tz)->toDateString();
 
-        $fromYmd = $data['from'] ?? $today;
-        $toYmd   = $data['to']   ?? $fromYmd;
+        $toYmd   = $data['to'] ?? $today;
+        $fromYmd = $data['from'] ?? Carbon::createFromFormat('Y-m-d', $toYmd, $tz)
+            ->subDays(self::MAX_RANGE_DAYS)->toDateString();
         if ($toYmd < $fromYmd) {
             [$fromYmd, $toYmd] = [$toYmd, $fromYmd];
         }
