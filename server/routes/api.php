@@ -26,6 +26,7 @@ use App\Http\Controllers\TelecallerController;
 use App\Http\Controllers\CallScriptController;
 use App\Http\Controllers\TrackingController;
 use App\Http\Controllers\TeamReportController;
+use App\Http\Controllers\TargetController;
 
 Route::get('/health', [HealthController::class, 'index']);
 
@@ -92,9 +93,21 @@ Route::prefix('lead-accounts')->group(function () {
     Route::get('/pending-creators', [LeadsAccountController::class, 'pendingCreators'])->middleware('role:admin,teleadmin'); // must be before /{id}
     Route::post('/{id}/approve',   [LeadsAccountController::class, 'approve'])->middleware('role:admin,teleadmin');
     Route::post('/{id}/reject',    [LeadsAccountController::class, 'reject'])->middleware('role:admin,teleadmin');
+    Route::post('/{id}/lost',      [LeadsAccountController::class, 'markLost'])->middleware('role:admin,teleadmin');
     Route::get('/{id}',            [LeadsAccountController::class, 'show']);
     Route::put('/{id}',            [LeadsAccountController::class, 'update']);
     Route::delete('/{id}',         [LeadsAccountController::class, 'destroy']);
+});
+
+// ---------------------------------------------------------------------------
+// Targets (per-telecaller call/conversion goals — Telecaller Performance report)
+// ---------------------------------------------------------------------------
+Route::prefix('targets')->middleware('jwtauth')->group(function () {
+    Route::get('/mine', [TargetController::class, 'mine']); // must be before admin routes below
+    Route::middleware('role:admin,teleadmin')->group(function () {
+        Route::get('/', [TargetController::class, 'index']);
+        Route::post('/', [TargetController::class, 'store']);
+    });
 });
 
 // ---------------------------------------------------------------------------

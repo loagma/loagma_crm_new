@@ -118,6 +118,11 @@ class _PendingLeadsScreenState extends State<PendingLeadsScreen> {
     if (ok && mounted) setState(() => _records.removeAt(index));
   }
 
+  Future<void> _markLost(String id, int index, String bizName) async {
+    final ok = await confirmLostLead(context, id, businessName: bizName);
+    if (ok && mounted) setState(() => _records.removeAt(index));
+  }
+
   Widget _buildFilterBar() {
     return Container(
       color: Colors.white,
@@ -242,6 +247,7 @@ class _PendingLeadsScreenState extends State<PendingLeadsScreen> {
                               onTap: () => context.push('/lead-accounts/$id', extra: r),
                               onApprove: () => _approve(id, i, bizName),
                               onReject: () => _reject(id, i, bizName),
+                              onLost: () => _markLost(id, i, bizName),
                             );
                           },
                         ),
@@ -258,12 +264,14 @@ class _PendingLeadCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onApprove;
   final VoidCallback onReject;
+  final VoidCallback onLost;
 
   const _PendingLeadCard({
     required this.record,
     required this.onTap,
     required this.onApprove,
     required this.onReject,
+    required this.onLost,
   });
 
   static const _orange = Color(0xFFF59E0B);
@@ -356,6 +364,16 @@ class _PendingLeadCard extends StatelessWidget {
                         BoxDecoration(color: _orange.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
                     child: const Text('Pending',
                         style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: _orange)),
+                  ),
+                  PopupMenuButton<void>(
+                    icon: const Icon(Icons.more_vert, size: 18, color: Colors.black45),
+                    padding: EdgeInsets.zero,
+                    itemBuilder: (ctx) => [
+                      PopupMenuItem(
+                        onTap: onLost,
+                        child: const Text('Mark as Lost', style: TextStyle(fontSize: 12.5)),
+                      ),
+                    ],
                   ),
                 ],
               ),

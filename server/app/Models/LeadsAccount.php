@@ -25,6 +25,7 @@ class LeadsAccount extends Model
         'personName',
         'contactNumber',
         'language',
+        'source',
         'dateOfBirth',
         'customerStage',
         'funnelStage',
@@ -52,6 +53,7 @@ class LeadsAccount extends Model
         'approval_status',
         'verificationNotes',
         'rejectionNotes',
+        'lost_reason',
     ];
 
     protected $casts = [

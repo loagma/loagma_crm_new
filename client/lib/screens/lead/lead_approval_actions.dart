@@ -124,3 +124,79 @@ Future<bool> confirmRejectLead(BuildContext context, String id, {String business
   }
   return ok;
 }
+
+const _kLostReasons = <String, String>{
+  'price': 'Price',
+  'not_interested': 'Not interested',
+  'competitor': 'Went with a competitor',
+  'unreachable': 'Unreachable',
+  'other': 'Other',
+};
+
+/// Shows a dialog requiring a lost reason, calls the mark-lost API, toasts
+/// the result. Returns true if the lead was marked lost. Distinct from
+/// reject: this is for a pending lead that went cold, not one being sent
+/// back to the creator to fix.
+Future<bool> confirmLostLead(BuildContext context, String id, {String businessName = ''}) async {
+  String? reason;
+  final formKey = GlobalKey<FormState>();
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) => AlertDialog(
+        title: const Text('Mark Lead as Lost', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                businessName.isNotEmpty
+                    ? '"$businessName" will be marked lost and removed from the pending queue.'
+                    : 'This lead will be marked lost and removed from the pending queue.',
+                style: const TextStyle(fontSize: 12.5, color: Colors.black54),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: reason,
+                decoration: const InputDecoration(
+                  hintText: 'Reason (required)',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: _kLostReasons.entries
+                    .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                    .toList(),
+                onChanged: (v) => setState(() => reason = v),
+                validator: (v) => v == null ? 'Please choose a reason' : null,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: kApprovalRed, foregroundColor: Colors.white),
+            onPressed: () {
+              if (formKey.currentState?.validate() != true) return;
+              Navigator.pop(ctx, true);
+            },
+            child: const Text('Mark Lost'),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (confirmed != true || !context.mounted || reason == null) return false;
+
+  final res = await ApiService.markLeadLost(id, reason: reason!);
+  final ok = res != null && res['success'] == true;
+  if (context.mounted) {
+    Fluttertoast.showToast(
+      msg: ok ? 'Lead marked lost' : (res?['message']?.toString() ?? 'Failed to update lead'),
+    );
+  }
+  return ok;
+}

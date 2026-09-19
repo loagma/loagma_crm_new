@@ -174,10 +174,10 @@ class LeadsAccountController extends Controller
             $query->where('createdById', request()->query('created_by'));
         }
 
-        // Approval status filter: pending | approved | rejected
+        // Approval status filter: pending | approved | rejected | lost
         if (request()->filled('status')) {
             $status = request()->query('status');
-            if (\in_array($status, ['pending', 'approved', 'rejected'], true)) {
+            if (\in_array($status, ['pending', 'approved', 'rejected', 'lost'], true)) {
                 $query->where('approval_status', $status);
             }
         }
@@ -379,13 +379,41 @@ class LeadsAccountController extends Controller
         return response()->json(['success' => true, 'data' => $account->fresh()]);
     }
 
+    // ── Lost: prospect went cold before ever reaching a review decision ─────────
+    // Distinct from reject (an admin sends a submitted lead back to be fixed):
+    // this marks a still-pending lead as dead, with a reason, for the Lost
+    // Leads report — the lead is never going to be resubmitted.
+
+    public function markLost(string $id): JsonResponse
+    {
+        $account = LeadsAccount::find($id);
+        if (!$account) {
+            return response()->json(['success' => false, 'message' => 'Lead account not found'], 404);
+        }
+        if ($account->approval_status !== 'pending') {
+            return response()->json(['success' => false, 'message' => 'This lead has already been reviewed'], 422);
+        }
+
+        $validated = validator(request()->only('lost_reason'), [
+            'lost_reason' => 'required|string|in:price,not_interested,competitor,unreachable,other',
+        ])->validate();
+
+        $account->update([
+            'approval_status' => 'lost',
+            'isApproved'      => false,
+            'lost_reason'     => $validated['lost_reason'],
+        ]);
+
+        return response()->json(['success' => true, 'data' => $account->fresh()]);
+    }
+
     // ── Create ─────────────────────────────────────────────────────────────────
 
     public function store(): JsonResponse
     {
         $data = request()->only([
             'businessName', 'businessType', 'businessSize', 'personName',
-            'contactNumber', 'language', 'dateOfBirth', 'customerStage', 'funnelStage',
+            'contactNumber', 'language', 'source', 'dateOfBirth', 'customerStage', 'funnelStage',
             'gstNumber', 'panCard', 'ownerImage', 'shopImage', 'isActive',
             'pincode', 'country', 'state', 'district', 'city', 'area',
             'address', 'latitude', 'longitude', 'areaId',
@@ -394,6 +422,7 @@ class LeadsAccountController extends Controller
 
         $validated = validator($data, [
             'language'      => 'nullable|string|max:191',
+            'source'        => 'nullable|in:referral,campaign,walk_in,cold_call,website,other',
             'businessName'  => 'required|string|max:191',
             'businessType'  => 'required|string|max:191',
             'businessSize'  => 'required|string|max:191',
@@ -439,7 +468,7 @@ class LeadsAccountController extends Controller
 
         $data = request()->only([
             'businessName', 'businessType', 'businessSize', 'personName',
-            'contactNumber', 'language', 'dateOfBirth', 'customerStage', 'funnelStage',
+            'contactNumber', 'language', 'source', 'dateOfBirth', 'customerStage', 'funnelStage',
             'gstNumber', 'panCard', 'ownerImage', 'shopImage', 'isActive',
             'pincode', 'country', 'state', 'district', 'city', 'area',
             'address', 'latitude', 'longitude', 'areaId',
@@ -450,6 +479,7 @@ class LeadsAccountController extends Controller
 
         $validated = validator($data, [
             'language'          => 'nullable|string|max:191',
+            'source'            => 'nullable|in:referral,campaign,walk_in,cold_call,website,other',
             'businessName'      => 'sometimes|required|string|max:191',
             'businessType'      => 'sometimes|required|string|max:191',
             'businessSize'      => 'sometimes|required|string|max:191',

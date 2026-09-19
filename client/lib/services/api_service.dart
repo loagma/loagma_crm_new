@@ -779,6 +779,70 @@ class ApiService {
     }
   }
 
+  /// Mark a still-pending lead as lost (dead, won't be resubmitted) — a
+  /// required reason code is sent, same shape as rejectLeadAccount.
+  static Future<Map<String, dynamic>?> markLeadLost(String id, {required String reason}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/lead-accounts/$id/lost');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'lost_reason': reason}))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      return {'success': false, 'message': _errorMessage(response)};
+    } catch (e) {
+      print('markLeadLost error: $e');
+      return null;
+    }
+  }
+
+  /// Admin: fetch every telecaller's call/conversion target for a period
+  /// (defaults to the current month on the server if omitted).
+  static Future<List<Map<String, dynamic>>> getTargets({String? period}) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/targets${period != null ? '?period=$period' : ''}');
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['data'] is List) {
+          return List<Map<String, dynamic>>.from(
+            (decoded['data'] as List).map((e) => Map<String, dynamic>.from(e as Map)));
+        }
+      }
+    } catch (e) {
+      print('getTargets error: $e');
+    }
+    return [];
+  }
+
+  /// Admin: upsert one telecaller's target for a period.
+  static Future<Map<String, dynamic>?> saveTarget({
+    required String telecallerId,
+    required String period,
+    required int callTarget,
+    required int conversionTarget,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/targets');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({
+            'telecaller_id': telecallerId,
+            'period': period,
+            'call_target': callTarget,
+            'conversion_target': conversionTarget,
+          }))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      return {'success': false, 'message': _errorMessage(response)};
+    } catch (e) {
+      print('saveTarget error: $e');
+      return null;
+    }
+  }
+
   static String _errorMessage(http.Response response) {
     try {
       final decoded = jsonDecode(response.body);

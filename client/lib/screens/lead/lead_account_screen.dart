@@ -45,6 +45,17 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
   String? _custStage;
   String? _funnelStage;
   String? _language;
+  String? _sourceLabel;
+
+  // Fixed set — backend stores the snake_case key, form shows the label.
+  static const Map<String, String> kLeadSourceLabels = {
+    'referral': 'Referral',
+    'campaign': 'Campaign',
+    'walk_in': 'Walk-in',
+    'cold_call': 'Cold Call',
+    'website': 'Website',
+    'other': 'Other',
+  };
 
   // languages from language_crm table (loaded from API)
   List<String> _languages = [];
@@ -155,6 +166,8 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
     if (_language != null && !_languages.contains(_language)) {
       _languages.insert(0, _language!);
     }
+    final sourceKey = _str(d, 'source');
+    _sourceLabel = sourceKey.isEmpty ? null : kLeadSourceLabels[sourceKey];
     _bizType     = _str(d, 'businessType').isEmpty ? null : _str(d, 'businessType');
     _bizSize     = _str(d, 'businessSize').isEmpty ? null : _str(d, 'businessSize');
     _custStage   = _str(d, 'customerStage').isEmpty ? null : _str(d, 'customerStage');
@@ -547,6 +560,8 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
       'pincode':        _pincodeCtrl.text.trim(),
       'isActive':       _isActive,
       if (_language != null && _language!.isNotEmpty) 'language': _language,
+      if (_sourceLabel != null)
+        'source': kLeadSourceLabels.entries.firstWhere((e) => e.value == _sourceLabel).key,
       if (_gstCtrl.text.trim().isNotEmpty)      'gstNumber': _gstCtrl.text.trim().toUpperCase(),
       if (_panCtrl.text.trim().isNotEmpty)      'panCard':   _panCtrl.text.trim().toUpperCase(),
       if (_countryCtrl.text.trim().isNotEmpty)  'country':   _countryCtrl.text.trim(),
@@ -1004,6 +1019,12 @@ class _LeadAccountScreenState extends State<LeadAccountScreen> {
                   _languages,
                   _language, (v) => setState(() => _language = v),
                   fieldKey: 'language'),
+              _gap(),
+
+              _dropdown('Source', Icons.source_rounded,
+                  kLeadSourceLabels.values.toList(),
+                  _sourceLabel, (v) => setState(() => _sourceLabel = v),
+                  fieldKey: 'source'),
               _gap(),
 
               _dropdown('Customer Stage *', Icons.flag_rounded,
