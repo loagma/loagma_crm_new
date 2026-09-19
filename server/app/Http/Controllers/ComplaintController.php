@@ -330,13 +330,20 @@ class ComplaintController extends Controller
 
     public function assignedCount(): JsonResponse
     {
-        $staff = $this->approverStaff();
-        if (!$staff) return response()->json(['success' => true, 'count' => 0]);
+        try {
+            $staff = $this->approverStaff();
+            if (!$staff) return response()->json(['success' => true, 'count' => 0]);
 
-        $count = Complaint::where('assigned_to', $staff->mobile)
-            ->whereIn('status', ['open', 'in_progress'])
-            ->count();
+            $count = Complaint::where('assigned_to', $staff->mobile)
+                ->whereIn('status', ['open', 'in_progress'])
+                ->count();
 
-        return response()->json(['success' => true, 'count' => $count]);
+            return response()->json(['success' => true, 'count' => $count]);
+        } catch (\Exception $e) {
+            // Just a notification badge — fail quiet rather than surface a 500
+            // (e.g. a transient DB hiccup right after a cold start).
+            \Log::error('Complaint assignedCount error', ['exception' => $e]);
+            return response()->json(['success' => true, 'count' => 0]);
+        }
     }
 }

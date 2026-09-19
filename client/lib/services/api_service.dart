@@ -2209,7 +2209,7 @@ class ApiService {
         'start_date':    ?startDate,
       };
       final res = await http.post(url, headers: _authHeaders, body: jsonEncode(body))
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 30));
       if (res.statusCode >= 200 && res.statusCode < 300) {
         return jsonDecode(res.body) as Map<String, dynamic>;
       }
