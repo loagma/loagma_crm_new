@@ -26,6 +26,7 @@ use App\Http\Controllers\TelecallerController;
 use App\Http\Controllers\CallScriptController;
 use App\Http\Controllers\TrackingController;
 use App\Http\Controllers\TeamReportController;
+use App\Http\Controllers\TelecallerReportController;
 use App\Http\Controllers\TargetController;
 
 Route::get('/health', [HealthController::class, 'index']);
@@ -187,6 +188,19 @@ Route::prefix('team')->middleware('jwtauth')->group(function () {
             Route::get('/report/{employeeMobile}', [TeamReportController::class, 'employee']);
         });
 });
+
+// ---------------------------------------------------------------------------
+// Telecaller daily report — per-customer call/order rollup for one day, plus
+// a per-customer drill-in (visit + normal/cloud calls + order). Self for a
+// telecaller; ?telecaller_id= for their senior chain (see
+// TelecallerReportController::resolveTelecallerId for the scoping rule).
+// ---------------------------------------------------------------------------
+Route::prefix('telecaller-report')
+    ->middleware(['jwtauth', 'role:telecaller,teleadmin,zonal_incharge,area_incharge,head_incharge,admin'])
+    ->group(function () {
+        Route::get('/summary', [TelecallerReportController::class, 'summary']);
+        Route::get('/customer', [TelecallerReportController::class, 'customerDetail']);
+    });
 
 // ---------------------------------------------------------------------------
 // Area Assign (salesman + incharge: get / save / delete)

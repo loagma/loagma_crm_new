@@ -514,10 +514,14 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     final name = '${w['name'] ?? 'Unknown'}';
     final business = '${w['business_name'] ?? ''}'.trim();
     final person = '${w['person_name'] ?? ''}'.trim();
-    final accountCode = '${w['account_code'] ?? ''}'.trim();
+    final accountId = '${w['account_id'] ?? ''}'.trim();
     final accountType = '${w['account_type'] ?? 'lead'}';
-    // "ID" chip in the card's top-left corner = the account code.
-    final showId = accountCode.isNotEmpty;
+    // "ID" chip in the card's top-left corner. account_code (party_code) is
+    // sparse — most accounts don't have one — so use account_id instead,
+    // which every card always has (it's the id the Proceed button navigates
+    // with): the real user id for a customer, the lead's row id for a lead.
+    final idLabel = accountType == 'customer' ? 'UserID: $accountId' : 'ID: $accountId';
+    final showId = accountId.isNotEmpty;
     final city = '${w['city'] ?? w['area'] ?? ''}'.trim();
     final area = '${w['area'] ?? ''}'.trim();
     final pincode = '${w['pincode'] ?? ''}'.trim();
@@ -578,7 +582,7 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
               children: [
                 if (showId)
                   _tag(
-                    'ID: $accountCode',
+                    idLabel,
                     bg: const Color(0xFFEAEAEA),
                     fg: const Color(0xFF5B5B5B),
                   ),

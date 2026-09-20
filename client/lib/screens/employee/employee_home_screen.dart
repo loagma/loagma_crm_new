@@ -233,10 +233,7 @@ class _EmployeeHomeScreenState extends State<EmployeeHomeScreen> {
                 itemBuilder: (context, index) {
                   final it = menuItems[index];
                   return GestureDetector(
-                    onTap: () {
-                      final route = it['route'] as String?;
-                      if (route != null && route.isNotEmpty) context.push(route);
-                    },
+                    onTap: () => AppDrawer.handleNewReportsMenuTap(context, it),
                     child: Builder(builder: (ctx) {
                       final ic = (it['color'] as Color?) ?? _accent2;
                       return Container(

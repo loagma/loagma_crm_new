@@ -1256,6 +1256,64 @@ class ApiService {
     return null;
   }
 
+  /// Per-customer report — every account on the beat plan route at any point
+  /// in [from]..[to] (`Y-m-d`, inclusive; both default to today), with call
+  /// counts (answered/not-answered) and whether an order came out of a visit.
+  /// [telecallerId] is required for a senior viewing their team; a telecaller
+  /// viewing their own ignores it server-side. Powers the new "Team Report" /
+  /// "Self Report" table screens (distinct from getTeamReport/getMyReport's
+  /// attendance rollup).
+  static Future<Map<String, dynamic>?> getTelecallerReportSummary({
+    String? from,
+    String? to,
+    String? telecallerId,
+  }) async {
+    final query = <String, String>{'from': ?from, 'to': ?to, 'telecaller_id': ?telecallerId};
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller-report/summary')
+        .replace(queryParameters: query.isEmpty ? null : query);
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('getTelecallerReportSummary failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getTelecallerReportSummary error: $e');
+    }
+    return null;
+  }
+
+  /// One customer's full detail over [from]..[to]: every visit in the window
+  /// (check-in/out + order, oldest first), plus the normal-call and
+  /// cloud-call (Knowlarity) lists separately.
+  static Future<Map<String, dynamic>?> getTelecallerReportCustomer({
+    required String accountId,
+    required String accountType,
+    String? from,
+    String? to,
+    String? telecallerId,
+  }) async {
+    final query = <String, String>{
+      'account_id':   accountId,
+      'account_type': accountType,
+      'from': ?from,
+      'to': ?to,
+      'telecaller_id': ?telecallerId,
+    };
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller-report/customer')
+        .replace(queryParameters: query);
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('getTelecallerReportCustomer failed ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      print('getTelecallerReportCustomer error: $e');
+    }
+    return null;
+  }
+
   /// Fetches a call recording's raw audio bytes through the authenticated
   /// backend proxy - the underlying Knowlarity URL 401s without the server's
   /// own API credentials, which no player/browser can attach directly.

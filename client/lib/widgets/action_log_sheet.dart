@@ -264,6 +264,7 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
         body['category'] = _complaintCategory;
         body['description'] = _conversationNotes.text.trim();
       }
+      if (_selectedOrderId != null) body['order_no'] = _selectedOrderId;
     }
 
     Navigator.pop(context, body);
@@ -429,70 +430,7 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
         const SizedBox(height: 14),
         _label('Order placed *'),
         const SizedBox(height: 6),
-        if (widget.placedOrderIds.isEmpty)
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF4E5),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFF7D9AE)),
-            ),
-            child: const Text(
-              'No order recorded in this visit yet. Close this, tap "Take Order" '
-              'to place the order, then check out — the order number is filled '
-              'in automatically.',
-              style: TextStyle(fontSize: 12, color: Color(0xFF8A5A00), height: 1.35),
-            ),
-          )
-        else if (widget.placedOrderIds.length == 1)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF1F9F2),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFA9D8B0)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.check_circle_rounded, size: 16, color: Color(0xFF2E7D32)),
-                const SizedBox(width: 8),
-                Text('Order #${widget.placedOrderIds.first}',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                const Spacer(),
-                Text('auto-filled',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-              ],
-            ),
-          )
-        else ...[
-          Text('This visit has more than one order — pick the one to log:',
-              style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: widget.placedOrderIds.map((id) {
-              final sel = _selectedOrderId == id;
-              return GestureDetector(
-                onTap: () => setState(() => _selectedOrderId = id),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: sel ? kGold.withValues(alpha: 0.16) : Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                        color: sel ? kGold : const Color(0xFFE0E0E0), width: 1.4),
-                  ),
-                  child: Text('#$id',
-                      style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
-                          color: sel ? kGoldDark : Colors.black87)),
-                ),
-              );
-            }).toList(),
-          ),
-        ],
+        ..._orderPlacedBlock(),
       ],
       const SizedBox(height: 14),
       _label('General notes'),
@@ -590,6 +528,77 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
     ];
   }
 
+  // Shared by both roles: the order placed during this visit, auto-picked
+  // from widget.placedOrderIds — never typed by hand.
+  List<Widget> _orderPlacedBlock() {
+    if (widget.placedOrderIds.isEmpty) {
+      return [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF4E5),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFFF7D9AE)),
+          ),
+          child: const Text(
+            'No order recorded in this visit yet. Close this, tap "Take Order" '
+            'to place the order, then check out — the order number is filled '
+            'in automatically.',
+            style: TextStyle(fontSize: 12, color: Color(0xFF8A5A00), height: 1.35),
+          ),
+        ),
+      ];
+    }
+    if (widget.placedOrderIds.length == 1) {
+      return [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF1F9F2),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFFA9D8B0)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, size: 16, color: Color(0xFF2E7D32)),
+              const SizedBox(width: 8),
+              Text('Order #${widget.placedOrderIds.first}',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              const Spacer(),
+              Text('auto-filled', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+            ],
+          ),
+        ),
+      ];
+    }
+    return [
+      Text('This visit has more than one order — pick the one to log:',
+          style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: widget.placedOrderIds.map((id) {
+          final sel = _selectedOrderId == id;
+          return GestureDetector(
+            onTap: () => setState(() => _selectedOrderId = id),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: sel ? kGold.withValues(alpha: 0.16) : Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: sel ? kGold : const Color(0xFFE0E0E0), width: 1.4),
+              ),
+              child: Text('#$id',
+                  style: TextStyle(
+                      fontSize: 12.5, fontWeight: FontWeight.w700, color: sel ? kGoldDark : Colors.black87)),
+            ),
+          );
+        }).toList(),
+      ),
+    ];
+  }
+
   // ── Telecaller ────────────────────────────────────────────────────────────
   List<Widget> _telecallerForm() {
     return [
@@ -630,6 +639,10 @@ class _ActionLogSheetState extends State<_ActionLogSheet> {
         Text('Engine status: ${widget.callPrefill!['call_status']}',
             style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500)),
       ],
+      const SizedBox(height: 14),
+      _label('Order placed'),
+      const SizedBox(height: 6),
+      ..._orderPlacedBlock(),
       if (_isComplaint) ...[
         const SizedBox(height: 12),
         _label('Complaint category *'),

@@ -120,6 +120,11 @@ class ActionLogController extends Controller
             $rules['funnel_stage']       = 'nullable|string|max:40';
             $rules['category']           = 'required_if:call_outcome,complaint|string|max:191';
             $rules['description']        = 'required_if:call_outcome,complaint|string';
+            // Not required (a telecaller checkout has no "stage" that forces
+            // it) — same auto-filled, never-typed-by-hand value as the
+            // salesman flow, attached whenever an order was placed during
+            // this visit's "Take Order" action.
+            $rules['order_no']           = 'nullable|string|max:50';
         }
 
         $data = validator(request()->all(), $rules)->validate();
@@ -172,16 +177,28 @@ class ActionLogController extends Controller
                 }
             }
 
+            // The client sends check_in_at/check_out_at as UTC ISO strings
+            // (DateTime.toUtc().toIso8601String()), but every other timestamp
+            // in this table (called_at via now(), etc.) is naive app-timezone
+            // (Asia/Kolkata) wall-clock — Eloquent's datetime cast otherwise
+            // stores whatever digits the incoming Carbon happens to carry
+            // verbatim, which for a UTC value is 5h30m behind the real IST
+            // time. Normalize to app timezone here so check-in/check-out
+            // agree with call_log_crm.called_at and everything else.
+            $tz = config('app.timezone');
+            $checkInAt  = isset($data['check_in_at'])  ? Carbon::parse($data['check_in_at'])->setTimezone($tz)  : null;
+            $checkOutAt = isset($data['check_out_at']) ? Carbon::parse($data['check_out_at'])->setTimezone($tz) : $now;
+
             $row = ActionLog::create([
                 'employee_mobile'   => $mobile,
                 'role'              => $role,
                 'account_id'        => $data['account_id'],
                 'account_type'      => $data['account_type'] ?? null,
                 'beat_plan_id'      => $data['beat_plan_id'] ?? null,
-                'check_in_at'       => $data['check_in_at'] ?? null,
+                'check_in_at'       => $checkInAt,
                 'check_in_lat'      => $data['check_in_lat'] ?? null,
                 'check_in_lng'      => $data['check_in_lng'] ?? null,
-                'check_out_at'      => $data['check_out_at'] ?? $now,
+                'check_out_at'      => $checkOutAt,
                 'check_out_lat'     => $data['check_out_lat'] ?? null,
                 'check_out_lng'     => $data['check_out_lng'] ?? null,
                 'duration_seconds'  => $data['duration_seconds'] ?? null,

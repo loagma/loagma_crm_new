@@ -124,7 +124,10 @@ class BeatPlanController extends Controller
         ];
     }
 
-    private function dayFiringQuery(\Illuminate\Database\Eloquent\Builder $q, Carbon $date): void
+    // Public + static so TelecallerReportController can reuse the exact same
+    // "is this account on today's/this day's route" rule for an arbitrary
+    // telecaller + date, instead of re-deriving it.
+    public static function dayFiringQuery(\Illuminate\Database\Eloquent\Builder $q, Carbon $date): void
     {
         $dayName    = $date->shortDayName; // 'Mon', 'Tue', ...
         $dayOfMonth = $date->day;
@@ -246,7 +249,7 @@ class BeatPlanController extends Controller
         $query = BeatPlan::where('salesman_id', $salesman)
             ->where('is_active', true);
 
-        $this->dayFiringQuery($query, $today);
+        self::dayFiringQuery($query, $today);
 
         $plans = $query->get();
 
@@ -425,7 +428,7 @@ class BeatPlanController extends Controller
                 $date  = Carbon::parse($dateParam, self::TZ);
                 $query = BeatPlan::where('salesman_id', $salesman)
                     ->where('is_active', true);
-                $this->dayFiringQuery($query, $date);
+                self::dayFiringQuery($query, $date);
                 $plans = $query->get();
 
                 // Separate leads and customers

@@ -60,6 +60,8 @@ import '../screens/telecaller/telecaller_all_worklist_screen.dart';
 import '../screens/telecaller/telecaller_worklist_day_screen.dart';
 import '../screens/telecaller/telecaller_profile_screen.dart';
 import '../screens/telecaller/telecaller_call_scripts_screen.dart';
+import '../screens/telecaller/telecaller_daily_report_screen.dart';
+import '../screens/telecaller/telecaller_report_customer_screen.dart';
 import '../services/user_service.dart';
 import 'auth_guard.dart';
 import 'role_guard.dart';
@@ -259,6 +261,29 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/my-report',
       builder: (context, state) => const TeamReportEmployeeScreen(),
+    ),
+    // New per-customer call/order report (distinct from Team/My Report above).
+    GoRoute(
+      path: '/telecaller-report/team',
+      builder: (context, state) => const TelecallerDailyReportScreen(selfMode: false),
+    ),
+    GoRoute(
+      path: '/telecaller-report/self',
+      builder: (context, state) => const TelecallerDailyReportScreen(selfMode: true),
+    ),
+    GoRoute(
+      path: '/telecaller-report/customer',
+      builder: (context, state) {
+        final extra = (state.extra as Map?) ?? {};
+        return TelecallerReportCustomerScreen(
+          accountId: extra['accountId'] as String? ?? '',
+          accountType: extra['accountType'] as String? ?? 'lead',
+          name: extra['name'] as String? ?? 'Customer',
+          from: extra['from'] as String? ?? '',
+          to: extra['to'] as String? ?? '',
+          telecallerId: extra['telecallerId'] as String?,
+        );
+      },
     ),
     GoRoute(
       path: '/incharge-profile',

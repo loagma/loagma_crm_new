@@ -129,7 +129,21 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.assessment_rounded,
             'route': '/team-report',
             'color': const Color(0xFF5C6BC0),
-            'subtitle': "Today's activity",
+            'subtitle': "Subordinates' activity",
+          },
+          {
+            'title': 'Self Report',
+            'icon': Icons.person_pin_rounded,
+            'route': '/my-report',
+            'color': const Color(0xFF26A69A),
+            'subtitle': 'My own activity',
+          },
+          {
+            'title': 'Reports (New)',
+            'icon': Icons.table_chart_rounded,
+            'route': kNewReportsMenuRoute,
+            'color': const Color(0xFF7E57C2),
+            'subtitle': 'Per-customer calls & orders',
           },
           {
             'title': 'Settings',
@@ -215,7 +229,21 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.assessment_rounded,
             'route': '/team-report',
             'color': const Color(0xFF5C6BC0),
-            'subtitle': "Today's activity",
+            'subtitle': "Subordinates' activity",
+          },
+          {
+            'title': 'Self Report',
+            'icon': Icons.person_pin_rounded,
+            'route': '/my-report',
+            'color': const Color(0xFF26A69A),
+            'subtitle': 'My own activity',
+          },
+          {
+            'title': 'Reports (New)',
+            'icon': Icons.table_chart_rounded,
+            'route': kNewReportsMenuRoute,
+            'color': const Color(0xFF7E57C2),
+            'subtitle': 'Per-customer calls & orders',
           },
         ];
       case 'zonal_incharge':
@@ -258,7 +286,21 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.assessment_rounded,
             'route': '/team-report',
             'color': const Color(0xFF5C6BC0),
-            'subtitle': "Today's activity",
+            'subtitle': "Subordinates' activity",
+          },
+          {
+            'title': 'Self Report',
+            'icon': Icons.person_pin_rounded,
+            'route': '/my-report',
+            'color': const Color(0xFF26A69A),
+            'subtitle': 'My own activity',
+          },
+          {
+            'title': 'Reports (New)',
+            'icon': Icons.table_chart_rounded,
+            'route': kNewReportsMenuRoute,
+            'color': const Color(0xFF7E57C2),
+            'subtitle': 'Per-customer calls & orders',
           },
         ];
       case 'area_incharge':
@@ -297,7 +339,21 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.assessment_rounded,
             'route': '/team-report',
             'color': const Color(0xFF5C6BC0),
-            'subtitle': "Today's activity",
+            'subtitle': "Subordinates' activity",
+          },
+          {
+            'title': 'Self Report',
+            'icon': Icons.person_pin_rounded,
+            'route': '/my-report',
+            'color': const Color(0xFF26A69A),
+            'subtitle': 'My own activity',
+          },
+          {
+            'title': 'Reports (New)',
+            'icon': Icons.table_chart_rounded,
+            'route': kNewReportsMenuRoute,
+            'color': const Color(0xFF7E57C2),
+            'subtitle': 'Per-customer calls & orders',
           },
         ];
       case 'teleadmin':
@@ -349,7 +405,21 @@ class AppDrawer extends StatelessWidget {
             'icon': Icons.assessment_rounded,
             'route': '/team-report',
             'color': const Color(0xFF5C6BC0),
-            'subtitle': "Today's activity",
+            'subtitle': "Subordinates' activity",
+          },
+          {
+            'title': 'Self Report',
+            'icon': Icons.person_pin_rounded,
+            'route': '/my-report',
+            'color': const Color(0xFF26A69A),
+            'subtitle': 'My own activity',
+          },
+          {
+            'title': 'Reports (New)',
+            'icon': Icons.table_chart_rounded,
+            'route': kNewReportsMenuRoute,
+            'color': const Color(0xFF7E57C2),
+            'subtitle': 'Per-customer calls & orders',
           },
         ];
       case 'salesman':
@@ -498,10 +568,78 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF5C6BC0),
             'subtitle': 'My calls, visits & attendance',
           },
+          {
+            'title': 'Self Report (New)',
+            'icon': Icons.table_chart_rounded,
+            'route': '/telecaller-report/self',
+            'color': const Color(0xFF26A69A),
+            'subtitle': 'Per-customer calls & orders',
+          },
         ];
       default:
         return [];
     }
+  }
+
+  // Sentinel "route" for the new per-customer report tile shown to
+  // telecaller-hierarchy seniors — caught by [handleNewReportsMenuTap] and
+  // turned into a Team/Self picker instead of navigating directly, since
+  // (unlike the plain telecaller tile above) a senior needs to choose which
+  // telecaller's table to view.
+  static const kNewReportsMenuRoute = '/telecaller-report-menu';
+
+  /// Tap handler for the "Reports (New)" grid tile — every other tile just
+  /// navigates via its 'route', this one shows a small Team/Self picker.
+  static void handleNewReportsMenuTap(BuildContext context, Map<String, dynamic> item) {
+    final route = item['route'] as String?;
+    if (route == kNewReportsMenuRoute) {
+      _showNewReportsPicker(context);
+      return;
+    }
+    if (route != null && route.isNotEmpty) context.push(route);
+  }
+
+  static void _showNewReportsPicker(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+              child: Row(
+                children: [
+                  Text('Reports', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.groups_rounded, color: _accent2),
+              title: const Text('Team Report New'),
+              subtitle: const Text('Per-customer calls & orders, any telecaller'),
+              onTap: () {
+                Navigator.pop(ctx);
+                context.push('/telecaller-report/team');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.person_rounded, color: _accent2),
+              title: const Text('Self Report New'),
+              subtitle: const Text('Per-customer calls & orders, my own'),
+              onTap: () {
+                Navigator.pop(ctx);
+                context.push('/telecaller-report/self');
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────

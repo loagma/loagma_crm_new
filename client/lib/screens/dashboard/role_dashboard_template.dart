@@ -248,12 +248,7 @@ class _RoleDashboardTemplateState extends State<RoleDashboardTemplate> {
                   final it = featureItems[index];
                   final ic = (it['color'] as Color?) ?? const Color(0xFFC09E3E);
                   return GestureDetector(
-                    onTap: () {
-                      final route = it['route'] as String?;
-                      if (route != null && route.isNotEmpty) {
-                        context.push(route);
-                      }
-                    },
+                    onTap: () => AppDrawer.handleNewReportsMenuTap(context, it),
                     child: Container(
                       decoration: BoxDecoration(
                         color: Colors.white,
