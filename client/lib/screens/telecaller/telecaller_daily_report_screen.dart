@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
 import '../../services/user_service.dart';
+import 'telecaller_hierarchy_picker_screen.dart';
 import 'telecaller_mock_data.dart';
 import 'telecaller_report_customer_screen.dart';
 
@@ -14,8 +15,10 @@ enum _RangeFilter { today, yesterday, thisMonth, custom }
 /// full visit + call + order detail.
 ///
 /// [selfMode] true → the logged-in telecaller's own report, no picker.
-/// [selfMode] false → a senior's Team Report: pick a telecaller first, same
-/// roster the Team Call History screen uses (getTeamCallAgents).
+/// [selfMode] false → a senior's Team Report: pick a telecaller by drilling
+/// down the org chart (Head Incharge → Zonal Incharge → Teleadmin →
+/// Telecaller) via [TelecallerHierarchyPickerScreen], instead of scanning a
+/// flat list of every telecaller in the company.
 class TelecallerDailyReportScreen extends StatefulWidget {
   final bool selfMode;
 
@@ -28,10 +31,11 @@ class TelecallerDailyReportScreen extends StatefulWidget {
 class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScreen> {
   _RangeFilter _filter = _RangeFilter.today;
   DateTimeRange? _customRange;
-  bool _loading = true;
-  bool _loadingAgents = false;
+  // Self mode has something to load immediately; team mode has nothing to
+  // show until a telecaller is picked, so it must NOT start "loading" —
+  // that left the screen spinning forever before the picker was even opened.
+  late bool _loading = widget.selfMode;
   List<Map<String, dynamic>> _rows = [];
-  List<Map<String, dynamic>> _agents = [];
   String? _selectedMobile;
   String? _selectedName;
   String? _error;
@@ -81,11 +85,9 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
   @override
   void initState() {
     super.initState();
-    if (widget.selfMode) {
-      _load();
-    } else {
-      _loadAgents();
-    }
+    if (widget.selfMode) _load();
+    // Team mode starts empty — the user must drill down and pick a
+    // telecaller first (_pickTelecaller), there's no default selection.
   }
 
   @override
@@ -94,19 +96,22 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
     super.dispose();
   }
 
-  Future<void> _loadAgents() async {
-    setState(() => _loadingAgents = true);
-    final agents = await ApiService.getTeamCallAgents();
-    if (!mounted) return;
+  Future<void> _pickTelecaller() async {
+    final result = await Navigator.push<Map<String, String>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TelecallerHierarchyPickerScreen(
+          viewerRole: UserService.currentRole ?? '',
+          viewerMobile: UserService.currentMobile ?? '',
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
     setState(() {
-      _agents = agents;
-      _loadingAgents = false;
-      if (agents.isNotEmpty) {
-        _selectedMobile = '${agents.first['mobile']}';
-        _selectedName = '${agents.first['name'] ?? ''}';
-      }
+      _selectedMobile = result['mobile'];
+      _selectedName = result['name'];
     });
-    if (_selectedMobile != null) _load();
+    _load();
   }
 
   Future<void> _load() async {
@@ -200,30 +205,37 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (!widget.selfMode) ...[
-                  _loadingAgents
-                      ? const LinearProgressIndicator(minHeight: 2)
-                      : DropdownButtonFormField<String>(
-                          initialValue: _selectedMobile,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Telecaller',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                            contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  InkWell(
+                    onTap: _pickTelecaller,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFFDDDDDD)),
+                        color: const Color(0xFFFAFAFA),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.account_tree_rounded, size: 18, color: _selectedMobile == null ? Colors.black45 : kGoldDark),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _selectedName ?? 'Pick a telecaller from Head Incharge → Zonal → Teleadmin',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: _selectedMobile == null ? FontWeight.w400 : FontWeight.w700,
+                                color: _selectedMobile == null ? Colors.black45 : Colors.black87,
+                              ),
+                            ),
                           ),
-                          items: _agents
-                              .map((a) => DropdownMenuItem(
-                                    value: '${a['mobile']}',
-                                    child: Text('${a['name'] ?? a['mobile']}', overflow: TextOverflow.ellipsis),
-                                  ))
-                              .toList(),
-                          onChanged: (v) {
-                            if (v == null) return;
-                            final agent = _agents.firstWhere((a) => '${a['mobile']}' == v, orElse: () => {});
-                            setState(() { _selectedMobile = v; _selectedName = '${agent['name'] ?? ''}'; });
-                            _load();
-                          },
-                        ),
+                          const Icon(Icons.chevron_right_rounded, color: Colors.black38),
+                        ],
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 10),
                 ],
                 SingleChildScrollView(
@@ -286,14 +298,36 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
                     ? Center(child: Text(_error!, style: const TextStyle(color: Colors.black54)))
                     : rows.isEmpty
                         ? Center(
-                            child: Text(
-                              _rows.isNotEmpty
-                                  ? 'No customer matches "$_search".'
-                                  : (widget.selfMode
-                                      ? 'No customers on your route for this period.'
-                                      : (_selectedMobile == null ? 'Pick a telecaller.' : 'No customers on ${_selectedName ?? "their"} route for this period.')),
-                              style: const TextStyle(color: Colors.black54),
-                            ),
+                            child: _selectedMobile == null && !widget.selfMode
+                                ? Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.touch_app_rounded, size: 40, color: Colors.grey.shade300),
+                                      const SizedBox(height: 10),
+                                      Text('No telecaller picked yet',
+                                          style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
+                                      const SizedBox(height: 14),
+                                      ElevatedButton.icon(
+                                        onPressed: _pickTelecaller,
+                                        icon: const Icon(Icons.account_tree_rounded, size: 18),
+                                        label: const Text('Pick a Telecaller'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: kGold,
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Text(
+                                    _rows.isNotEmpty
+                                        ? 'No customer matches "$_search".'
+                                        : (widget.selfMode
+                                            ? 'No customers on your route for this period.'
+                                            : 'No customers on ${_selectedName ?? "their"} route for this period.'),
+                                    style: const TextStyle(color: Colors.black54),
+                                  ),
                           )
                         : RefreshIndicator(
                             onRefresh: _load,
