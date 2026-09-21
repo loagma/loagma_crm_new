@@ -13,6 +13,10 @@ class NotificationService {
 
   static Future<void> init() async {
     if (_initialized) return;
+    // flutter_local_notifications has no web implementation; calling it
+    // there throws MissingPluginException and, since main() awaits this
+    // before runApp(), that leaves the whole page a permanent white screen.
+    if (kIsWeb) return;
     tz.initializeTimeZones();
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iOS = DarwinInitializationSettings(
