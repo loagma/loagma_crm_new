@@ -260,7 +260,8 @@ class _AllottedCustomerAccountsScreenState
         _failedAreaCount  = failedCount;
         _loading          = false;
       });
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('AllottedCustomerAccountsScreen._load failed: $e\n$st');
       if (mounted) setState(() { _loading = false; _error = 'Failed to load data. Tap refresh to retry.'; });
     }
   }
