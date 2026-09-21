@@ -653,7 +653,10 @@ class BeatPlanController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data'    => $grouped,
+                // An empty PHP array encodes as JSON `[]`, not `{}` — force an
+                // object so the client's `data as Map?` cast doesn't throw
+                // when no accounts match (e.g. brand-new pincode allotment).
+                'data'    => empty($grouped) ? new \stdClass() : $grouped,
             ]);
         } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
             return response()->json([

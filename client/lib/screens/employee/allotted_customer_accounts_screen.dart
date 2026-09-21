@@ -233,7 +233,11 @@ class _AllottedCustomerAccountsScreenState
         ApiService.getMyBeatPlans(),
       ]);
 
-      final statsRaw = futures[0]['data'] as Map?;
+      // An empty PHP array on the backend can encode as JSON `[]` instead of
+      // `{}`; treat that (or any other non-map) as "no stats" rather than
+      // throwing and blanking the whole screen.
+      final statsRawDynamic = futures[0]['data'];
+      final statsRaw = statsRawDynamic is Map ? statsRawDynamic : null;
       final stats = <String, Map<String, int>>{};
       if (statsRaw != null) {
         statsRaw.forEach((pin, s) {
