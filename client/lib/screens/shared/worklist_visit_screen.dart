@@ -1424,7 +1424,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
         ),
       );
 
-  Widget _actFa(IconData icon, Color c, VoidCallback? onTap) => GestureDetector(
+  Widget _actFa(FaIconData icon, Color c, VoidCallback? onTap) => GestureDetector(
         onTap: onTap,
         child: Container(
           width: 40,

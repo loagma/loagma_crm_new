@@ -140,16 +140,96 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
     _load();
   }
 
+  // A small popup (not the full-screen showDateRangePicker) with two
+  // tappable date fields — each opens Flutter's compact single-date picker
+  // — so the whole flow stays as an overlay on this screen.
   Future<void> _pickCustomRange() async {
     final now = DateTime.now();
-    final picked = await showDateRangePicker(
+    DateTime? from = _customRange?.start;
+    DateTime? to = _customRange?.end;
+
+    final result = await showDialog<DateTimeRange>(
       context: context,
-      initialDateRange: _customRange,
-      firstDate: DateTime(2024, 1, 1),
-      lastDate: now,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          Future<void> pickFrom() async {
+            final d = await showDatePicker(
+              context: ctx,
+              initialDate: from ?? now,
+              firstDate: DateTime(2024, 1, 1),
+              lastDate: now,
+            );
+            if (d != null) {
+              setDialogState(() {
+                from = d;
+                if (to != null && to!.isBefore(d)) to = d;
+              });
+            }
+          }
+
+          Future<void> pickTo() async {
+            final d = await showDatePicker(
+              context: ctx,
+              initialDate: to ?? from ?? now,
+              firstDate: from ?? DateTime(2024, 1, 1),
+              lastDate: now,
+            );
+            if (d != null) setDialogState(() => to = d);
+          }
+
+          Widget dateField(String label, DateTime? value, VoidCallback onTap) {
+            return InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(10),
+              child: InputDecorator(
+                decoration: InputDecoration(
+                  labelText: label,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  suffixIcon: const Icon(Icons.calendar_today_rounded, size: 16),
+                ),
+                child: Text(
+                  value == null ? 'Select date' : _ymd(value),
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+            );
+          }
+
+          return AlertDialog(
+            title: const Text('Custom Date Range', style: TextStyle(fontSize: 16)),
+            content: SizedBox(
+              width: 280,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  dateField('From', from, pickFrom),
+                  const SizedBox(height: 12),
+                  dateField('To', to, pickTo),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: kGold, foregroundColor: Colors.white),
+                onPressed: (from != null && to != null)
+                    ? () => Navigator.pop(ctx, DateTimeRange(start: from!, end: to!))
+                    : null,
+                child: const Text('Apply'),
+              ),
+            ],
+          );
+        },
+      ),
     );
-    if (picked == null) return;
-    setState(() { _customRange = picked; _filter = _RangeFilter.custom; });
+
+    if (result == null) return;
+    setState(() { _customRange = result; _filter = _RangeFilter.custom; });
     _load();
   }
 

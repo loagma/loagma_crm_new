@@ -446,7 +446,7 @@ class _ComplaintCard extends StatelessWidget {
     return double.tryParse(v.toString());
   }
 
-  Widget _iconBtn(IconData? icon, Color color, VoidCallback? onTap, {String? tooltip, IconData? faIcon}) {
+  Widget _iconBtn(IconData? icon, Color color, VoidCallback? onTap, {String? tooltip, FaIconData? faIcon}) {
     final iconColor = onTap != null ? color : color.withValues(alpha: 0.35);
     final btn = InkWell(
       onTap: onTap,
