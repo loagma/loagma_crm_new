@@ -61,6 +61,7 @@ import '../screens/telecaller/telecaller_worklist_day_screen.dart';
 import '../screens/telecaller/telecaller_profile_screen.dart';
 import '../screens/telecaller/telecaller_call_scripts_screen.dart';
 import '../screens/telecaller/telecaller_daily_report_screen.dart';
+import '../screens/telecaller/telecaller_hierarchy_picker_screen.dart';
 import '../screens/telecaller/telecaller_report_customer_screen.dart';
 import '../services/user_service.dart';
 import 'auth_guard.dart';
@@ -265,11 +266,11 @@ final appRouter = GoRouter(
     // New per-customer call/order report (distinct from Team/My Report above).
     GoRoute(
       path: '/telecaller-report/team',
-      builder: (context, state) => const TelecallerDailyReportScreen(selfMode: false),
+      builder: (context, state) => const TelecallerHierarchyPickerScreen(),
     ),
     GoRoute(
       path: '/telecaller-report/team-salesman',
-      builder: (context, state) => const TelecallerDailyReportScreen(selfMode: false, branch: 'salesman'),
+      builder: (context, state) => const TelecallerHierarchyPickerScreen(branch: 'salesman'),
     ),
     GoRoute(
       path: '/telecaller-report/self',

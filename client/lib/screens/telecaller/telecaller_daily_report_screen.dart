@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/api_service.dart';
 import '../../services/user_service.dart';
-import 'telecaller_hierarchy_picker_screen.dart';
 import 'telecaller_mock_data.dart';
 import 'telecaller_report_customer_screen.dart';
 
@@ -26,7 +25,17 @@ class TelecallerDailyReportScreen extends StatefulWidget {
   // Ignored in self mode (the viewer's own role decides the columns).
   final String branch;
 
-  const TelecallerDailyReportScreen({super.key, required this.selfMode, this.branch = 'telecaller'});
+  // Team mode: the person whose report this is (chosen on the hierarchy list).
+  final String? presetMobile;
+  final String? presetName;
+
+  const TelecallerDailyReportScreen({
+    super.key,
+    required this.selfMode,
+    this.branch = 'telecaller',
+    this.presetMobile,
+    this.presetName,
+  });
 
   @override
   State<TelecallerDailyReportScreen> createState() => _TelecallerDailyReportScreenState();
@@ -38,7 +47,7 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
   // Self mode has something to load immediately; team mode has nothing to
   // show until a telecaller is picked, so it must NOT start "loading" —
   // that left the screen spinning forever before the picker was even opened.
-  late bool _loading = widget.selfMode;
+  bool _loading = true;
   List<Map<String, dynamic>> _rows = [];
   String? _selectedMobile;
   String? _selectedName;
@@ -93,34 +102,15 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
   @override
   void initState() {
     super.initState();
-    if (widget.selfMode) _load();
-    // Team mode starts empty — the user must drill down and pick a
-    // telecaller first (_pickTelecaller), there's no default selection.
+    _selectedMobile = widget.presetMobile;
+    _selectedName = widget.presetName;
+    _load();
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
     super.dispose();
-  }
-
-  Future<void> _pickTelecaller() async {
-    final result = await Navigator.push<Map<String, String>>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => TelecallerHierarchyPickerScreen(
-          viewerRole: UserService.currentRole ?? '',
-          viewerMobile: UserService.currentMobile ?? '',
-          branch: widget.branch,
-        ),
-      ),
-    );
-    if (result == null || !mounted) return;
-    setState(() {
-      _selectedMobile = result['mobile'];
-      _selectedName = result['name'];
-    });
-    _load();
   }
 
   Future<void> _load() async {
@@ -282,7 +272,7 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.white),
         title: Text(
-            widget.selfMode ? 'Self Report' : (_isSalesmanView ? 'Salesman Report' : 'Telecaller Report'),
+            widget.selfMode ? 'Self Report' : (_selectedName ?? 'Report'),
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         actions: [
           IconButton(icon: const Icon(Icons.refresh_rounded, color: Colors.white), onPressed: _load),
@@ -297,43 +287,6 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (!widget.selfMode) ...[
-                  InkWell(
-                    onTap: _pickTelecaller,
-                    borderRadius: BorderRadius.circular(10),
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFDDDDDD)),
-                        color: const Color(0xFFFAFAFA),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.account_tree_rounded, size: 18, color: _selectedMobile == null ? Colors.black45 : kGoldDark),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              _selectedName ??
-                                  (_isSalesmanView
-                                      ? 'Pick a salesman: Head → Zonal → Area Incharge'
-                                      : 'Pick a telecaller: Head → Zonal → Teleadmin'),
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: _selectedMobile == null ? FontWeight.w400 : FontWeight.w700,
-                                color: _selectedMobile == null ? Colors.black45 : Colors.black87,
-                              ),
-                            ),
-                          ),
-                          const Icon(Icons.chevron_right_rounded, color: Colors.black38),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                ],
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -397,36 +350,12 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
                     ? Center(child: Text(_error!, style: const TextStyle(color: Colors.black54)))
                     : rows.isEmpty
                         ? Center(
-                            child: _selectedMobile == null && !widget.selfMode
-                                ? Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(Icons.touch_app_rounded, size: 40, color: Colors.grey.shade300),
-                                      const SizedBox(height: 10),
-                                      Text(_isSalesmanView ? 'No salesman picked yet' : 'No telecaller picked yet',
-                                          style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
-                                      const SizedBox(height: 14),
-                                      ElevatedButton.icon(
-                                        onPressed: _pickTelecaller,
-                                        icon: const Icon(Icons.account_tree_rounded, size: 18),
-                                        label: Text(_isSalesmanView ? 'Pick a Salesman' : 'Pick a Telecaller'),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: kGold,
-                                          foregroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                        ),
-                                      ),
-                                    ],
-                                  )
-                                : Text(
-                                    _rows.isNotEmpty
-                                        ? 'No customer matches "$_search".'
-                                        : (widget.selfMode
-                                            ? 'No customers on your route for this period.'
-                                            : 'No customers on ${_selectedName ?? "their"} route for this period.'),
-                                    style: const TextStyle(color: Colors.black54),
-                                  ),
+                            child: Text(
+                              _rows.isNotEmpty
+                                  ? 'No customer matches "$_search".'
+                                  : 'No customers on ${widget.selfMode ? "your" : "this"} route for this period.',
+                              style: const TextStyle(color: Colors.black54),
+                            ),
                           )
                         : RefreshIndicator(
                             onRefresh: _load,

@@ -132,13 +132,6 @@ class AppDrawer extends StatelessWidget {
             'subtitle': "Subordinates' activity",
           },
           {
-            'title': 'Self Report',
-            'icon': Icons.person_pin_rounded,
-            'route': '/my-report',
-            'color': const Color(0xFF26A69A),
-            'subtitle': 'My own activity',
-          },
-          {
             'title': 'Reports (New)',
             'icon': Icons.table_chart_rounded,
             'route': kNewReportsMenuRoute,
@@ -647,6 +640,7 @@ class AppDrawer extends StatelessWidget {
                   context.push('/telecaller-report/team-salesman');
                 },
               ),
+            if (role != 'admin')
             ListTile(
               leading: const Icon(Icons.person_rounded, color: _accent2),
               title: const Text('Self Report New'),

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../services/api_service.dart';
+import '../../services/user_service.dart';
 import '../admin/incharge_levels.dart' show normalizeRole;
+import 'telecaller_daily_report_screen.dart';
 import 'telecaller_mock_data.dart';
 
 /// Drill-down picker for "Team Report New": Head Incharge → Zonal Incharge →
@@ -16,23 +18,11 @@ import 'telecaller_mock_data.dart';
 /// Pops with `{'mobile': ..., 'name': ...}` when a telecaller is picked, or
 /// null if the user backs out without choosing one.
 class TelecallerHierarchyPickerScreen extends StatefulWidget {
-  // admin sees the whole company (root = every Head Incharge); anyone else
-  // starts at their own subtree (root = their own direct children) — never
-  // someone else's, same scoping the server enforces in
-  // TelecallerReportController::resolveTelecallerId.
-  final String viewerRole;
-  final String viewerMobile;
-
   // 'telecaller' → Head → Zonal → Teleadmin → Telecaller
   // 'salesman'   → Head → Zonal → Area Incharge → Salesman
   final String branch;
 
-  const TelecallerHierarchyPickerScreen({
-    super.key,
-    required this.viewerRole,
-    required this.viewerMobile,
-    this.branch = 'telecaller',
-  });
+  const TelecallerHierarchyPickerScreen({super.key, this.branch = 'telecaller'});
 
   @override
   State<TelecallerHierarchyPickerScreen> createState() => _TelecallerHierarchyPickerScreenState();
@@ -109,7 +99,7 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
     }
   }
 
-  bool get _isAdmin => normalizeRole(widget.viewerRole) == 'admin';
+  bool get _isAdmin => normalizeRole((UserService.currentRole ?? '')) == 'admin';
 
   List<_Node> _childrenOf(String? parentMobile) {
     Iterable<Map<String, dynamic>> pool;
@@ -127,7 +117,7 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
       // Any other senior's root: their OWN direct children only — never
       // another branch of the company (mirrors the server's
       // Hierarchy::subtreeForViewer scoping).
-      final ids = _childIdsOf[widget.viewerMobile] ?? const <String>[];
+      final ids = _childIdsOf[(UserService.currentMobile ?? '')] ?? const <String>[];
       pool = ids.map((id) => _empByMobile[id]).whereType<Map<String, dynamic>>();
     }
 
@@ -147,7 +137,17 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
 
   void _drillInto(_Node n) {
     if (n.role == _leafRole) {
-      Navigator.pop(context, {'mobile': n.mobile, 'name': n.name});
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => TelecallerDailyReportScreen(
+            selfMode: false,
+            branch: widget.branch,
+            presetMobile: n.mobile,
+            presetName: n.name,
+          ),
+        ),
+      );
       return;
     }
     setState(() => _path.add(n));
@@ -173,10 +173,19 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
           'teleadmin': 'telecaller',
         };
 
+  static const _plural = {
+    'head_incharge': 'Head Incharges',
+    'zonal_incharge': 'Zonal Incharges',
+    'area_incharge': 'Area Incharges',
+    'teleadmin': 'Teleadmins',
+    'telecaller': 'Telecallers',
+    'salesman': 'Salesmen',
+  };
+
   String _currentLevelRole() {
     if (_path.isNotEmpty) return _roleAfter[_path.last.role] ?? _leafRole;
     if (_isAdmin) return 'head_incharge';
-    return _roleAfter[normalizeRole(widget.viewerRole)] ?? _leafRole;
+    return _roleAfter[normalizeRole((UserService.currentRole ?? ''))] ?? _leafRole;
   }
 
   // Hardware/gesture back and the AppBar's own back arrow both go up one
@@ -213,7 +222,7 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
   Widget build(BuildContext context) {
     final parentMobile = _path.isEmpty ? null : _path.last.mobile;
     final children = _loading ? const <_Node>[] : _childrenOf(parentMobile);
-    final levelLabel = _roleStyle(_currentLevelRole()).label;
+    final levelLabel = _plural[_currentLevelRole()] ?? 'Team';
 
     return PopScope(
       canPop: _path.isEmpty,
@@ -230,7 +239,7 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
             icon: const Icon(Icons.arrow_back_rounded),
             onPressed: _handleBack,
           ),
-          title: Text('Pick $levelLabel',
+          title: Text(levelLabel,
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17)),
           bottom: _path.isEmpty ? null : _breadcrumbBar(),
         ),
@@ -335,8 +344,7 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
                   ],
                 ),
               ),
-              Icon(isLeaf ? Icons.check_circle_outline_rounded : Icons.chevron_right_rounded,
-                  color: isLeaf ? const Color(0xFF43A047) : Colors.black38),
+              const Icon(Icons.chevron_right_rounded, color: Colors.black38),
             ],
           ),
         ),
