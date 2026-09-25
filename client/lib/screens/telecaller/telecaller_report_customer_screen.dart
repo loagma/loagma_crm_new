@@ -15,6 +15,7 @@ class TelecallerReportCustomerScreen extends StatefulWidget {
   final String from; // YYYY-MM-DD
   final String to;   // YYYY-MM-DD
   final String? telecallerId; // null when the telecaller is viewing their own
+  final bool isSalesman; // salesman: Visits + Orders tabs (no call tabs)
 
   const TelecallerReportCustomerScreen({
     super.key,
@@ -24,6 +25,7 @@ class TelecallerReportCustomerScreen extends StatefulWidget {
     required this.from,
     required this.to,
     this.telecallerId,
+    this.isSalesman = false,
   });
 
   @override
@@ -32,7 +34,7 @@ class TelecallerReportCustomerScreen extends StatefulWidget {
 
 class _TelecallerReportCustomerScreenState extends State<TelecallerReportCustomerScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 3, vsync: this);
+  late final TabController _tabs = TabController(length: widget.isSalesman ? 2 : 3, vsync: this);
   bool _loading = true;
   Map<String, dynamic>? _data;
 
@@ -102,11 +104,16 @@ class _TelecallerReportCustomerScreenState extends State<TelecallerReportCustome
           indicatorColor: Colors.white,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
-          tabs: [
-            Tab(text: 'Normal Call (${normalCalls.length})'),
-            Tab(text: 'Cloud Call (${cloudCalls.length})'),
-            Tab(text: 'Orders (${orders.length})'),
-          ],
+          tabs: widget.isSalesman
+              ? [
+                  Tab(text: 'Visits (${visits.length})'),
+                  Tab(text: 'Orders (${orders.length})'),
+                ]
+              : [
+                  Tab(text: 'Normal Call (${normalCalls.length})'),
+                  Tab(text: 'Cloud Call (${cloudCalls.length})'),
+                  Tab(text: 'Orders (${orders.length})'),
+                ],
         ),
       ),
       body: _loading
@@ -115,23 +122,41 @@ class _TelecallerReportCustomerScreenState extends State<TelecallerReportCustome
               onRefresh: _load,
               child: Column(
                 children: [
-                  ConstrainedBox(
-                    constraints: BoxConstraints(maxHeight: visits.length > 1 ? 220 : 140),
-                    child: _visitsSection(visits),
-                  ),
+                  if (!widget.isSalesman)
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: visits.length > 1 ? 220 : 140),
+                      child: _visitsSection(visits),
+                    ),
                   Expanded(
                     child: TabBarView(
                       controller: _tabs,
-                      children: [
-                        _callList(normalCalls, showRecording: false),
-                        _callList(cloudCalls, showRecording: true),
-                        _ordersTab(orders),
-                      ],
+                      children: widget.isSalesman
+                          ? [
+                              _visitsTab(visits),
+                              _ordersTab(orders),
+                            ]
+                          : [
+                              _callList(normalCalls, showRecording: false),
+                              _callList(cloudCalls, showRecording: true),
+                              _ordersTab(orders),
+                            ],
                     ),
                   ),
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _visitsTab(List<Map<String, dynamic>> visits) {
+    if (visits.isEmpty) {
+      return const Center(child: Text('No visit recorded in this period.', style: TextStyle(color: Colors.black54)));
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+      itemCount: visits.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
+      itemBuilder: (_, i) => _visitCard(visits[i]),
     );
   }
 
@@ -195,10 +220,52 @@ class _TelecallerReportCustomerScreenState extends State<TelecallerReportCustome
               ),
             ],
           ),
+          if ('${visit['outcome_name'] ?? ''}'.isNotEmpty ||
+              ((visit['payment_collected'] as num?) ?? 0) > 0) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                if ('${visit['outcome_name'] ?? ''}'.isNotEmpty)
+                  _infoChip(Icons.flag_rounded, '${visit['outcome_name']}', const Color(0xFF5C6BC0)),
+                if (((visit['payment_collected'] as num?) ?? 0) > 0)
+                  _infoChip(
+                    Icons.payments_rounded,
+                    'Rs. ${(visit['payment_collected'] as num).toStringAsFixed(0)}'
+                        '${'${visit['payment_mode'] ?? ''}'.isNotEmpty ? ' • ${visit['payment_mode']}' : ''}',
+                    const Color(0xFF2E7D32),
+                  ),
+              ],
+            ),
+          ],
+          if ('${visit['general_notes'] ?? ''}'.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text('${visit['general_notes']}', style: const TextStyle(fontSize: 12)),
+          ],
+          if ('${visit['market_note'] ?? ''}'.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text('Market: ${visit['market_note']}', style: const TextStyle(fontSize: 11.5, color: Colors.black54)),
+          ],
           if (order != null) ...[
             const SizedBox(height: 10),
             _orderCard(order),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _infoChip(IconData icon, String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(20)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 5),
+          Text(text, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: color)),
         ],
       ),
     );

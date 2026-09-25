@@ -23,10 +23,15 @@ class TelecallerHierarchyPickerScreen extends StatefulWidget {
   final String viewerRole;
   final String viewerMobile;
 
+  // 'telecaller' → Head → Zonal → Teleadmin → Telecaller
+  // 'salesman'   → Head → Zonal → Area Incharge → Salesman
+  final String branch;
+
   const TelecallerHierarchyPickerScreen({
     super.key,
     required this.viewerRole,
     required this.viewerMobile,
+    this.branch = 'telecaller',
   });
 
   @override
@@ -41,7 +46,11 @@ class _Node {
 }
 
 class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPickerScreen> {
-  static const _allowedRoles = {'head_incharge', 'zonal_incharge', 'teleadmin', 'telecaller'};
+  bool get _isSalesmanBranch => widget.branch == 'salesman';
+  String get _leafRole => _isSalesmanBranch ? 'salesman' : 'telecaller';
+  Set<String> get _allowedRoles => _isSalesmanBranch
+      ? {'head_incharge', 'zonal_incharge', 'area_incharge', 'salesman'}
+      : {'head_incharge', 'zonal_incharge', 'teleadmin', 'telecaller'};
 
   bool _loading = true;
   String? _error;
@@ -137,7 +146,7 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
   }
 
   void _drillInto(_Node n) {
-    if (n.role == 'telecaller') {
+    if (n.role == _leafRole) {
       Navigator.pop(context, {'mobile': n.mobile, 'name': n.name});
       return;
     }
@@ -152,16 +161,22 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
   // What role the cards on screen right now belong to — drives the AppBar
   // title ("Pick Head Incharge" → "Pick Zonal Incharge" → …) so each step is
   // explicit instead of every level looking like the same generic list.
-  static const _roleAfter = {
-    'head_incharge': 'zonal_incharge',
-    'zonal_incharge': 'teleadmin',
-    'teleadmin': 'telecaller',
-  };
+  Map<String, String> get _roleAfter => _isSalesmanBranch
+      ? const {
+          'head_incharge': 'zonal_incharge',
+          'zonal_incharge': 'area_incharge',
+          'area_incharge': 'salesman',
+        }
+      : const {
+          'head_incharge': 'zonal_incharge',
+          'zonal_incharge': 'teleadmin',
+          'teleadmin': 'telecaller',
+        };
 
   String _currentLevelRole() {
-    if (_path.isNotEmpty) return _roleAfter[_path.last.role] ?? 'telecaller';
+    if (_path.isNotEmpty) return _roleAfter[_path.last.role] ?? _leafRole;
     if (_isAdmin) return 'head_incharge';
-    return _roleAfter[normalizeRole(widget.viewerRole)] ?? 'telecaller';
+    return _roleAfter[normalizeRole(widget.viewerRole)] ?? _leafRole;
   }
 
   // Hardware/gesture back and the AppBar's own back arrow both go up one
@@ -185,6 +200,10 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
         return (label: 'Teleadmin', color: const Color(0xFF5E35B1), bg: const Color(0xFFEDE7F6));
       case 'telecaller':
         return (label: 'Telecaller', color: const Color(0xFF00838F), bg: const Color(0xFFE0F7FA));
+      case 'area_incharge':
+        return (label: 'Area Incharge', color: const Color(0xFFFF7043), bg: const Color(0xFFFBE9E7));
+      case 'salesman':
+        return (label: 'Salesman', color: const Color(0xFF43A047), bg: const Color(0xFFE8F5E9));
       default:
         return (label: role, color: Colors.grey, bg: const Color(0xFFEEEEEE));
     }
@@ -284,7 +303,7 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
 
   Widget _nodeCard(_Node n) {
     final style = _roleStyle(n.role);
-    final isLeaf = n.role == 'telecaller';
+    final isLeaf = n.role == _leafRole;
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(12),
@@ -299,7 +318,7 @@ class _TelecallerHierarchyPickerScreenState extends State<TelecallerHierarchyPic
               CircleAvatar(
                 radius: 18,
                 backgroundColor: style.bg,
-                child: Icon(isLeaf ? Icons.support_agent_rounded : Icons.account_tree_rounded, size: 18, color: style.color),
+                child: Icon(isLeaf ? (_isSalesmanBranch ? Icons.storefront_rounded : Icons.support_agent_rounded) : Icons.account_tree_rounded, size: 18, color: style.color),
               ),
               const SizedBox(width: 12),
               Expanded(

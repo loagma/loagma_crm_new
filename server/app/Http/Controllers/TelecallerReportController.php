@@ -42,7 +42,7 @@ class TelecallerReportController extends Controller
     private function resolveTelecallerId(DeliStaff $viewer): string
     {
         $role = strtolower(trim($viewer->role ?? ''));
-        if ($role === 'telecaller') {
+        if (\in_array($role, ['telecaller', 'salesman'], true)) {
             return (string) $viewer->mobile;
         }
 
@@ -198,7 +198,8 @@ class TelecallerReportController extends Controller
         $visitsByAccount = ActionLog::where('employee_mobile', $telecallerId)
             ->whereIn('account_id', $accountIds)
             ->whereBetween('check_in_at', [$start, $end])
-            ->get(['account_id', 'order_no', 'check_out_at'])
+            ->orderBy('check_in_at')
+            ->get(['account_id', 'order_no', 'check_in_at', 'check_out_at', 'outcome_name', 'call_outcome', 'payment_collected'])
             ->groupBy('account_id');
 
         // order_no on the visit only ever gets set by the SALESMAN checkout
@@ -224,6 +225,10 @@ class TelecallerReportController extends Controller
                 'not_answered' => $accCalls->count() - $answered,
                 'order_given'  => $accVisits->contains(fn ($v) => !empty($v->order_no)) || $ordersByCustomer->has($id),
                 'visited'      => $accVisits->contains(fn ($v) => !empty($v->check_out_at)),
+                // Salesman-oriented columns (a telecaller row just gets 0 / null).
+                'visits_count' => $accVisits->count(),
+                'last_stage'   => optional($accVisits->last())->outcome_name,
+                'payment_collected' => (float) $accVisits->sum('payment_collected'),
             ];
         })->values();
 
@@ -305,6 +310,10 @@ class TelecallerReportController extends Controller
                 'check_out_at'       => optional($v->check_out_at)->toIso8601String(),
                 'duration_seconds'   => $duration,
                 'call_outcome'       => $v->call_outcome,
+                'outcome_name'       => $v->outcome_name,
+                'payment_collected'  => $v->payment_collected !== null ? (float) $v->payment_collected : null,
+                'payment_mode'       => $v->payment_mode,
+                'market_note'        => $v->market_note,
                 'conversation_notes' => $v->conversation_notes,
                 'general_notes'      => $v->general_notes,
                 'order'              => !empty($v->order_no) ? ($ordersByNo[(string) $v->order_no] ?? null) : null,

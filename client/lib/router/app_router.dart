@@ -268,6 +268,10 @@ final appRouter = GoRouter(
       builder: (context, state) => const TelecallerDailyReportScreen(selfMode: false),
     ),
     GoRoute(
+      path: '/telecaller-report/team-salesman',
+      builder: (context, state) => const TelecallerDailyReportScreen(selfMode: false, branch: 'salesman'),
+    ),
+    GoRoute(
       path: '/telecaller-report/self',
       builder: (context, state) => const TelecallerDailyReportScreen(selfMode: true),
     ),
@@ -282,6 +286,7 @@ final appRouter = GoRouter(
           from: extra['from'] as String? ?? '',
           to: extra['to'] as String? ?? '',
           telecallerId: extra['telecallerId'] as String?,
+          isSalesman: extra['isSalesman'] as bool? ?? false,
         );
       },
     ),

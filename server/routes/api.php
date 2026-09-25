@@ -196,7 +196,7 @@ Route::prefix('team')->middleware('jwtauth')->group(function () {
 // TelecallerReportController::resolveTelecallerId for the scoping rule).
 // ---------------------------------------------------------------------------
 Route::prefix('telecaller-report')
-    ->middleware(['jwtauth', 'role:telecaller,teleadmin,zonal_incharge,area_incharge,head_incharge,admin'])
+    ->middleware(['jwtauth', 'role:telecaller,salesman,teleadmin,zonal_incharge,area_incharge,head_incharge,admin'])
     ->group(function () {
         Route::get('/summary', [TelecallerReportController::class, 'summary']);
         Route::get('/customer', [TelecallerReportController::class, 'customerDetail']);

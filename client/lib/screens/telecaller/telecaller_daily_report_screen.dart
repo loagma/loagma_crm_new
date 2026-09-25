@@ -22,7 +22,11 @@ enum _RangeFilter { today, yesterday, thisMonth, custom }
 class TelecallerDailyReportScreen extends StatefulWidget {
   final bool selfMode;
 
-  const TelecallerDailyReportScreen({super.key, required this.selfMode});
+  // Which hierarchy the team picker walks: 'telecaller' or 'salesman'.
+  // Ignored in self mode (the viewer's own role decides the columns).
+  final String branch;
+
+  const TelecallerDailyReportScreen({super.key, required this.selfMode, this.branch = 'telecaller'});
 
   @override
   State<TelecallerDailyReportScreen> createState() => _TelecallerDailyReportScreenState();
@@ -41,6 +45,10 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
   String? _error;
   String _search = '';
   final _searchCtrl = TextEditingController();
+
+  bool get _isSalesmanView => widget.selfMode
+      ? (UserService.currentRole ?? '').toLowerCase().trim() == 'salesman'
+      : widget.branch == 'salesman';
 
   String _ymd(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
@@ -103,6 +111,7 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
         builder: (_) => TelecallerHierarchyPickerScreen(
           viewerRole: UserService.currentRole ?? '',
           viewerMobile: UserService.currentMobile ?? '',
+          branch: widget.branch,
         ),
       ),
     );
@@ -242,6 +251,7 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
       'from':         r.from,
       'to':           r.to,
       'telecallerId': widget.selfMode ? UserService.currentMobile : _selectedMobile,
+      'isSalesman':   _isSalesmanView,
     });
   }
 
@@ -262,6 +272,8 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
     final totalCalls    = rows.fold<int>(0, (s, r) => s + ((r['calls_total'] as num?)?.toInt() ?? 0));
     final totalAnswered = rows.fold<int>(0, (s, r) => s + ((r['answered'] as num?)?.toInt() ?? 0));
     final totalOrders   = rows.where((r) => r['order_given'] == true).length;
+    final totalVisited  = rows.where((r) => r['visited'] == true).length;
+    final totalPayment  = rows.fold<double>(0, (s, r) => s + ((r['payment_collected'] as num?)?.toDouble() ?? 0));
 
     return Scaffold(
       backgroundColor: kBg,
@@ -269,7 +281,8 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
         backgroundColor: kGold,
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.white),
-        title: Text(widget.selfMode ? 'Self Report' : 'Team Report',
+        title: Text(
+            widget.selfMode ? 'Self Report' : (_isSalesmanView ? 'Salesman Report' : 'Telecaller Report'),
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         actions: [
           IconButton(icon: const Icon(Icons.refresh_rounded, color: Colors.white), onPressed: _load),
@@ -302,7 +315,10 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              _selectedName ?? 'Pick a telecaller from Head Incharge → Zonal → Teleadmin',
+                              _selectedName ??
+                                  (_isSalesmanView
+                                      ? 'Pick a salesman: Head → Zonal → Area Incharge'
+                                      : 'Pick a telecaller: Head → Zonal → Teleadmin'),
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 13,
@@ -364,7 +380,10 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
                     const Icon(Icons.event_rounded, size: 15, color: Colors.black54),
                     const SizedBox(width: 6),
                     Expanded(child: Text(_rangeLabel, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5))),
-                    Text('${rows.length} customers  •  $totalCalls calls  •  $totalAnswered answered  •  $totalOrders orders',
+                    Text(
+                        _isSalesmanView
+                            ? '${rows.length} customers  •  $totalVisited visited  •  $totalOrders orders  •  Rs. ${totalPayment.toStringAsFixed(0)}'
+                            : '${rows.length} customers  •  $totalCalls calls  •  $totalAnswered answered  •  $totalOrders orders',
                         style: const TextStyle(fontSize: 11, color: Colors.black54)),
                   ],
                 ),
@@ -384,13 +403,13 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
                                     children: [
                                       Icon(Icons.touch_app_rounded, size: 40, color: Colors.grey.shade300),
                                       const SizedBox(height: 10),
-                                      Text('No telecaller picked yet',
+                                      Text(_isSalesmanView ? 'No salesman picked yet' : 'No telecaller picked yet',
                                           style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
                                       const SizedBox(height: 14),
                                       ElevatedButton.icon(
                                         onPressed: _pickTelecaller,
                                         icon: const Icon(Icons.account_tree_rounded, size: 18),
-                                        label: const Text('Pick a Telecaller'),
+                                        label: Text(_isSalesmanView ? 'Pick a Salesman' : 'Pick a Telecaller'),
                                         style: ElevatedButton.styleFrom(
                                           backgroundColor: kGold,
                                           foregroundColor: Colors.white,
@@ -420,14 +439,22 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
                                   showCheckboxColumn: false,
                                   headingRowColor: WidgetStateProperty.all(const Color(0xFFF3ECD9)),
                                   columnSpacing: 20,
-                                  columns: const [
-                                    DataColumn(label: Text('Customer', style: TextStyle(fontWeight: FontWeight.w700))),
-                                    DataColumn(label: Text('Calls', style: TextStyle(fontWeight: FontWeight.w700))),
-                                    DataColumn(label: Text('Ans.', style: TextStyle(fontWeight: FontWeight.w700))),
-                                    DataColumn(label: Text('Not Ans.', style: TextStyle(fontWeight: FontWeight.w700))),
-                                    DataColumn(label: Text('Visited', style: TextStyle(fontWeight: FontWeight.w700))),
-                                    DataColumn(label: Text('Order', style: TextStyle(fontWeight: FontWeight.w700))),
-                                  ],
+                                  columns: _isSalesmanView
+                                      ? const [
+                                          DataColumn(label: Text('Customer', style: TextStyle(fontWeight: FontWeight.w700))),
+                                          DataColumn(label: Text('Visits', style: TextStyle(fontWeight: FontWeight.w700))),
+                                          DataColumn(label: Text('Stage', style: TextStyle(fontWeight: FontWeight.w700))),
+                                          DataColumn(label: Text('Payment', style: TextStyle(fontWeight: FontWeight.w700))),
+                                          DataColumn(label: Text('Order', style: TextStyle(fontWeight: FontWeight.w700))),
+                                        ]
+                                      : const [
+                                          DataColumn(label: Text('Customer', style: TextStyle(fontWeight: FontWeight.w700))),
+                                          DataColumn(label: Text('Calls', style: TextStyle(fontWeight: FontWeight.w700))),
+                                          DataColumn(label: Text('Ans.', style: TextStyle(fontWeight: FontWeight.w700))),
+                                          DataColumn(label: Text('Not Ans.', style: TextStyle(fontWeight: FontWeight.w700))),
+                                          DataColumn(label: Text('Visited', style: TextStyle(fontWeight: FontWeight.w700))),
+                                          DataColumn(label: Text('Order', style: TextStyle(fontWeight: FontWeight.w700))),
+                                        ],
                                   rows: rows.map((r) {
                                     final orderGiven = r['order_given'] == true;
                                     final visited = r['visited'] == true;
@@ -440,11 +467,26 @@ class _TelecallerDailyReportScreenState extends State<TelecallerDailyReportScree
                                               maxLines: 1, overflow: TextOverflow.ellipsis,
                                               style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
                                         )),
-                                        DataCell(Text('${r['calls_total'] ?? 0}')),
-                                        DataCell(Text('${r['answered'] ?? 0}', style: const TextStyle(color: Color(0xFF43A047), fontWeight: FontWeight.w600))),
-                                        DataCell(Text('${r['not_answered'] ?? 0}', style: const TextStyle(color: Color(0xFFE53935)))),
-                                        DataCell(Icon(visited ? Icons.check_circle_rounded : Icons.remove_circle_outline_rounded,
-                                            size: 18, color: visited ? const Color(0xFF43A047) : Colors.black26)),
+                                        if (_isSalesmanView) ...[
+                                          DataCell(Text('${r['visits_count'] ?? 0}')),
+                                          DataCell(SizedBox(
+                                            width: 110,
+                                            child: Text('${r['last_stage'] ?? '-'}',
+                                                maxLines: 1, overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(fontSize: 12)),
+                                          )),
+                                          DataCell(Text(
+                                              ((r['payment_collected'] as num?) ?? 0) > 0
+                                                  ? 'Rs. ${(r['payment_collected'] as num).toStringAsFixed(0)}'
+                                                  : '-',
+                                              style: const TextStyle(fontSize: 12))),
+                                        ] else ...[
+                                          DataCell(Text('${r['calls_total'] ?? 0}')),
+                                          DataCell(Text('${r['answered'] ?? 0}', style: const TextStyle(color: Color(0xFF43A047), fontWeight: FontWeight.w600))),
+                                          DataCell(Text('${r['not_answered'] ?? 0}', style: const TextStyle(color: Color(0xFFE53935)))),
+                                          DataCell(Icon(visited ? Icons.check_circle_rounded : Icons.remove_circle_outline_rounded,
+                                              size: 18, color: visited ? const Color(0xFF43A047) : Colors.black26)),
+                                        ],
                                         DataCell(orderGiven
                                             ? const Icon(Icons.check_circle_rounded, size: 18, color: Color(0xFF2E7D32))
                                             : const Icon(Icons.remove_circle_outline_rounded, size: 18, color: Colors.black26)),

@@ -476,6 +476,13 @@ class AppDrawer extends StatelessWidget {
             'color': const Color(0xFF5C6BC0),
             'subtitle': 'My visits, calls & attendance',
           },
+          {
+            'title': 'Self Report (New)',
+            'icon': Icons.table_chart_rounded,
+            'route': '/telecaller-report/self',
+            'color': const Color(0xFF26A69A),
+            'subtitle': 'Per-customer visits & orders',
+          },
           // {'title': 'Apply  Leave',      'icon': Icons.beach_access_rounded,          'route': '/apply-leave',              'color': const Color(0xFFFF7043)},
         ];
       case 'telecaller':
@@ -600,6 +607,7 @@ class AppDrawer extends StatelessWidget {
   }
 
   static void _showNewReportsPicker(BuildContext context) {
+    final role = (UserService.currentRole ?? '').toLowerCase().trim();
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.white,
@@ -617,19 +625,32 @@ class AppDrawer extends StatelessWidget {
                 ],
               ),
             ),
-            ListTile(
-              leading: const Icon(Icons.groups_rounded, color: _accent2),
-              title: const Text('Team Report New'),
-              subtitle: const Text('Per-customer calls & orders, any telecaller'),
-              onTap: () {
-                Navigator.pop(ctx);
-                context.push('/telecaller-report/team');
-              },
-            ),
+            // Which team branches this role actually owns: telecallers hang
+            // off teleadmin, salesmen off area_incharge; head/zonal/admin see both.
+            if (const {'admin', 'head_incharge', 'zonal_incharge', 'teleadmin'}.contains(role))
+              ListTile(
+                leading: const Icon(Icons.support_agent_rounded, color: _accent2),
+                title: const Text('Team Report New — Telecallers'),
+                subtitle: const Text('Pick Head → Zonal → Teleadmin → Telecaller'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  context.push('/telecaller-report/team');
+                },
+              ),
+            if (const {'admin', 'head_incharge', 'zonal_incharge', 'area_incharge'}.contains(role))
+              ListTile(
+                leading: const Icon(Icons.storefront_rounded, color: _accent2),
+                title: const Text('Team Report New — Salesmen'),
+                subtitle: const Text('Pick Head → Zonal → Area Incharge → Salesman'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  context.push('/telecaller-report/team-salesman');
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.person_rounded, color: _accent2),
               title: const Text('Self Report New'),
-              subtitle: const Text('Per-customer calls & orders, my own'),
+              subtitle: const Text('Per-customer report, my own'),
               onTap: () {
                 Navigator.pop(ctx);
                 context.push('/telecaller-report/self');
