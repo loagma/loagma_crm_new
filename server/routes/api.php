@@ -244,6 +244,7 @@ Route::prefix('incharge-assign')->group(function () {
 Route::prefix('beat-plan')->group(function () {
     Route::get('/my-plans',           [BeatPlanController::class, 'myPlans']);
     Route::post('/assign',            [BeatPlanController::class, 'assign']);
+    Route::post('/auto-distribute',   [BeatPlanController::class, 'autoDistribute']);
     Route::post('/unassign-bulk',     [BeatPlanController::class, 'unassignBulk']);
     Route::get('/today',              [BeatPlanController::class, 'today']);
     Route::get('/week',               [BeatPlanController::class, 'week']);

@@ -238,6 +238,75 @@ class BeatPlanController extends Controller
         }
     }
 
+    // ── 1b. Auto-distribute (select N accounts, spread round-robin over a date range) ──
+
+    public function autoDistribute(): JsonResponse
+    {
+        try {
+            $data = request()->validate([
+                'account_ids'      => 'required|array|min:1',
+                'account_ids.*'    => 'required|string',
+                'account_types'    => 'required|array',
+                'account_types.*'  => 'required|string|in:lead,customer',
+                'start_date'       => 'required|date_format:Y-m-d',
+                'end_date'         => 'required|date_format:Y-m-d|after_or_equal:start_date',
+                'salesman_id'      => 'nullable|string', // allow optional override for admin/telecaller
+            ]);
+
+            $salesman = $data['salesman_id'] ?? $this->salesmanId();
+
+            $dates = [];
+            $cursor = Carbon::createFromFormat('Y-m-d', $data['start_date'], self::TZ)->startOfDay();
+            $end    = Carbon::createFromFormat('Y-m-d', $data['end_date'], self::TZ)->startOfDay();
+            while ($cursor->lte($end)) {
+                $dates[] = $cursor->toDateString();
+                $cursor->addDay();
+            }
+
+            $saved = [];
+            $counts = array_fill_keys($dates, 0);
+            foreach ($data['account_ids'] as $i => $accountId) {
+                $accountType = $data['account_types'][$i] ?? 'lead';
+                $date = $dates[$i % count($dates)];
+                $plan = BeatPlan::updateOrCreate(
+                    ['account_id' => $accountId, 'salesman_id' => $salesman],
+                    [
+                        'account_type'     => $accountType,
+                        'frequency'        => 'specific_dates',
+                        'days'             => null,
+                        'month_date'       => null,
+                        'specific_dates'   => [$date],
+                        'appointment_date' => null,
+                        'week_anchor_date' => null,
+                        'interval_days'    => null,
+                        'start_date'       => null,
+                        'is_active'        => true,
+                    ]
+                );
+                $saved[] = $plan->id;
+                $counts[$date]++;
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => count($saved) . ' account(s) auto-distributed across ' . count($dates) . ' day(s)',
+                'ids'     => $saved,
+                'preview' => collect($counts)->map(fn ($count, $date) => ['date' => $date, 'count' => $count])->values(),
+            ]);
+        } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
+            return response()->json([
+                'success' => false,
+                'error'   => 'Authentication failed: ' . $e->getMessage(),
+            ], 401);
+        } catch (\Exception $e) {
+            \Log::error('Beat plan auto-distribute error', ['exception' => $e]);
+            return response()->json([
+                'success' => false,
+                'error'   => $e->getMessage(),
+            ], 500);
+        }
+    }
+
     // ── 2. Today's beat plan ──────────────────────────────────────────────────
 
     public function today(): JsonResponse

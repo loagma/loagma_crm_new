@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_service.dart';
 import '../../services/user_service.dart';
 import '../../widgets/account_map_screen.dart';
+import '../shared/auto_distribute_dialog.dart';
 import 'customer_detail_screen.dart';
 
 // Flow:
@@ -588,6 +589,60 @@ class _AllottedCustomerAccountsScreenState
     }
   }
 
+  Future<void> _showAutoDistributeDialog() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AutoDistributeDialog(selectedCount: _selected.length),
+    );
+    if (result == null || !mounted) return;
+
+    final startDate = result['start_date'] as String;
+    final endDate   = result['end_date'] as String;
+
+    // Round-robin should follow the order the user actually picked
+    // customers in (so "select A, then B, then C" maps A/B/C onto
+    // day 1/2/3 in that order), not the pincode-grouped display order.
+    // _selected is a LinkedHashSet, so it already preserves that order —
+    // build an id-keyed lookup once and walk _selected instead of _groups.
+    final byKey = <String, Map<String, dynamic>>{};
+    for (final g in _groups) {
+      for (final a in (g['accounts'] as List<Map<String, dynamic>>)) {
+        byKey[_key(a)] = a;
+      }
+    }
+    final selected = _selected.map((k) => byKey[k]).whereType<Map<String, dynamic>>().toList();
+
+    final accountIds = selected.map((a) => a['id'] as String? ?? '').where((id) => id.isNotEmpty).toList();
+    final accountTypes = selected.map((a) => (a['_type'] as String?) == 'customer' ? 'customer' : 'lead').toList();
+
+    if (accountIds.isEmpty) return;
+
+    if (mounted) setState(() => _actionLoading = true);
+    final res = await ApiService.autoDistributeBeatPlan(
+      accountIds: accountIds,
+      accountTypes: accountTypes,
+      startDate: startDate,
+      endDate: endDate,
+    );
+    if (!mounted) return;
+
+    if (res != null && res['success'] == true) {
+      setState(() { _actionLoading = false; _selected.clear(); });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(res['message']?.toString() ?? 'Accounts auto-distributed'),
+        backgroundColor: const Color(0xFF43A047),
+      ));
+      _load();
+    } else {
+      setState(() => _actionLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Failed to auto-distribute. Try again.'),
+        backgroundColor: Colors.red,
+      ));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -854,6 +909,18 @@ class _AllottedCustomerAccountsScreenState
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           ),
           child: const Text('Unassign', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+        ),
+        const SizedBox(width: 8),
+        OutlinedButton(
+          onPressed: (_selected.isEmpty || _actionLoading) ? null : _showAutoDistributeDialog,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: _gold,
+            side: const BorderSide(color: _gold),
+            disabledForegroundColor: _gold.withValues(alpha: 0.4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          ),
+          child: const Text('Auto-Distribute', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
         ),
         const SizedBox(width: 8),
         ElevatedButton(
