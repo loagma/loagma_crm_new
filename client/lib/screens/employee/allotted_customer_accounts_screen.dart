@@ -893,9 +893,9 @@ class _AllottedCustomerAccountsScreenState
               selectedC:  selectedCustomers,
               expanded:  isOpen,
               onToggle:  () => setState(() => isOpen ? _expanded.remove(pin) : _expanded.add(pin)),
-              onSelectAll: () => _selectAllIn(accounts),
-              onClearAll:  () => _clearAllIn(accounts),
-              onSelectN:   () => _selectNIn(accounts),
+              onSelectAll: _selectAllIn,
+              onClearAll:  _clearAllIn,
+              onSelectN:   _selectNIn,
               filteredAccounts: filtered,
               selectedKeys: _selected,
               keyOf:        _key,
@@ -979,9 +979,9 @@ class _PincodeSection extends StatefulWidget {
   final int                          selectedC;
   final bool                         expanded;
   final VoidCallback                 onToggle;
-  final VoidCallback                 onSelectAll;
-  final VoidCallback                 onClearAll;
-  final VoidCallback                 onSelectN;
+  final void Function(List<Map<String, dynamic>>) onSelectAll;
+  final void Function(List<Map<String, dynamic>>) onClearAll;
+  final void Function(List<Map<String, dynamic>>) onSelectN;
   final List<Map<String, dynamic>>   filteredAccounts;
   final Set<String>                  selectedKeys;
   final String Function(Map<String, dynamic>) keyOf;
@@ -1195,11 +1195,11 @@ class _PincodeSectionState extends State<_PincodeSection> {
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                 child: Row(
                   children: [
-                    _SelectBtn(icon: Icons.check_box_rounded,              label: 'Select All',  onTap: widget.onSelectAll),
+                    _SelectBtn(icon: Icons.check_box_rounded,              label: 'Select All',  onTap: () => widget.onSelectAll(visibleAccounts)),
                     const SizedBox(width: 8),
-                    _SelectBtn(icon: Icons.check_box_outline_blank_rounded, label: 'Unselect All', onTap: widget.onClearAll),
+                    _SelectBtn(icon: Icons.check_box_outline_blank_rounded, label: 'Unselect All', onTap: () => widget.onClearAll(visibleAccounts)),
                     const SizedBox(width: 8),
-                    _SelectBtn(icon: Icons.format_list_numbered_rounded,   label: 'Select N',    onTap: widget.onSelectN),
+                    _SelectBtn(icon: Icons.format_list_numbered_rounded,   label: 'Select N',    onTap: () => widget.onSelectN(visibleAccounts)),
                   ],
                 ),
               ),
