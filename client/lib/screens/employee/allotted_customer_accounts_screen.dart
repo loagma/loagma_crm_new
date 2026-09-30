@@ -15,6 +15,37 @@ import 'customer_detail_screen.dart';
 //  3. Group client-side by account['pincode']
 // No dependency on area_crm having pincodes populated.
 
+const _kDayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// Shared by _AllottedCustomerAccountsScreenState._globalDayBreak and
+// _PincodeSectionState._dayBreak — a 'weekly' plan contributes to every day
+// in its `days` list; a 'specific_dates' plan (what Auto-Distribute writes:
+// one date per account) contributes to whichever weekday each of its dates
+// falls on. Without this, accounts assigned via Auto-Distribute were
+// invisible in these Mon-Sun chips.
+void _tallyPlanIntoDayCounts(Map<String, dynamic> plan, Map<String, int> counts) {
+  switch (plan['frequency'] as String?) {
+    case 'weekly':
+      final days = plan['days'];
+      if (days is List) {
+        for (final d in days) {
+          final key = d.toString();
+          if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
+        }
+      }
+    case 'specific_dates':
+      final dates = plan['specific_dates'];
+      if (dates is List) {
+        for (final d in dates) {
+          final parsed = DateTime.tryParse(d.toString());
+          if (parsed == null) continue;
+          final key = _kDayOrder[parsed.weekday - 1]; // DateTime.weekday: 1=Mon..7=Sun
+          if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
+        }
+      }
+  }
+}
+
 class AllottedCustomerAccountsScreen extends StatefulWidget {
   const AllottedCustomerAccountsScreen({super.key});
 
@@ -300,15 +331,7 @@ class _AllottedCustomerAccountsScreenState
   Map<String, int> get _globalDayBreak {
     final counts = {for (final d in _dayOrder) d: 0};
     for (final plan in _beatPlans.values) {
-      if ((plan['frequency'] as String?) == 'weekly') {
-        final days = plan['days'];
-        if (days is List) {
-          for (final d in days) {
-            final key = d.toString();
-            if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
-          }
-        }
-      }
+      _tallyPlanIntoDayCounts(plan, counts);
     }
     return counts;
   }
@@ -1000,8 +1023,8 @@ class _PincodeSectionState extends State<_PincodeSection> {
   bool _hasPlan(Map<String, dynamic> a) =>
       widget.beatPlans.containsKey(a['id'] as String? ?? '');
 
-  // Per-pincode breakdown: weekly day counts + monthly/n_days totals
-  // for this pincode's assigned accounts.
+  // Per-pincode breakdown: weekly/specific-dates day counts + monthly/n_days
+  // totals for this pincode's assigned accounts.
   Map<String, int> get _dayBreak {
     final counts = {for (final d in _dayOrder) d: 0};
     var monthly = 0;
@@ -1010,18 +1033,12 @@ class _PincodeSectionState extends State<_PincodeSection> {
       final plan = widget.beatPlans[a['id'] as String? ?? ''];
       if (plan == null) continue;
       switch (plan['frequency'] as String?) {
-        case 'weekly':
-          final days = plan['days'];
-          if (days is List) {
-            for (final d in days) {
-              final key = d.toString();
-              if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
-            }
-          }
         case 'monthly':
           monthly++;
         case 'n_days':
           nDays++;
+        default:
+          _tallyPlanIntoDayCounts(plan, counts);
       }
     }
     counts['Monthly'] = monthly;
