@@ -1020,6 +1020,20 @@ class _PincodeSectionState extends State<_PincodeSection> {
 
   static const _dayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+  // Selection doesn't carry over between tabs — switching to a different
+  // picking tab (Existing/Assign/Unassigned) drops whatever was selected in
+  // this pincode first. 'Selected' is a review-only tab, so switching into
+  // it never clears — that would make it show nothing.
+  void _switchFilter(String next) {
+    if (next != 'selected') {
+      widget.onClearAll(widget.filteredAccounts);
+    }
+    setState(() {
+      _filter = next;
+      if (!widget.expanded) widget.onToggle();
+    });
+  }
+
   bool _hasPlan(Map<String, dynamic> a) =>
       widget.beatPlans.containsKey(a['id'] as String? ?? '');
 
@@ -1130,25 +1144,25 @@ class _PincodeSectionState extends State<_PincodeSection> {
                     Expanded(child: _FilterBtn(
                       label: 'Existing', countL: widget.existingL, countC: widget.existingC,
                       active: _filter == 'existing',
-                      onTap: () => setState(() { _filter = 'existing'; if (!expanded) widget.onToggle(); }),
+                      onTap: () => _switchFilter('existing'),
                     )),
                     const SizedBox(width: 5),
                     Expanded(child: _FilterBtn(
                       label: 'Assign', countL: widget.assignL, countC: widget.assignC,
                       active: _filter == 'assign',
-                      onTap: () => setState(() { _filter = 'assign'; if (!expanded) widget.onToggle(); }),
+                      onTap: () => _switchFilter('assign'),
                     )),
                     const SizedBox(width: 5),
                     Expanded(child: _FilterBtn(
                       label: 'Unassigned', countL: widget.remainingL, countC: widget.remainingC,
                       active: _filter == 'remaining',
-                      onTap: () => setState(() { _filter = 'remaining'; if (!expanded) widget.onToggle(); }),
+                      onTap: () => _switchFilter('remaining'),
                     )),
                     const SizedBox(width: 5),
                     Expanded(child: _FilterBtn(
                       label: 'Selected', countL: widget.selectedL, countC: widget.selectedC,
                       active: _filter == 'selected',
-                      onTap: () => setState(() { _filter = 'selected'; if (!expanded) widget.onToggle(); }),
+                      onTap: () => _switchFilter('selected'),
                     )),
                   ],
                 ),
