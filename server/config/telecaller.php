@@ -5,8 +5,8 @@ return [
     // into one internal cluster when ordering a telecaller's plan.
     'allocation_cluster_km' => (float) env('TC_ALLOCATION_CLUSTER_KM', 5.0),
 
-    // Upper bound on the daily capacity a telecaller can enter for a plan.
-    'allocation_max_capacity' => (int) env('TC_ALLOCATION_MAX_CAPACITY', 500),
+    // Longest From–To range (days, inclusive) a telecaller can pick for a plan.
+    'allocation_max_days' => (int) env('TC_ALLOCATION_MAX_DAYS', 366),
 
     // Pincode → location lookup (OpenStreetMap Nominatim postal-code search).
     // Customer coordinates are never used to place a pincode.

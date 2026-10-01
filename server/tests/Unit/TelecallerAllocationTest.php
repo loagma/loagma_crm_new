@@ -39,6 +39,37 @@ class TelecallerAllocationTest extends TestCase
         ], $days);
     }
 
+    public function test_customers_divided_over_date_range(): void
+    {
+        // 250 customers, 5 Oct..9 Oct (5 days) → 50/day.
+        $this->assertSame(5, DailyAllocator::daysInclusive('2026-10-05', '2026-10-09'));
+        $this->assertSame(50, DailyAllocator::quotaFor(250, '2026-10-05', '2026-10-05', '2026-10-09'));
+
+        // Only 30 of day 1's 50 called → 220 open over 4 days → 55/day.
+        $this->assertSame(55, DailyAllocator::quotaFor(220, '2026-10-06', '2026-10-05', '2026-10-09'));
+
+        // Uneven split rounds up so the last day isn't overloaded: 101 over 2 days → 51, then 50.
+        $this->assertSame(51, DailyAllocator::quotaFor(101, '2026-10-08', '2026-10-05', '2026-10-09'));
+        $this->assertSame(50, DailyAllocator::quotaFor(50, '2026-10-09', '2026-10-05', '2026-10-09'));
+
+        // Before the range nothing; after it everything still open.
+        $this->assertSame(0, DailyAllocator::quotaFor(250, '2026-10-04', '2026-10-05', '2026-10-09'));
+        $this->assertSame(17, DailyAllocator::quotaFor(17, '2026-10-12', '2026-10-05', '2026-10-09'));
+    }
+
+    public function test_full_cycle_finishes_on_end_date(): void
+    {
+        $open = 187;
+        $days = [];
+        foreach (['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'] as $d) {
+            $q = DailyAllocator::quotaFor($open, $d, '2026-10-01', '2026-10-04');
+            $days[] = $q;
+            $open -= $q;
+        }
+        $this->assertSame([47, 47, 47, 46], $days);
+        $this->assertSame(0, $open);
+    }
+
     public function test_unworked_accounts_carry_forward_first(): void
     {
         $pending = $this->queue(['A' => 3, 'B' => 3]);

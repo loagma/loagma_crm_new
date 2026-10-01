@@ -45,12 +45,14 @@ class TelecallerAllocationService
     }
 
     /**
-     * Create the telecaller's plan, or merge newly selected pincodes into the
-     * active one: the sequence is recomputed over the union, open accounts are
-     * re-ranked, new accounts are queued, completed history is untouched.
-     * The (possibly new) capacity applies from the next daily allocation.
+     * Create the telecaller's plan for $startDate..$endDate, or merge newly
+     * selected pincodes into the active one: the sequence is recomputed over
+     * the union, open accounts are re-ranked, new accounts are queued,
+     * completed history is untouched. On a merge the plan keeps its original
+     * start date and takes the new end date; the remaining accounts are
+     * re-divided over the remaining days from the next daily allocation.
      */
-    public function createOrMerge(string $mobile, array $pincodes, int $capacity): TcAllocationPlan
+    public function createOrMerge(string $mobile, array $pincodes, string $startDate, string $endDate): TcAllocationPlan
     {
         $pincodes = $this->normalisePincodes($pincodes);
 
@@ -61,7 +63,7 @@ class TelecallerAllocationService
             ? $this->normalisePincodes(array_merge($active->selected_pincodes ?? [], $pincodes))
             : $pincodes);
 
-        return DB::transaction(function () use ($mobile, $pincodes, $capacity) {
+        return DB::transaction(function () use ($mobile, $pincodes, $startDate, $endDate) {
             $plan = TcAllocationPlan::where('employee_mobile', $mobile)
                 ->where('status', 'active')->lockForUpdate()->first();
 
@@ -82,19 +84,27 @@ class TelecallerAllocationService
                 $plan->update([
                     'selected_pincodes' => $union,
                     'pincode_sequence'  => $sequence,
-                    'daily_capacity'    => $capacity,
+                    'end_date'          => $endDate,
                 ]);
             } else {
                 $plan = TcAllocationPlan::create([
                     'employee_mobile'   => $mobile,
                     'selected_pincodes' => $union,
                     'pincode_sequence'  => $sequence,
-                    'daily_capacity'    => $capacity,
+                    'daily_capacity'    => 0,
+                    'start_date'        => $startDate,
+                    'end_date'          => $endDate,
                     'status'            => 'active',
                 ]);
             }
 
             $this->upsertQueue($plan, $this->rankAccounts($candidates, $sequence));
+
+            // daily_capacity holds the current per-day figure (shown on the
+            // dashboard as the daily target); allocateDay() refreshes it.
+            $open = TcAllocationItem::where('plan_id', $plan->id)->whereIn('status', self::OPEN)->count();
+            $from = max(Carbon::today()->toDateString(), $plan->start_date->toDateString());
+            $plan->update(['daily_capacity' => DailyAllocator::quotaFor($open, $from, $from, $endDate)]);
 
             return $plan->fresh();
         });
@@ -149,8 +159,9 @@ class TelecallerAllocationService
 
         $byStatus = TcAllocationItem::where('plan_id', $plan->id)
             ->select('status', DB::raw('COUNT(*) as n'))->groupBy('status')->pluck('n', 'status');
-        $days = TcAllocationItem::where('plan_id', $plan->id)
-            ->whereNotNull('allocated_date')->distinct()->count('allocated_date');
+        $today = Carbon::today()->toDateString();
+        $start = $plan->start_date->toDateString();
+        $end = $plan->end_date->toDateString();
         $remaining = TcAllocationItem::where('plan_id', $plan->id)
             ->whereIn('status', self::OPEN)
             ->select('pincode', DB::raw('COUNT(*) as n'), DB::raw('MIN(pincode_rank) as r'))
@@ -162,16 +173,22 @@ class TelecallerAllocationService
 
         return [
             'plan_id'           => $plan->id,
+            'start_date'        => $start,
+            'end_date'          => $end,
+            'total_days'        => DailyAllocator::daysInclusive($start, $end),
+            // Day N of the range (0 before it starts; can exceed total_days when overdue).
+            'day'               => $today < $start ? 0 : DailyAllocator::daysInclusive($start, $today),
+            'days_left'         => $today > $end ? 0 : DailyAllocator::daysInclusive(max($today, $start), $end),
+            'overdue'           => $today > $end && $open > 0,
+            // Current per-day figure: remaining ÷ remaining days.
             'daily_capacity'    => $plan->daily_capacity,
             'selected_pincodes' => $plan->selected_pincodes,
             'pincode_sequence'  => $plan->pincode_sequence,
-            'day'               => $days,
             'total'             => $total,
             'done'              => $total - $open,
             'pending'           => $open,
             'status_counts'     => $byStatus,
             'remaining_by_pincode' => $remaining,
-            'estimated_days_left'  => $plan->daily_capacity > 0 ? (int) ceil($open / $plan->daily_capacity) : null,
             'created_at'        => $plan->created_at,
         ];
     }
@@ -228,6 +245,12 @@ class TelecallerAllocationService
 
     private function allocateDay(TcAllocationPlan $plan, string $today): void
     {
+        $start = $plan->start_date->toDateString();
+        $end = $plan->end_date->toDateString();
+        if ($today < $start) {
+            return; // plan hasn't started yet
+        }
+
         // Carry forward: anything handed out on an earlier day but never worked
         // goes back to pending at its original rank, so it is served first.
         TcAllocationItem::where('plan_id', $plan->id)
@@ -238,17 +261,21 @@ class TelecallerAllocationService
         $this->queueNewAccounts($plan);
         $this->skipLabelled($plan);
 
-        $pending = TcAllocationItem::where('plan_id', $plan->id)
-            ->where('status', 'pending')
-            ->orderBy('pincode_rank')->orderBy('account_rank')
-            ->limit($plan->daily_capacity)
-            ->pluck('id')->all();
-
-        $ids = DailyAllocator::take($pending, $plan->daily_capacity);
-        if (empty($ids)) {
+        // Re-divide what's left over the days left (today..end_date).
+        $open = TcAllocationItem::where('plan_id', $plan->id)->where('status', 'pending')->count();
+        if ($open === 0) {
             $plan->update(['status' => 'completed']);
             return;
         }
+        $quota = DailyAllocator::quotaFor($open, $today, $start, $end);
+        $plan->update(['daily_capacity' => $quota]);
+
+        $pending = TcAllocationItem::where('plan_id', $plan->id)
+            ->where('status', 'pending')
+            ->orderBy('pincode_rank')->orderBy('account_rank')
+            ->limit($quota)
+            ->pluck('id')->all();
+        $ids = DailyAllocator::take($pending, $quota);
 
         foreach (array_chunk($ids, 500) as $chunk) {
             TcAllocationItem::whereIn('id', $chunk)

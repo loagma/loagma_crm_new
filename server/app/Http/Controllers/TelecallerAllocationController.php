@@ -5,14 +5,18 @@ namespace App\Http\Controllers;
 use App\Models\PincodeGeo;
 use App\Models\TcAllocationItem;
 use App\Services\TelecallerAllocationService;
+use App\Support\DailyAllocator;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Carbon;
+use Illuminate\Validation\ValidationException;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 /**
  * Telecaller daily allocation: the telecaller selects pincodes (or all of
- * them) and a daily capacity; the backend orders them by real geography and
- * hands out a capacity-sized list each day, carrying unfinished pincodes
- * forward. See TelecallerAllocationService for the rules.
+ * them) and a From–To date range; the backend orders the pincodes by real
+ * geography and divides the customers over the days, re-dividing what's left
+ * every morning so unfinished work carries forward and the plan ends on time.
+ * See TelecallerAllocationService for the rules.
  */
 class TelecallerAllocationController extends Controller
 {
@@ -30,13 +34,25 @@ class TelecallerAllocationController extends Controller
     {
         $mobile = $this->mobile();
 
-        $data = validator(request()->only(['pincodes', 'daily_capacity']), [
-            'pincodes'       => 'required|array|min:1',
-            'pincodes.*'     => 'required|string|max:10',
-            'daily_capacity' => 'required|integer|min:1|max:' . config('telecaller.allocation_max_capacity', 500),
+        // From–To range (calendar days, inclusive); customers are divided over
+        // it. On a merge into the active plan its start_date is kept, so only
+        // end_date matters (it may be moved later, not before today).
+        $today = Carbon::today()->toDateString();
+        $active = $this->allocation->activePlan($mobile);
+        $data = validator(request()->only(['pincodes', 'start_date', 'end_date']), [
+            'pincodes'   => 'required|array|min:1',
+            'pincodes.*' => 'required|string|max:10',
+            'start_date' => $active ? 'nullable|date_format:Y-m-d' : "required|date_format:Y-m-d|after_or_equal:$today",
+            'end_date'   => 'required|date_format:Y-m-d|after_or_equal:' . ($active ? $today : 'start_date'),
         ])->validate();
 
-        $plan = $this->allocation->createOrMerge($mobile, $data['pincodes'], (int) $data['daily_capacity']);
+        $start = $active ? $active->start_date->toDateString() : $data['start_date'];
+        $maxDays = (int) config('telecaller.allocation_max_days', 366);
+        if ($data['end_date'] < $start || DailyAllocator::daysInclusive($start, $data['end_date']) > $maxDays) {
+            throw ValidationException::withMessages(['end_date' => "The To date must be on or after the From date and within $maxDays days."]);
+        }
+
+        $plan = $this->allocation->createOrMerge($mobile, $data['pincodes'], $start, $data['end_date']);
 
         return response()->json([
             'success' => true,
@@ -61,6 +77,8 @@ class TelecallerAllocationController extends Controller
                 'plan_id'        => $plan?->id,
                 'plan_status'    => $plan?->status,
                 'daily_capacity' => $plan?->daily_capacity,
+                'start_date'     => $plan?->start_date?->toDateString(),
+                'end_date'       => $plan?->end_date?->toDateString(),
                 'total'          => count($items),
                 'customers'      => $items,
             ],

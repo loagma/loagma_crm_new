@@ -218,8 +218,8 @@ class TelecallerController extends Controller
                     ['label' => 'Interested', 'value' => $interested],
                     ['label' => 'Customers', 'value' => $conversions],
                 ],
-                // The active allocation plan's capacity (entered by the
-                // telecaller); 60 is the long-standing default without one.
+                // The active allocation plan's current per-day count (remaining
+                // customers ÷ remaining days); 60 is the default without a plan.
                 'daily_target' => (int) (TcAllocationPlan::where('employee_mobile', $mobile)
                     ->where('status', 'active')->value('daily_capacity') ?? 60),
             ],

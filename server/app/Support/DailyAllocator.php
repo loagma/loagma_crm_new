@@ -12,6 +12,32 @@ namespace App\Support;
 class DailyAllocator
 {
     /**
+     * How many accounts to hand out on $today for a plan running
+     * $startDate..$endDate (inclusive, every calendar day counts): the open
+     * accounts are re-divided over the days left, so a slow day raises the
+     * following days' share and the plan still finishes by $endDate.
+     * Before $startDate nothing; after $endDate everything still open.
+     *
+     * @param string $today, $startDate, $endDate  Y-m-d (IST)
+     */
+    public static function quotaFor(int $open, string $today, string $startDate, string $endDate): int
+    {
+        if ($open <= 0 || $today < $startDate) {
+            return 0;
+        }
+        if ($today > $endDate) {
+            return $open;
+        }
+        return (int) ceil($open / self::daysInclusive($today, $endDate));
+    }
+
+    /** Calendar days from $from to $to, both included (Y-m-d). */
+    public static function daysInclusive(string $from, string $to): int
+    {
+        return (int) (new \DateTimeImmutable($from))->diff(new \DateTimeImmutable($to))->format('%r%a') + 1;
+    }
+
+    /**
      * @param array $orderedPending pending queue entries, already in (pincode_rank, account_rank) order
      * @return array the entries allocated today
      */

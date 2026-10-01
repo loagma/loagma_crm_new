@@ -1414,10 +1414,19 @@ class ApiService {
     return data is Map ? Map<String, dynamic>.from(data) : null;
   }
 
-  /// Create a plan, or merge the pincodes into the active one.
-  /// Returns {success, data|message}.
-  static Future<Map<String, dynamic>> createAllocationPlan(List<String> pincodes, int dailyCapacity) async =>
-      await _tcAllocationRequest('POST', '', {'pincodes': pincodes, 'daily_capacity': dailyCapacity}) ??
+  /// Create a plan for [startDate]..[endDate] (yyyy-MM-dd, inclusive), or
+  /// merge the pincodes into the active one (its From date is kept; the To
+  /// date is updated). Returns {success, data|message}.
+  static Future<Map<String, dynamic>> createAllocationPlan(
+    List<String> pincodes, {
+    required String startDate,
+    required String endDate,
+  }) async =>
+      await _tcAllocationRequest('POST', '', {
+        'pincodes': pincodes,
+        'start_date': startDate,
+        'end_date': endDate,
+      }) ??
       {'success': false, 'message': 'Request failed'};
 
   static Future<bool> cancelAllocationPlan() async =>

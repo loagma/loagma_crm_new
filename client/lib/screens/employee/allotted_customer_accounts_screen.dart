@@ -322,7 +322,7 @@ class _AllottedCustomerAccountsScreenState
       for (final g in _groups)
         (pincode: g['pincode'].toString(), count: (g['accounts'] as List).length),
     ];
-    final result = await showModalBottomSheet<({List<String> pincodes, int capacity})>(
+    final result = await showModalBottomSheet<({List<String> pincodes, String start, String end})>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
@@ -330,13 +330,15 @@ class _AllottedCustomerAccountsScreenState
       builder: (_) => DailyPlanSheet(
         pincodes: pincodes,
         inPlan: inPlan,
-        initialCapacity: (_allocPlan?['daily_capacity'] as num?)?.toInt() ?? 100,
+        planStart: DateTime.tryParse('${_allocPlan?['start_date'] ?? ''}'),
+        planEnd: DateTime.tryParse('${_allocPlan?['end_date'] ?? ''}'),
+        pendingInPlan: (_allocPlan?['pending'] as num?)?.toInt() ?? 0,
       ),
     );
     if (result == null || !mounted) return;
 
     setState(() => _actionLoading = true);
-    final res = await ApiService.createAllocationPlan(result.pincodes, result.capacity);
+    final res = await ApiService.createAllocationPlan(result.pincodes, startDate: result.start, endDate: result.end);
     if (!mounted) return;
     setState(() => _actionLoading = false);
     final ok = res['success'] == true;
@@ -381,10 +383,21 @@ class _AllottedCustomerAccountsScreenState
     final day = (plan?['day'] as num?)?.toInt() ?? 0;
     final done = (plan?['done'] as num?)?.toInt() ?? 0;
     final pending = (plan?['pending'] as num?)?.toInt() ?? 0;
-    final cap = (plan?['daily_capacity'] as num?)?.toInt() ?? 0;
-    final daysLeft = (plan?['estimated_days_left'] as num?)?.toInt();
+    final perDay = (plan?['daily_capacity'] as num?)?.toInt() ?? 0;
+    final totalDays = (plan?['total_days'] as num?)?.toInt() ?? 0;
+    final daysLeft = (plan?['days_left'] as num?)?.toInt() ?? 0;
+    final overdue = plan?['overdue'] == true;
     final pinCount = ((plan?['selected_pincodes'] as List?) ?? []).length;
-    final left = daysLeft != null && pending > 0 ? ' · ~$daysLeft day(s) left' : '';
+    String fmtDate(dynamic v) {
+      final d = DateTime.tryParse('${v ?? ''}');
+      if (d == null) return '';
+      const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return '${d.day} ${m[d.month - 1]}';
+    }
+    final dayLabel = day == 0 ? 'Starts ${fmtDate(plan?['start_date'])}' : 'Day $day of $totalDays';
+    final left = overdue
+        ? ' · overdue'
+        : (pending > 0 && daysLeft > 0 ? ' · $daysLeft day(s) left' : '');
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -415,9 +428,10 @@ class _AllottedCustomerAccountsScreenState
           const SizedBox(height: 6),
           Text(
             hasPlan
-                ? '$pinCount pincode(s) · $cap/day · Day ${day == 0 ? 1 : day}\n$done done · $pending pending$left'
-                : 'Pick pincodes and how many customers you can call per day. '
-                    'They are ordered by location and a fresh list appears in Today Worklist each day.',
+                ? '${fmtDate(plan['start_date'])} – ${fmtDate(plan['end_date'])} · $pinCount pincode(s) · $dayLabel\n'
+                    '$done done · $pending pending · ~$perDay/day$left'
+                : 'Pick pincodes and a From–To date range. Customers are divided over those days, '
+                    'ordered by location, and a fresh list appears in Today Worklist each day.',
             style: const TextStyle(fontSize: 12, color: Colors.black87, height: 1.35),
           ),
           const SizedBox(height: 10),
@@ -426,7 +440,7 @@ class _AllottedCustomerAccountsScreenState
             child: ElevatedButton.icon(
               onPressed: _actionLoading || _groups.isEmpty ? null : _openDailyPlanSheet,
               icon: Icon(hasPlan ? Icons.edit_location_alt_rounded : Icons.playlist_add_check_rounded, size: 18),
-              label: Text(hasPlan ? 'Add Pincodes / Change Capacity' : 'Create Daily Plan'),
+              label: Text(hasPlan ? 'Add Pincodes / Change Dates' : 'Create Daily Plan'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _gold,
                 foregroundColor: Colors.white,
