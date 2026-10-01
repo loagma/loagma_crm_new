@@ -31,4 +31,16 @@ class CallLog extends Model
         'callback_done'  => 'boolean',
         'raw_payload'    => 'array',
     ];
+
+    // Every call-log writer (manual log, action log, Knowlarity create + its
+    // webhook resolving 'pending') flows through here, so today's allocation
+    // status stays in step no matter how the call was recorded.
+    protected static function booted(): void
+    {
+        static::saved(function (CallLog $log) {
+            if ($log->wasRecentlyCreated || $log->wasChanged('call_outcome')) {
+                app(\App\Services\TelecallerAllocationService::class)->recordCallOutcome($log);
+            }
+        });
+    }
 }

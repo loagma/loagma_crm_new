@@ -3,15 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\ProcessKnowlarityCallCompleted;
-use App\Models\Area;
-use App\Models\AreaAssign;
 use App\Models\BeatPlanFollowup;
 use App\Models\CallLog;
 use App\Models\DeliStaff;
 use App\Models\InchargeAssign;
 use App\Models\LeadsAccount;
+use App\Models\TcAllocationPlan;
 use App\Models\TelecallerLabel;
 use App\Services\KnowlarityService;
+use App\Support\TelecallerScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
 use Illuminate\Support\Carbon;
@@ -100,18 +100,7 @@ class TelecallerController extends Controller
     /** [areaIds[], pincodes[]] assigned to this telecaller. */
     private function myAreaScope(string $mobile): array
     {
-        $assign = AreaAssign::where('employee_id', (int) $mobile)->first();
-        $areaIds = $assign ? array_values(array_filter(array_map('intval', $assign->area_ids ?? []))) : [];
-
-        $pincodes = [];
-        if (!empty($areaIds)) {
-            foreach (Area::whereIn('id', $areaIds)->get() as $area) {
-                foreach ((array) ($area->pincodes ?? []) as $p) {
-                    $pincodes[] = (string) $p;
-                }
-            }
-        }
-        return [$areaIds, array_values(array_unique($pincodes))];
+        return TelecallerScope::areaScope($mobile);
     }
 
     /** Query of leads in this telecaller's areas (areaId OR pincode). */
@@ -229,7 +218,10 @@ class TelecallerController extends Controller
                     ['label' => 'Interested', 'value' => $interested],
                     ['label' => 'Customers', 'value' => $conversions],
                 ],
-                'daily_target' => 60,
+                // The active allocation plan's capacity (entered by the
+                // telecaller); 60 is the long-standing default without one.
+                'daily_target' => (int) (TcAllocationPlan::where('employee_mobile', $mobile)
+                    ->where('status', 'active')->value('daily_capacity') ?? 60),
             ],
         ]);
     }

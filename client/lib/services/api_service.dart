@@ -1384,6 +1384,56 @@ class ApiService {
     return false;
   }
 
+  // ── Daily allocation (geographic pincode plan + daily capacity) ────────────
+
+  static Future<Map<String, dynamic>?> _tcAllocationRequest(String method, String path, [Map<String, dynamic>? body]) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/allocation$path');
+    try {
+      final req = http.Request(method, url)..headers.addAll(_authHeaders);
+      if (body != null) req.body = jsonEncode(body);
+      final streamed = await req.send().timeout(const Duration(seconds: 60));
+      final response = await http.Response.fromStream(streamed);
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return {'success': true, 'data': decoded is Map ? decoded['data'] : null};
+      }
+      final msg = decoded is Map
+          ? (decoded['message'] ?? (decoded['errors'] is Map ? (decoded['errors'] as Map).values.first : null))
+          : null;
+      return {'success': false, 'message': '${msg is List ? msg.first : msg ?? 'Request failed (${response.statusCode})'}'};
+    } catch (e) {
+      print('telecaller allocation $method $path failed: $e');
+      return {'success': false, 'message': 'Network error'};
+    }
+  }
+
+  /// Active plan progress (null when the telecaller has no active plan).
+  static Future<Map<String, dynamic>?> getAllocationPlan() async {
+    final res = await _tcAllocationRequest('GET', '');
+    final data = res?['data'];
+    return data is Map ? Map<String, dynamic>.from(data) : null;
+  }
+
+  /// Create a plan, or merge the pincodes into the active one.
+  /// Returns {success, data|message}.
+  static Future<Map<String, dynamic>> createAllocationPlan(List<String> pincodes, int dailyCapacity) async =>
+      await _tcAllocationRequest('POST', '', {'pincodes': pincodes, 'daily_capacity': dailyCapacity}) ??
+      {'success': false, 'message': 'Request failed'};
+
+  static Future<bool> cancelAllocationPlan() async =>
+      (await _tcAllocationRequest('DELETE', ''))?['success'] == true;
+
+  /// Today's allocated customers: {total, daily_capacity, plan_status, customers: [...]}.
+  static Future<Map<String, dynamic>?> getAllocationToday() async {
+    final res = await _tcAllocationRequest('GET', '/today');
+    final data = res?['data'];
+    return data is Map ? Map<String, dynamic>.from(data) : null;
+  }
+
+  /// Manually mark today's item as in_progress / skipped / assigned (undo).
+  static Future<bool> updateAllocationItem(int itemId, String status) async =>
+      (await _tcAllocationRequest('PATCH', '/items/$itemId', {'status': status}))?['success'] == true;
+
   // ── Call scripts (per-telecaller CRUD) ─────────────────────────────────────
 
   static Future<List<Map<String, dynamic>>> getCallScripts() => _tcGetList('scripts');

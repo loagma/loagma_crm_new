@@ -23,6 +23,7 @@ use App\Http\Controllers\PincodeController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\SalesOrderController;
 use App\Http\Controllers\TelecallerController;
+use App\Http\Controllers\TelecallerAllocationController;
 use App\Http\Controllers\CallScriptController;
 use App\Http\Controllers\TrackingController;
 use App\Http\Controllers\TeamReportController;
@@ -109,6 +110,13 @@ Route::prefix('targets')->middleware('jwtauth')->group(function () {
         Route::get('/', [TargetController::class, 'index']);
         Route::post('/', [TargetController::class, 'store']);
     });
+});
+
+// Pincode coordinates used to order telecaller allocation plans. Derived
+// from customer/lead locations; admin can override a pincode by hand.
+Route::prefix('pincode-geo')->middleware(['jwtauth', 'role:admin,teleadmin'])->group(function () {
+    Route::get('/',           [TelecallerAllocationController::class, 'geoIndex']);
+    Route::put('/{pincode}',  [TelecallerAllocationController::class, 'geoUpdate']);
 });
 
 // ---------------------------------------------------------------------------
@@ -300,6 +308,16 @@ Route::prefix('telecaller')->group(function () {
     Route::get('/call-recording/{id}', [TelecallerController::class, 'callRecording']);
     Route::get('/worklist',     [TelecallerController::class, 'worklist']);
     Route::post('/label',       [TelecallerController::class, 'setLabel']);
+
+    // Geographic daily allocation (pincodes ordered by real proximity, filled
+    // up to the telecaller's daily capacity, carried forward day to day).
+    Route::middleware('jwtauth')->group(function () {
+        Route::get('/allocation',               [TelecallerAllocationController::class, 'show']);
+        Route::post('/allocation',              [TelecallerAllocationController::class, 'store']);
+        Route::delete('/allocation',            [TelecallerAllocationController::class, 'destroy']);
+        Route::get('/allocation/today',         [TelecallerAllocationController::class, 'today']);
+        Route::patch('/allocation/items/{id}',  [TelecallerAllocationController::class, 'updateItem']);
+    });
 
     Route::get('/scripts',         [CallScriptController::class, 'index']);
     Route::post('/scripts',        [CallScriptController::class, 'store']);
