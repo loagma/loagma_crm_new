@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_service.dart';
 import '../../services/user_service.dart';
 import '../../widgets/account_map_screen.dart';
+import '../shared/auto_distribute_dialog.dart';
 import 'customer_detail_screen.dart';
 
 // Flow:
@@ -13,6 +14,37 @@ import 'customer_detail_screen.dart';
 //  2. getLeadAccounts(areaIds: [...]) → all accounts whose areaId is in that list
 //  3. Group client-side by account['pincode']
 // No dependency on area_crm having pincodes populated.
+
+const _kDayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// Shared by _AllottedCustomerAccountsScreenState._globalDayBreak and
+// _PincodeSectionState._dayBreak — a 'weekly' plan contributes to every day
+// in its `days` list; a 'specific_dates' plan (what Auto-Distribute writes:
+// one date per account) contributes to whichever weekday each of its dates
+// falls on. Without this, accounts assigned via Auto-Distribute were
+// invisible in these Mon-Sun chips.
+void _tallyPlanIntoDayCounts(Map<String, dynamic> plan, Map<String, int> counts) {
+  switch (plan['frequency'] as String?) {
+    case 'weekly':
+      final days = plan['days'];
+      if (days is List) {
+        for (final d in days) {
+          final key = d.toString();
+          if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
+        }
+      }
+    case 'specific_dates':
+      final dates = plan['specific_dates'];
+      if (dates is List) {
+        for (final d in dates) {
+          final parsed = DateTime.tryParse(d.toString());
+          if (parsed == null) continue;
+          final key = _kDayOrder[parsed.weekday - 1]; // DateTime.weekday: 1=Mon..7=Sun
+          if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
+        }
+      }
+  }
+}
 
 class AllottedCustomerAccountsScreen extends StatefulWidget {
   const AllottedCustomerAccountsScreen({super.key});
@@ -299,15 +331,7 @@ class _AllottedCustomerAccountsScreenState
   Map<String, int> get _globalDayBreak {
     final counts = {for (final d in _dayOrder) d: 0};
     for (final plan in _beatPlans.values) {
-      if ((plan['frequency'] as String?) == 'weekly') {
-        final days = plan['days'];
-        if (days is List) {
-          for (final d in days) {
-            final key = d.toString();
-            if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
-          }
-        }
-      }
+      _tallyPlanIntoDayCounts(plan, counts);
     }
     return counts;
   }
@@ -588,6 +612,60 @@ class _AllottedCustomerAccountsScreenState
     }
   }
 
+  Future<void> _showAutoDistributeDialog() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AutoDistributeDialog(selectedCount: _selected.length),
+    );
+    if (result == null || !mounted) return;
+
+    final startDate = result['start_date'] as String;
+    final endDate   = result['end_date'] as String;
+
+    // Round-robin should follow the order the user actually picked
+    // customers in (so "select A, then B, then C" maps A/B/C onto
+    // day 1/2/3 in that order), not the pincode-grouped display order.
+    // _selected is a LinkedHashSet, so it already preserves that order —
+    // build an id-keyed lookup once and walk _selected instead of _groups.
+    final byKey = <String, Map<String, dynamic>>{};
+    for (final g in _groups) {
+      for (final a in (g['accounts'] as List<Map<String, dynamic>>)) {
+        byKey[_key(a)] = a;
+      }
+    }
+    final selected = _selected.map((k) => byKey[k]).whereType<Map<String, dynamic>>().toList();
+
+    final accountIds = selected.map((a) => a['id'] as String? ?? '').where((id) => id.isNotEmpty).toList();
+    final accountTypes = selected.map((a) => (a['_type'] as String?) == 'customer' ? 'customer' : 'lead').toList();
+
+    if (accountIds.isEmpty) return;
+
+    if (mounted) setState(() => _actionLoading = true);
+    final res = await ApiService.autoDistributeBeatPlan(
+      accountIds: accountIds,
+      accountTypes: accountTypes,
+      startDate: startDate,
+      endDate: endDate,
+    );
+    if (!mounted) return;
+
+    if (res != null && res['success'] == true) {
+      setState(() { _actionLoading = false; _selected.clear(); });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(res['message']?.toString() ?? 'Accounts auto-distributed'),
+        backgroundColor: const Color(0xFF43A047),
+      ));
+      _load();
+    } else {
+      setState(() => _actionLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Failed to auto-distribute. Try again.'),
+        backgroundColor: Colors.red,
+      ));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -815,9 +893,9 @@ class _AllottedCustomerAccountsScreenState
               selectedC:  selectedCustomers,
               expanded:  isOpen,
               onToggle:  () => setState(() => isOpen ? _expanded.remove(pin) : _expanded.add(pin)),
-              onSelectAll: () => _selectAllIn(accounts),
-              onClearAll:  () => _clearAllIn(accounts),
-              onSelectN:   () => _selectNIn(accounts),
+              onSelectAll: _selectAllIn,
+              onClearAll:  _clearAllIn,
+              onSelectN:   _selectNIn,
               filteredAccounts: filtered,
               selectedKeys: _selected,
               keyOf:        _key,
@@ -856,6 +934,18 @@ class _AllottedCustomerAccountsScreenState
           child: const Text('Unassign', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
         ),
         const SizedBox(width: 8),
+        OutlinedButton(
+          onPressed: (_selected.isEmpty || _actionLoading) ? null : _showAutoDistributeDialog,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: _gold,
+            side: const BorderSide(color: _gold),
+            disabledForegroundColor: _gold.withValues(alpha: 0.4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          ),
+          child: const Text('Auto-Distribute', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+        ),
+        const SizedBox(width: 8),
         ElevatedButton(
           onPressed: (_selected.isEmpty || _actionLoading) ? null : _showAssignDayDialog,
           style: ElevatedButton.styleFrom(
@@ -889,9 +979,9 @@ class _PincodeSection extends StatefulWidget {
   final int                          selectedC;
   final bool                         expanded;
   final VoidCallback                 onToggle;
-  final VoidCallback                 onSelectAll;
-  final VoidCallback                 onClearAll;
-  final VoidCallback                 onSelectN;
+  final void Function(List<Map<String, dynamic>>) onSelectAll;
+  final void Function(List<Map<String, dynamic>>) onClearAll;
+  final void Function(List<Map<String, dynamic>>) onSelectN;
   final List<Map<String, dynamic>>   filteredAccounts;
   final Set<String>                  selectedKeys;
   final String Function(Map<String, dynamic>) keyOf;
@@ -930,11 +1020,25 @@ class _PincodeSectionState extends State<_PincodeSection> {
 
   static const _dayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+  // Selection doesn't carry over between tabs — switching to a different
+  // picking tab (Existing/Assign/Unassigned) drops whatever was selected in
+  // this pincode first. 'Selected' is a review-only tab, so switching into
+  // it never clears — that would make it show nothing.
+  void _switchFilter(String next) {
+    if (next != 'selected') {
+      widget.onClearAll(widget.filteredAccounts);
+    }
+    setState(() {
+      _filter = next;
+      if (!widget.expanded) widget.onToggle();
+    });
+  }
+
   bool _hasPlan(Map<String, dynamic> a) =>
       widget.beatPlans.containsKey(a['id'] as String? ?? '');
 
-  // Per-pincode breakdown: weekly day counts + monthly/n_days totals
-  // for this pincode's assigned accounts.
+  // Per-pincode breakdown: weekly/specific-dates day counts + monthly/n_days
+  // totals for this pincode's assigned accounts.
   Map<String, int> get _dayBreak {
     final counts = {for (final d in _dayOrder) d: 0};
     var monthly = 0;
@@ -943,18 +1047,12 @@ class _PincodeSectionState extends State<_PincodeSection> {
       final plan = widget.beatPlans[a['id'] as String? ?? ''];
       if (plan == null) continue;
       switch (plan['frequency'] as String?) {
-        case 'weekly':
-          final days = plan['days'];
-          if (days is List) {
-            for (final d in days) {
-              final key = d.toString();
-              if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
-            }
-          }
         case 'monthly':
           monthly++;
         case 'n_days':
           nDays++;
+        default:
+          _tallyPlanIntoDayCounts(plan, counts);
       }
     }
     counts['Monthly'] = monthly;
@@ -1046,25 +1144,25 @@ class _PincodeSectionState extends State<_PincodeSection> {
                     Expanded(child: _FilterBtn(
                       label: 'Existing', countL: widget.existingL, countC: widget.existingC,
                       active: _filter == 'existing',
-                      onTap: () => setState(() { _filter = 'existing'; if (!expanded) widget.onToggle(); }),
+                      onTap: () => _switchFilter('existing'),
                     )),
                     const SizedBox(width: 5),
                     Expanded(child: _FilterBtn(
                       label: 'Assign', countL: widget.assignL, countC: widget.assignC,
                       active: _filter == 'assign',
-                      onTap: () => setState(() { _filter = 'assign'; if (!expanded) widget.onToggle(); }),
+                      onTap: () => _switchFilter('assign'),
                     )),
                     const SizedBox(width: 5),
                     Expanded(child: _FilterBtn(
                       label: 'Unassigned', countL: widget.remainingL, countC: widget.remainingC,
                       active: _filter == 'remaining',
-                      onTap: () => setState(() { _filter = 'remaining'; if (!expanded) widget.onToggle(); }),
+                      onTap: () => _switchFilter('remaining'),
                     )),
                     const SizedBox(width: 5),
                     Expanded(child: _FilterBtn(
                       label: 'Selected', countL: widget.selectedL, countC: widget.selectedC,
                       active: _filter == 'selected',
-                      onTap: () => setState(() { _filter = 'selected'; if (!expanded) widget.onToggle(); }),
+                      onTap: () => _switchFilter('selected'),
                     )),
                   ],
                 ),
@@ -1111,11 +1209,11 @@ class _PincodeSectionState extends State<_PincodeSection> {
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                 child: Row(
                   children: [
-                    _SelectBtn(icon: Icons.check_box_rounded,              label: 'Select All',  onTap: widget.onSelectAll),
+                    _SelectBtn(icon: Icons.check_box_rounded,              label: 'Select All',  onTap: () => widget.onSelectAll(visibleAccounts)),
                     const SizedBox(width: 8),
-                    _SelectBtn(icon: Icons.check_box_outline_blank_rounded, label: 'Unselect All', onTap: widget.onClearAll),
+                    _SelectBtn(icon: Icons.check_box_outline_blank_rounded, label: 'Unselect All', onTap: () => widget.onClearAll(visibleAccounts)),
                     const SizedBox(width: 8),
-                    _SelectBtn(icon: Icons.format_list_numbered_rounded,   label: 'Select N',    onTap: widget.onSelectN),
+                    _SelectBtn(icon: Icons.format_list_numbered_rounded,   label: 'Select N',    onTap: () => widget.onSelectN(visibleAccounts)),
                   ],
                 ),
               ),

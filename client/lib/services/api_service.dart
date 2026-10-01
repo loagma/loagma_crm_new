@@ -2278,6 +2278,34 @@ class ApiService {
     return null;
   }
 
+  static Future<Map<String, dynamic>?> autoDistributeBeatPlan({
+    required List<String> accountIds,
+    required List<String> accountTypes,  // 'lead' or 'customer' for each account
+    required String startDate,           // YYYY-MM-DD
+    required String endDate,             // YYYY-MM-DD
+    String? salesmanId,                  // override — e.g. telecaller's own mobile
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/auto-distribute');
+    try {
+      final body = <String, dynamic>{
+        'account_ids':   accountIds,
+        'account_types': accountTypes,
+        'start_date':    startDate,
+        'end_date':      endDate,
+        'salesman_id':   ?salesmanId,
+      };
+      final res = await http.post(url, headers: _authHeaders, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 30));
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+      print('autoDistributeBeatPlan status ${res.statusCode}: ${res.body}');
+    } catch (e) {
+      print('autoDistributeBeatPlan error: $e');
+    }
+    return null;
+  }
+
   static Future<Map<String, dynamic>> getTodayBeatPlan() async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/today');
     try {

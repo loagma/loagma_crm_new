@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../widgets/account_map_screen.dart';
+import '../shared/auto_distribute_dialog.dart';
 import 'telecaller_mock_data.dart';
 
 /// Worklist — Customers-style list (mockup): search, filter chips, and rich
@@ -34,6 +35,12 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
   String _filter = 'all';
   String _search = '';
   final _searchCtrl = TextEditingController();
+
+  // Auto-distribute select mode — mirrors the salesman Allotted Customer
+  // Accounts screen's checkbox multi-select pattern.
+  bool _selectMode = false;
+  final Set<String> _selected = {};
+  bool _distributing = false;
 
   // (key, label) — status chips mirror the single per-card status
   // (productive > called > follow-up due > pending), so tapping a chip
@@ -373,6 +380,14 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
           ],
         ),
         actions: [
+          IconButton(
+            icon: Icon(_selectMode ? Icons.close_rounded : Icons.checklist_rounded),
+            tooltip: _selectMode ? 'Cancel selection' : 'Select accounts',
+            onPressed: () => setState(() {
+              _selectMode = !_selectMode;
+              if (!_selectMode) _selected.clear();
+            }),
+          ),
           IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load),
         ],
       ),
@@ -403,7 +418,88 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
                 ),
               ],
             ),
+      bottomNavigationBar: _selectMode ? _buildSelectionBar() : null,
     );
+  }
+
+  Widget _buildSelectionBar() => Container(
+    padding: EdgeInsets.fromLTRB(16, 10, 16, 16 + MediaQuery.of(context).padding.bottom),
+    decoration: const BoxDecoration(
+      color: Colors.white,
+      boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, -2))],
+    ),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text('${_selected.length} selected',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+        ElevatedButton(
+          onPressed: (_selected.isEmpty || _distributing) ? null : _showAutoDistributeDialog,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: kGold,
+            foregroundColor: Colors.white,
+            disabledBackgroundColor: kGold.withValues(alpha: 0.4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          ),
+          child: _distributing
+              ? const SizedBox(width: 12, height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.white))
+              : const Text('Auto-Distribute', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+      ],
+    ),
+  );
+
+  Future<void> _showAutoDistributeDialog() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AutoDistributeDialog(selectedCount: _selected.length),
+    );
+    if (result == null || !mounted) return;
+
+    final startDate = result['start_date'] as String;
+    final endDate   = result['end_date'] as String;
+
+    // Round-robin should follow the order the user actually selected
+    // accounts in, not their position in the (sorted/filtered) _items list —
+    // _selected is a LinkedHashSet so it already preserves that order.
+    final byId = {for (final w in _items) '${w['account_id']}': w};
+    final selected = _selected.map((id) => byId[id]).whereType<Map<String, dynamic>>().toList();
+    final accountIds = selected.map((w) => '${w['account_id'] ?? ''}').where((id) => id.isNotEmpty).toList();
+    final accountTypes = selected.map((w) => (w['account_type'] as String?) == 'customer' ? 'customer' : 'lead').toList();
+
+    if (accountIds.isEmpty) return;
+
+    setState(() => _distributing = true);
+    final res = await ApiService.autoDistributeBeatPlan(
+      accountIds: accountIds,
+      accountTypes: accountTypes,
+      startDate: startDate,
+      endDate: endDate,
+    );
+    if (!mounted) return;
+
+    if (res != null && res['success'] == true) {
+      setState(() {
+        _distributing = false;
+        _selected.clear();
+        _selectMode = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(res['message']?.toString() ?? 'Accounts auto-distributed'),
+        backgroundColor: const Color(0xFF43A047),
+      ));
+      _load();
+    } else {
+      setState(() => _distributing = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Failed to auto-distribute. Try again.'),
+        backgroundColor: Colors.red,
+      ));
+    }
   }
 
   // ── Search ──────────────────────────────────────────────────────────────────
@@ -555,12 +651,13 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
 
     // Matches employee/todays_beat_plan_screen.dart's card treatment: a
     // tinted background + full colored border keyed to the status colour.
+    final isSelected = _selected.contains(accountId);
     return Container(
       margin: const EdgeInsets.only(bottom: 11),
       decoration: BoxDecoration(
         color: ss.cardBg,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ss.cardBorder),
+        border: Border.all(color: isSelected ? kGold : ss.cardBorder, width: isSelected ? 2 : 1),
         boxShadow: const [
           BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2)),
         ],
@@ -568,12 +665,44 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
       // The card body itself is inert — only the explicit Proceed button
       // (and the other action buttons) navigate. It used to also open the
       // profile on any tap, which was easy to trigger by accident reading
-      // the card and made Proceed feel redundant.
-      child: Padding(
+      // the card and made Proceed feel redundant. In select mode, a tap
+      // toggles selection instead since Proceed/checkbox both do that job.
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: _selectMode && accountId.isNotEmpty
+            ? () => setState(() {
+                if (isSelected) {
+                  _selected.remove(accountId);
+                } else {
+                  _selected.add(accountId);
+                }
+              })
+            : null,
+        child: Padding(
         padding: const EdgeInsets.fromLTRB(13, 13, 13, 11),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (_selectMode)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Checkbox(
+                      value: isSelected,
+                      activeColor: kGold,
+                      onChanged: accountId.isEmpty ? null : (v) => setState(() {
+                        if (v == true) {
+                          _selected.add(accountId);
+                        } else {
+                          _selected.remove(accountId);
+                        }
+                      }),
+                    ),
+                    const Text('Select', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  ],
+                ),
+              ),
             // Top tag row — account code + account type/schedule/called
             // status, same slot layout as Beat Plan's card (code on the
             // left, tags wrapping on the right).
@@ -849,6 +978,7 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
               ],
             ),
           ],
+        ),
         ),
       ),
     );
