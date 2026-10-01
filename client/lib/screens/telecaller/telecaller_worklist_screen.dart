@@ -32,6 +32,11 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
   Set<String> _followUpIds = {};
   // account_id's that the telecaller has called in this session.
   final Set<String> _calledToday = {};
+  // Daily allocation plan: account_id → position in today's geographic list
+  // (GET /telecaller/allocation/today). Empty when there's no plan.
+  Map<String, int> _allocOrder = {};
+  // Today's allocation total, or null when the telecaller has no plan today.
+  int? _allocTotal;
   String _filter = 'all';
   String _search = '';
   final _searchCtrl = TextEditingController();
@@ -84,18 +89,74 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     final worklistF = ApiService.getTelecallerWorklist();
     final todayF = ApiService.getTodayBeatPlan();
     final callbacksF = ApiService.getTelecallerCallbacks();
+    final allocF = ApiService.getAllocationToday();
     final items = await worklistF;
     final todayRes = await todayF;
     final callbacks = await callbacksF;
+    final alloc = await allocF;
     if (!mounted) return;
 
     final merged = _mergeWorklist(items, todayRes, callbacks);
+    final allocated = _mergeAllocation(merged.items, alloc);
     setState(() {
-      _items = merged.items;
+      _items = allocated.items;
       _todayIds = merged.todayIds;
       _followUpIds = merged.followUpIds;
+      _allocOrder = allocated.order;
+      // Banner only while a plan is running or still has today's list —
+      // a finished/cancelled plan with nothing today shows nothing.
+      final allocTotal = (alloc?['total'] as num?)?.toInt() ?? 0;
+      _allocTotal = alloc?['plan_status'] == 'active' || allocTotal > 0 ? allocTotal : null;
       if (showSpinner) _loading = false;
     });
+  }
+
+  // Overlays today's allocation (geographic daily plan) onto the merged list:
+  // each allocated account gets its item_id/allocation_status, and accounts
+  // the worklist query doesn't carry (e.g. directly assigned customers outside
+  // the area pincodes) are added from the allocation's own display fields.
+  ({List<Map<String, dynamic>> items, Map<String, int> order}) _mergeAllocation(
+    List<Map<String, dynamic>> items,
+    Map<String, dynamic>? alloc,
+  ) {
+    final customers = (alloc?['customers'] as List?) ?? const [];
+    if (customers.isEmpty) return (items: items, order: <String, int>{});
+
+    final byId = {for (final w in items) '${w['account_id']}': w};
+    final order = <String, int>{};
+    for (final raw in customers) {
+      if (raw is! Map) continue;
+      final c = Map<String, dynamic>.from(raw);
+      final id = '${c['account_id']}';
+      order[id] = order.length;
+      final overlay = {'item_id': c['item_id'], 'allocation_status': c['allocation_status']};
+      final existing = byId[id];
+      byId[id] = existing != null
+          ? {...existing, ...overlay}
+          : {
+              ...c,
+              'label': kLabelNotCalled,
+              'last_contact': null,
+              'next_follow_up': null,
+              'addresses': const [],
+            };
+    }
+    return (items: byId.values.toList(), order: order);
+  }
+
+  Future<void> _setAllocStatus(Map<String, dynamic> w, String status) async {
+    final itemId = (w['item_id'] as num?)?.toInt();
+    if (itemId == null) return;
+    final ok = await ApiService.updateAllocationItem(itemId, status);
+    if (!mounted) return;
+    if (ok) {
+      setState(() => w['allocation_status'] = status);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Could not update. Try again.'),
+        backgroundColor: Colors.red,
+      ));
+    }
   }
 
   // Combines three sources into one list, keyed by account_id so a single
@@ -262,10 +323,11 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     return kLabelNotCalled;
   }
 
-  // Today = in beat plan for today OR has a follow-up due/overdue today.
+  // Today = in beat plan for today, in today's daily allocation, OR has a
+  // follow-up due/overdue today.
   bool _isToday(Map<String, dynamic> w) {
     final id = '${w['account_id']}';
-    return _todayIds.contains(id) || _followUpIds.contains(id);
+    return _todayIds.contains(id) || _allocOrder.containsKey(id) || _followUpIds.contains(id);
   }
 
   // ── Filtering ───────────────────────────────────────────────────────────────
@@ -311,15 +373,21 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
         .where(_matchesFilter)
         .where(_matchesSearch)
         .toList();
-    // Sort order: follow-up due (0) → beat-plan only (1) → called-today (2).
+    // Sort order: follow-up due (0) → daily allocation (1, in its geographic
+    // order) → beat-plan only (2) → called-today (3).
     int rank(Map<String, dynamic> w) {
       final id = '${w['account_id']}';
-      if (_calledToday.contains(id)) return 2;
+      if (_calledToday.contains(id)) return 3;
       if (_followUpIds.contains(id)) return 0;
-      return 1;
+      if (_allocOrder.containsKey(id)) return 1;
+      return 2;
     }
 
-    list.sort((a, b) => rank(a) - rank(b));
+    int allocPos(Map<String, dynamic> w) => _allocOrder['${w['account_id']}'] ?? 0;
+    list.sort((a, b) {
+      final r = rank(a) - rank(b);
+      return r != 0 ? r : allocPos(a) - allocPos(b);
+    });
     return list;
   }
 
@@ -396,6 +464,7 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
           : Column(
               children: [
                 _searchBar(),
+                if (_allocTotal != null) _allocBanner(),
                 _chips(),
                 Expanded(
                   child: visible.isEmpty
@@ -500,6 +569,39 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
         backgroundColor: Colors.red,
       ));
     }
+  }
+
+  // ── Daily allocation banner ─────────────────────────────────────────────────
+  Widget _allocBanner() {
+    final allocated = _items.where((w) => _allocOrder.containsKey('${w['account_id']}'));
+    final open = allocated
+        .where((w) => const ['assigned', 'in_progress'].contains(w['allocation_status']))
+        .length;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: kGold.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kGold.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.route_rounded, size: 18, color: kGold),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "Today's Customers: $_allocTotal",
+              style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+            ),
+          ),
+          Text(
+            '${(_allocTotal ?? 0) - open} done · $open left',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF5A6472)),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── Search ──────────────────────────────────────────────────────────────────
@@ -648,6 +750,8 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
     // Present only for an account on today's beat plan (merged in by
     // _mergeWorklist) — a worklist-only account has no schedule to show.
     final freq = w['frequency'] as String?;
+    // Present only for an account in today's daily allocation.
+    final allocStatus = w['allocation_status'] as String?;
 
     // Matches employee/todays_beat_plan_screen.dart's card treatment: a
     // tinted background + full colored border keyed to the status colour.
@@ -737,6 +841,7 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
                           bg: const Color(0xFFF3F3F3),
                           fg: const Color(0xFF5B5B5B),
                         ),
+                      if (allocStatus != null) ..._allocTags(w, allocStatus),
                       _tag(
                         (isProductive || wasCalled) ? '✓ ${ss.text}' : ss.text,
                         bg: ss.chipBg,
@@ -1014,6 +1119,35 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
         return n == null ? 'RECURRING' : 'EVERY $n DAYS';
       default:
         return freq.toUpperCase();
+    }
+  }
+
+  // "Plan #n" tag plus a Skip / Undo toggle for open allocation items; a
+  // finished item just shows its outcome. Completion itself comes from the
+  // call log, so there's no manual "done" here.
+  List<Widget> _allocTags(Map<String, dynamic> w, String status) {
+    final pos = (_allocOrder['${w['account_id']}'] ?? 0) + 1;
+    final planTag = _tag('PLAN #$pos', bg: kGold.withValues(alpha: 0.18), fg: const Color(0xFF8A6D1F));
+    switch (status) {
+      case 'assigned':
+      case 'in_progress':
+        return [
+          planTag,
+          GestureDetector(
+            onTap: () => _setAllocStatus(w, 'skipped'),
+            child: _tag('SKIP', bg: const Color(0xFFF3F3F3), fg: const Color(0xFF5B5B5B)),
+          ),
+        ];
+      case 'skipped':
+        return [
+          planTag,
+          GestureDetector(
+            onTap: () => _setAllocStatus(w, 'assigned'),
+            child: _tag('SKIPPED · UNDO', bg: const Color(0xFFF3F3F3), fg: const Color(0xFF9E9E9E)),
+          ),
+        ];
+      default: // completed, callback
+        return [planTag];
     }
   }
 

@@ -7,6 +7,7 @@ import '../../services/api_service.dart';
 import '../../services/user_service.dart';
 import '../../widgets/account_map_screen.dart';
 import '../shared/auto_distribute_dialog.dart';
+import '../telecaller/daily_plan_sheet.dart';
 import 'customer_detail_screen.dart';
 
 // Flow:
@@ -84,6 +85,11 @@ class _AllottedCustomerAccountsScreenState
   final Set<String> _expanded = {};
   final Set<String> _selected = {}; // selected accountCode values
 
+  // Telecaller daily allocation plan (GET /telecaller/allocation) — null when
+  // there's no active plan. Only loaded for telecallers.
+  Map<String, dynamic>? _allocPlan;
+  bool get _isTelecaller => UserService.currentRole == 'telecaller';
+
   // ── Load ─────────────────────────────────────────────────────────────────────
 
   @override
@@ -130,6 +136,7 @@ class _AllottedCustomerAccountsScreenState
 
   Future<void> _load() async {
     setState(() { _loading = true; _error = ''; _selected.clear(); });
+    if (_isTelecaller) _loadAllocPlan();
 
     final mobile = UserService.currentMobile ?? '';
     if (mobile.isEmpty) {
@@ -300,6 +307,136 @@ class _AllottedCustomerAccountsScreenState
       debugPrint('AllottedCustomerAccountsScreen._load failed: $e\n$st');
       if (mounted) setState(() { _loading = false; _error = 'Failed to load data. Tap refresh to retry.'; });
     }
+  }
+
+  // ── Daily allocation plan (telecaller) ───────────────────────────────────────
+
+  Future<void> _loadAllocPlan() async {
+    final plan = await ApiService.getAllocationPlan();
+    if (mounted) setState(() => _allocPlan = plan);
+  }
+
+  Future<void> _openDailyPlanSheet() async {
+    final inPlan = ((_allocPlan?['selected_pincodes'] as List?) ?? []).map((e) => e.toString()).toSet();
+    final pincodes = [
+      for (final g in _groups)
+        (pincode: g['pincode'].toString(), count: (g['accounts'] as List).length),
+    ];
+    final result = await showModalBottomSheet<({List<String> pincodes, int capacity})>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+      builder: (_) => DailyPlanSheet(
+        pincodes: pincodes,
+        inPlan: inPlan,
+        initialCapacity: (_allocPlan?['daily_capacity'] as num?)?.toInt() ?? 100,
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    setState(() => _actionLoading = true);
+    final res = await ApiService.createAllocationPlan(result.pincodes, result.capacity);
+    if (!mounted) return;
+    setState(() => _actionLoading = false);
+    final ok = res['success'] == true;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? (inPlan.isEmpty ? 'Daily plan created — see Today Worklist' : 'Daily plan updated')
+          : '${res['message'] ?? 'Failed to save plan'}'),
+      backgroundColor: ok ? Colors.green : Colors.red,
+    ));
+    final data = res['data'];
+    if (ok && data is Map) setState(() => _allocPlan = Map<String, dynamic>.from(data));
+  }
+
+  Future<void> _cancelDailyPlan() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel daily plan?'),
+        content: const Text('Pending customers will no longer be allocated. Calls already made are kept.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Cancel plan', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    final ok = await ApiService.cancelAllocationPlan();
+    if (!mounted) return;
+    if (ok) setState(() => _allocPlan = null);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok ? 'Daily plan cancelled' : 'Failed to cancel plan'),
+      backgroundColor: ok ? Colors.orange : Colors.red,
+    ));
+  }
+
+  Widget _buildDailyPlanCard() {
+    final plan = _allocPlan;
+    final hasPlan = plan != null;
+    final day = (plan?['day'] as num?)?.toInt() ?? 0;
+    final done = (plan?['done'] as num?)?.toInt() ?? 0;
+    final pending = (plan?['pending'] as num?)?.toInt() ?? 0;
+    final cap = (plan?['daily_capacity'] as num?)?.toInt() ?? 0;
+    final daysLeft = (plan?['estimated_days_left'] as num?)?.toInt();
+    final pinCount = ((plan?['selected_pincodes'] as List?) ?? []).length;
+    final left = daysLeft != null && pending > 0 ? ' · ~$daysLeft day(s) left' : '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _gold.withValues(alpha: 0.6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.route_rounded, size: 18, color: _gold),
+            const SizedBox(width: 6),
+            const Expanded(
+              child: Text('Daily Calling Plan', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+            ),
+            if (hasPlan)
+              InkWell(
+                onTap: _cancelDailyPlan,
+                child: const Padding(
+                  padding: EdgeInsets.all(4),
+                  child: Text('Cancel', style: TextStyle(fontSize: 12, color: Colors.red)),
+                ),
+              ),
+          ]),
+          const SizedBox(height: 6),
+          Text(
+            hasPlan
+                ? '$pinCount pincode(s) · $cap/day · Day ${day == 0 ? 1 : day}\n$done done · $pending pending$left'
+                : 'Pick pincodes and how many customers you can call per day. '
+                    'They are ordered by location and a fresh list appears in Today Worklist each day.',
+            style: const TextStyle(fontSize: 12, color: Colors.black87, height: 1.35),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _actionLoading || _groups.isEmpty ? null : _openDailyPlanSheet,
+              icon: Icon(hasPlan ? Icons.edit_location_alt_rounded : Icons.playlist_add_check_rounded, size: 18),
+              label: Text(hasPlan ? 'Add Pincodes / Change Capacity' : 'Create Daily Plan'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _gold,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -782,6 +919,8 @@ class _AllottedCustomerAccountsScreenState
           ),
           const SizedBox(height: 8),
         ],
+
+        if (_isTelecaller) _buildDailyPlanCard(),
 
         // Search bar
         TextField(
