@@ -53,6 +53,19 @@ Salesman `deli_id` = 478..513 (this, not the mobile, is what `orders.salesman_id
   `SalesOrderController::store` (state `pending`, `cod`, `not_paid`, `admin_id` 108, `salesman_id` = deli_id, 2-5 items from
   271 products that have real pack prices). `action_log_crm.order_no` = the real `orders.order_id`.
 
+### 4. Salesman 1-36 attendance + GPS route (Sep 27)
+Added so the attendance-based Team Report / My Report stop showing every seeded salesman as "Absent" with 0 km.
+- `attendance_crm`: 180 rows (ids 330361..330540), one per salesman per visit day (Sep 21-25). Punch-in 08:50-09:12 and
+  always before the first visit (`early_in` if before the 09:00 shift start, else `on_time`); punch-out 18:00-18:25 (no early-outs,
+  nothing pending approval). No punch photos. `total_distance_km` computed from the pings with `RouteDistance::stats`;
+  `route_snapped` left NULL (the app fills it on first route view).
+- `location_pings_crm`: 45,214 rows (ids 211215..257214), **all `is_mock = 1`**. Day base 1.5-3 km from the first shop ->
+  each visit in order (travel pings every 60-90 s, dwell pings every 3-4 min at the shop) -> back to base until punch-out.
+  Avg ~25 km/day (4-89).
+- Legs over 40 km between consecutive seeded visits (7 legs; Salesman 5 has one area in Jabalpur and one in Hyderabad, Salesman 2
+  has far-off customer coordinates) got **no pings**, i.e. a tracking gap: excluded from distance, day marked `was_interrupted = 1` (8 days).
+- These pings are never pruned: retention pruning only runs on the employee's own first ping of the day.
+
 ## How to find / remove the seeded rows
 
 Run a `SELECT COUNT(*)` first; these are one-way deletes.
@@ -65,6 +78,8 @@ Run a `SELECT COUNT(*)` first; these are one-way deletes.
 | `orders` | `salesman_id BETWEEN '478' AND '513' AND txn_id LIKE 'CRM-%'` (also delete matching `orders_item`, `master_orders` by `order_id`) |
 | `beat_plan_crm` (salesman) | `salesman_id BETWEEN '9000000033' AND '9000000068'` |
 | `area_assign_crm` (salesman) | `employee_id BETWEEN 9000000033 AND 9000000068` |
+| `attendance_crm` (salesman) | `employee_mobile BETWEEN '9000000033' AND '9000000068' AND date BETWEEN '2026-09-21' AND '2026-09-25'` (ids 330361..330540) |
+| `location_pings_crm` (salesman) | `employee_mobile BETWEEN '9000000033' AND '9000000068' AND is_mock = 1` (ids 211215..257214) |
 | `incharge_assign_crm` | rows with `head_incharge_id` 9000000021..32 (new); zonal rows 9000000003..08 had Area Incharge ids appended to `incharge_ids/incharge_names` |
 
 Caveat: a real order for a seeded salesman placed later would match the `orders` filter only if its `txn_id` starts with `CRM-`
@@ -76,6 +91,10 @@ Caveat: a real order for a seeded salesman placed later would match the `orders`
 - All seeded orders are `pending` / `not_paid`, even the oldest; no bill/invoice numbers; no visit photos.
 - Some order baskets contain odd catalogue items (e.g. a test product named "eextra").
 - Telecaller "orders" are order-number strings only (see above); salesman orders are real.
+- Seeded visits are only Sep 21-25, so the reports' default "Today"/"Yesterday" filters show beat-plan customers with all zeros
+  from Sep 26 on; use "This Month" or Custom 21-25 Sep.
+- About 130 consecutive-visit legs are 10-40 km apart with only 8-25 min between them (faster than road travel); route pings follow them.
+- Punch-out is ~3.5 h after the last visit (visits end by ~14:30); the afternoon is stationary pings at base.
 
 ## Related code changes made in the same session (already committed)
 - `notification_service.dart`: skip init on web (fixed the deployed white screen).
