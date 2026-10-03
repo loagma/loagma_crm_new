@@ -157,7 +157,10 @@ class ProductController extends Controller
     {
         try {
             $staff = JWTAuth::parseToken()->authenticate();
-            return $staff?->admin_id !== null ? (int) $staff->admin_id : null;
+            // Prod deli_staff.admin_id defaults to 0 (not NULL) — 0 means "no
+            // vendor", not vendor #0, or every catalog search comes back empty.
+            $adminId = $staff?->admin_id !== null ? (int) $staff->admin_id : 0;
+            return $adminId > 0 ? $adminId : null;
         } catch (\Throwable $e) {
             return null;
         }

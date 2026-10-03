@@ -73,6 +73,12 @@ class TelecallerReportController extends Controller
         $tz    = config('app.timezone');
         $today = Carbon::today($tz)->toDateString();
 
+        request()->validate([
+            'from' => 'nullable|date_format:Y-m-d',
+            'to'   => 'nullable|date_format:Y-m-d',
+            'date' => 'nullable|date_format:Y-m-d',
+        ]);
+
         $fromYmd = request()->query('from') ?? request()->query('date') ?? $today;
         $toYmd   = request()->query('to')   ?? $fromYmd;
         if ($toYmd < $fromYmd) {
@@ -302,7 +308,8 @@ class TelecallerReportController extends Controller
             // of trusting a possibly-absent stored value.
             $duration = $v->duration_seconds;
             if ($v->check_in_at && $v->check_out_at) {
-                $duration = $v->check_in_at->diffInSeconds($v->check_out_at);
+                // Carbon 3 returns a signed float — keep the JSON an int.
+                $duration = (int) abs($v->check_in_at->diffInSeconds($v->check_out_at));
             }
 
             return [

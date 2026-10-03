@@ -60,7 +60,7 @@ class ActionLog extends Model
         'follow_up_date'   => 'date:Y-m-d',
         'is_invalid_call'  => 'boolean',
         'images'           => 'array',
-        'payment_collected' => 'decimal:2',
+        'payment_collected' => 'float', // decimal:2 serialised as a string and crashed the app's `as num`
     ];
 
     public function callLog(): BelongsTo

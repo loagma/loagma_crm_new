@@ -53,6 +53,7 @@ class _VerifyLeadAccountsScreenState extends State<VerifyLeadAccountsScreen> {
       }
 
       if (areaIds.isEmpty) {
+        if (!mounted) return;
         setState(() { _loading = false; _groups = []; });
         return;
       }

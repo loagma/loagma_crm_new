@@ -25,7 +25,8 @@ class HealthController extends Controller
 
         $payload = [
             'status' => $dbStatus === 'ok' ? 'ok' : 'degraded',
-            'database' => $dbStatus === 'ok' ? ['status' => 'ok'] : ['status' => 'error', 'error' => $dbDetails],
+            // Error detail stays in the log — never in a public response.
+            'database' => ['status' => $dbStatus],
             'timestamp' => now()->toIso8601String(),
         ];
 

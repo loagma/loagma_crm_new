@@ -250,7 +250,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       initial: item,
       itemNumber: index + 1,
     );
-    if (result == null || _order == null) return;
+    if (result == null || _order == null || !mounted) return;
     setState(() {
       (_order!['items'] as List)[index] = {
         ...item,
@@ -289,7 +289,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ],
       ),
     );
-    if (confirmed != true || _order == null) return;
+    if (confirmed != true || _order == null || !mounted) return;
     setState(() {
       (_order!['items'] as List).removeAt(index);
       _recalcTotals();

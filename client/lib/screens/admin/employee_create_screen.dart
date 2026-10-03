@@ -155,6 +155,7 @@ class _EmployeeCreateScreenState extends State<EmployeeCreateScreen> {
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
       );
+      if (!mounted) return;
       setState(() {
         _latCtrl.text = pos.latitude.toStringAsFixed(6);
         _lngCtrl.text = pos.longitude.toStringAsFixed(6);
@@ -162,7 +163,7 @@ class _EmployeeCreateScreenState extends State<EmployeeCreateScreen> {
     } catch (e) {
       _showSnack('Could not get location.');
     } finally {
-      setState(() => _isLocating = false);
+      if (mounted) setState(() => _isLocating = false);
     }
   }
 

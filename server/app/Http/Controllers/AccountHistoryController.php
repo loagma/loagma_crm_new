@@ -258,6 +258,10 @@ class AccountHistoryController extends Controller
             }
         }
         try {
+            if (is_numeric($startTime) && (int) $startTime > 0) {
+                // orders.start_time is a unix epoch (seconds).
+                return Carbon::createFromTimestamp((int) $startTime, config('app.timezone'));
+            }
             return $startTime ? Carbon::parse($startTime) : null;
         } catch (\Throwable $e) {
             return null;

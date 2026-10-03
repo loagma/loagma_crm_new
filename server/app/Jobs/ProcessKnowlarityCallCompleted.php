@@ -73,15 +73,22 @@ class ProcessKnowlarityCallCompleted implements ShouldQueue
             if (!$log->knowlarity_call_id && $callId) {
                 $log->knowlarity_call_id = $callId;
             }
+            // This runs again and again for the same call (every call-status
+            // poll + the hourly reconcile). Only resolve a still-pending row —
+            // once the telecaller has saved their own outcome (callback,
+            // complaint, …) at check-out, the provider's coarse status must not
+            // overwrite it. Duration/recording/payload always refresh.
             $log->fill([
-                'call_outcome'     => $outcome,
                 'duration_seconds' => $duration,
-                'recording_url'    => $recordingUrl,
+                'recording_url'    => $recordingUrl ?? $log->recording_url,
                 'raw_payload'      => $payload,
             ]);
-            if ($outcome === 'no_answer' || $outcome === 'busy') {
-                $log->follow_up_date = now()->addHours(2);
-                $log->callback_done  = false;
+            if ($log->call_outcome === null || $log->call_outcome === 'pending') {
+                $log->call_outcome = $outcome;
+                if ($outcome === 'no_answer' || $outcome === 'busy') {
+                    $log->follow_up_date = now()->addHours(2);
+                    $log->callback_done  = false;
+                }
             }
             $log->save();
 
@@ -100,7 +107,10 @@ class ProcessKnowlarityCallCompleted implements ShouldQueue
             'account_id'         => $accountId,
             'account_type'       => $accountType,
             'call_outcome'       => $outcome,
-            'called_at'          => isset($payload['start_time']) ? now()->parse($payload['start_time']) : now(),
+            // Stored as naive app-timezone wall-clock like every other called_at.
+            'called_at'          => isset($payload['start_time'])
+                ? \Illuminate\Support\Carbon::parse($payload['start_time'])->setTimezone(config('app.timezone'))
+                : now(),
             'duration_seconds'   => $duration,
             'recording_url'      => $recordingUrl,
             'raw_payload'        => $payload,
@@ -142,7 +152,9 @@ class ProcessKnowlarityCallCompleted implements ShouldQueue
             'busy'                  => 'busy',
             'missed', 'no-answer', 'no_answer' => 'no_answer',
             'failed', 'switch-off', 'switch_off' => 'switch_off',
-            default => $status,
+            // call_outcome is an ENUM — an unknown provider status must not
+            // reach the column (strict mode rejects it and the row is lost).
+            default => $status === null ? 'pending' : 'invalid',
         };
     }
 
@@ -154,8 +166,7 @@ class ProcessKnowlarityCallCompleted implements ShouldQueue
         }
 
         // Incoming numbers are full E.164 (+91XXXXXXXXXX); stored numbers are bare 10-digit.
-        $bare = ltrim(preg_replace('/\D/', '', $callerNumber), '91');
-        $bare = strlen($bare) > 10 ? substr($bare, -10) : $bare;
+        $bare = static::lastTenDigits($callerNumber);
 
         $lead = LeadsAccount::where('contactNumber', $bare)->first(['id']);
         if ($lead) {
@@ -176,9 +187,19 @@ class ProcessKnowlarityCallCompleted implements ShouldQueue
             return null;
         }
 
-        $bare = ltrim(preg_replace('/\D/', '', $agentNumber), '91');
-        $bare = strlen($bare) > 10 ? substr($bare, -10) : $bare;
+        $bare = static::lastTenDigits($agentNumber);
 
         return DeliStaff::where('mobile', $bare)->value('mobile');
+    }
+
+    /**
+     * "+91 98765 43210" / "919876543210" / "09876543210" -> "9876543210".
+     * (The old ltrim($digits, '91') stripped EVERY leading 9 and 1, so any
+     * mobile starting with 9 — most Indian numbers — never matched.)
+     */
+    private static function lastTenDigits(string $number): string
+    {
+        $digits = preg_replace('/\D/', '', $number);
+        return strlen($digits) > 10 ? substr($digits, -10) : $digits;
     }
 }

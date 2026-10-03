@@ -54,7 +54,7 @@ class CustomerAssignController extends Controller
                 'employee_mobile' => $r->employee_mobile,
                 'assigned_by'     => $r->assigned_by,
                 'updated_at'      => optional($r->updated_at)->toIso8601String(),
-                'customer_name'   => $c->shop_name ?: ($c->name ?? '') ?: "User #{$r->customer_userid}",
+                'customer_name'   => ($c->shop_name ?? null) ?: ($c->name ?? '') ?: "User #{$r->customer_userid}",
                 'customer_person' => $c->name ?? '',
                 'customer_phone'  => $c->contactno ?? '',
                 'customer_pincode' => $c->pincode ?? '',

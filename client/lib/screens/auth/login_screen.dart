@@ -69,9 +69,11 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       }
     } catch (e) {
+      // Network/server failure (timeout, cold start, 5xx) — not a lookup
+      // result, so don't tell the user their number is unregistered.
       if (mounted) setState(() => isLoading = false);
       Fluttertoast.showToast(
-        msg: "Phone number not found",
+        msg: "Couldn't reach the server. Check your internet and try again.",
         backgroundColor: Colors.red,
       );
     }

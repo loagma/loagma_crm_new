@@ -86,6 +86,25 @@ class SalesOrderController extends Controller
     }
 
     /**
+     * Per-line sanity checks shared by store() and updateItems():
+     * `orders_item.quantity` is an integer column and price/total columns are
+     * DECIMAL UNSIGNED on prod, so a fractional quantity would be silently
+     * rounded (total and quantity disagreeing) and a negative price would
+     * fail the insert.
+     */
+    private static function itemNumbersError(array $item): ?string
+    {
+        $qty = (float) $item['quantity'];
+        if (abs($qty - round($qty)) > 0.00001) {
+            return 'Quantity must be a whole number (number of packs/units).';
+        }
+        if (((float) ($item['item_price'] ?? 0)) < 0) {
+            return 'Item price cannot be negative.';
+        }
+        return null;
+    }
+
+    /**
      * GET /api/sales-orders/delivery-rule
      *
      * Read-only lookup into `cart_type`, the consumer app's registry of
@@ -159,6 +178,9 @@ class SalesOrderController extends Controller
             if (((float) ($item['quantity'] ?? 0)) <= 0) {
                 return response()->json(['success' => false, 'message' => 'Every item needs a quantity greater than 0'], 422);
             }
+            if ($error = self::itemNumbersError($item)) {
+                return response()->json(['success' => false, 'message' => $error], 422);
+            }
         }
 
         $idempotencyKey = $data['idempotency_key'] ?? null;
@@ -171,6 +193,9 @@ class SalesOrderController extends Controller
 
         $discount        = (float) ($data['discount'] ?? 0);
         $deliveryCharge  = (float) ($data['delivery_charge'] ?? 0);
+        if ($discount < 0 || $deliveryCharge < 0) {
+            return response()->json(['success' => false, 'message' => 'Discount and delivery charge cannot be negative'], 422);
+        }
         $narration       = $data['narration'] ?? null;
         $department      = $data['department'] ?? null;
         $areaName        = $data['area_name'] ?? null;
@@ -182,7 +207,9 @@ class SalesOrderController extends Controller
         foreach ($items as $item) {
             $beforeDiscount += ((float) $item['quantity']) * ((float) ($item['item_price'] ?? 0));
         }
-        $orderTotal = round($beforeDiscount - $discount + $deliveryCharge, 2);
+        // orders.order_total is DECIMAL UNSIGNED on prod — a discount larger
+        // than the subtotal would fail the insert outright.
+        $orderTotal = max(0.0, round($beforeDiscount - $discount + $deliveryCharge, 2));
 
         $orderId = null;
 
@@ -346,15 +373,25 @@ class SalesOrderController extends Controller
             if (((float) ($item['quantity'] ?? 0)) <= 0) {
                 return response()->json(['success' => false, 'message' => 'Every item needs a quantity greater than 0'], 422);
             }
+            if ($error = self::itemNumbersError($item)) {
+                return response()->json(['success' => false, 'message' => $error], 422);
+            }
         }
 
         $result = null;
 
         DB::transaction(function () use ($orderId, $items, $taxes, &$result) {
-            $order = DB::table('orders')->where('order_id', $orderId)->lockForUpdate()->first(['order_id', 'order_state', 'discount', 'delivery_charge']);
+            $order = DB::table('orders')->where('order_id', $orderId)->lockForUpdate()->first(['order_id', 'txn_id', 'order_state', 'discount', 'delivery_charge']);
 
             if (!$order) {
                 $result = ['status' => 404, 'body' => ['success' => false, 'message' => 'Order not found']];
+                return;
+            }
+
+            // Only orders this CRM created (txn_id 'CRM-…') may be edited here —
+            // a consumer-app order that happens to be pending is not ours.
+            if (!str_starts_with((string) $order->txn_id, 'CRM-')) {
+                $result = ['status' => 403, 'body' => ['success' => false, 'message' => 'Only orders created from the CRM can be edited here.']];
                 return;
             }
 

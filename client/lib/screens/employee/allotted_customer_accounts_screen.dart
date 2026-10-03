@@ -212,6 +212,7 @@ class _AllottedCustomerAccountsScreenState
       }
 
       if (areaIds.isEmpty && directCustomers.isEmpty) {
+        if (!mounted) return;
         setState(() { _loading = false; _groups = []; });
         return;
       }

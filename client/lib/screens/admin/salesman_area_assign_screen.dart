@@ -143,7 +143,7 @@ class _SalesmanAreaAssignScreenState extends State<SalesmanAreaAssignScreen> {
     if (_assignedIds.contains(id)) {
       final areaName = _areaNameOf(id);
       final ok = await _confirmRemoveArea(areaName);
-      if (ok != true) return;
+      if (ok != true || !mounted) return;
 
       // optimistic remove
       setState(() {

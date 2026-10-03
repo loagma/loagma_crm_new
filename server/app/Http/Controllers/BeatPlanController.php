@@ -141,7 +141,8 @@ class BeatPlanController extends Controller
                   ->where(function ($alt) use ($date) {
                       $alt->whereNull('week_anchor_date')
                           ->orWhereRaw(
-                              'MOD(DATEDIFF(?, week_anchor_date), 14) < 7',
+                              // double MOD keeps dates before the anchor on the right parity
+                              'MOD(MOD(DATEDIFF(?, week_anchor_date), 14) + 14, 14) < 7',
                               [$date->toDateString()]
                           );
                   });
@@ -173,6 +174,40 @@ class BeatPlanController extends Controller
         });
     }
 
+    /**
+     * The salesman a plan is written for. Only an admin may plan on someone
+     * else's behalf (no client currently sends salesman_id); for everyone else
+     * the override is ignored and the plan is their own.
+     */
+    private function targetSalesman(?string $requested): string
+    {
+        $staff = JWTAuth::parseToken()->authenticate();
+        if ($requested !== null && $requested !== '' && strtolower(trim((string) $staff->role)) === 'admin') {
+            return $requested;
+        }
+        return (string) $staff->mobile;
+    }
+
+    /**
+     * Uniform error mapping: validation stays a 422, a missing row is a 404,
+     * an auth problem a 401, anything else is logged and returned as a
+     * generic 500 — never the raw SQL/exception text.
+     */
+    private function failure(\Throwable $e, string $label): JsonResponse
+    {
+        if ($e instanceof \Illuminate\Validation\ValidationException) {
+            throw $e;
+        }
+        if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
+            return response()->json(['success' => false, 'error' => 'Not found'], 404);
+        }
+        if ($e instanceof \Tymon\JWTAuth\Exceptions\JWTException) {
+            return response()->json(['success' => false, 'error' => 'Authentication failed'], 401);
+        }
+        \Log::error($label, ['exception' => $e]);
+        return response()->json(['success' => false, 'error' => 'Something went wrong. Please try again.'], 500);
+    }
+
     // ── 1. Bulk assign ────────────────────────────────────────────────────────
 
     public function assign(): JsonResponse
@@ -196,8 +231,8 @@ class BeatPlanController extends Controller
                 'salesman_id'   => 'nullable|string', // allow optional override for admin
             ]);
 
-            // Use provided salesman_id or fall back to JWT authenticated user
-            $salesman = $data['salesman_id'] ?? $this->salesmanId();
+            // salesman_id override is admin-only; everyone else plans for themselves.
+            $salesman = $this->targetSalesman($data['salesman_id'] ?? null);
 
             $saved = [];
             foreach ($data['account_ids'] as $i => $accountId) {
@@ -228,14 +263,10 @@ class BeatPlanController extends Controller
         } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
             return response()->json([
                 'success' => false,
-                'error'   => 'Authentication failed: ' . $e->getMessage(),
+                'error'   => 'Authentication failed',
             ], 401);
         } catch (\Exception $e) {
-            \Log::error('Beat plan assign error', ['exception' => $e]);
-            return response()->json([
-                'success' => false,
-                'error'   => $e->getMessage(),
-            ], 500);
+            return $this->failure($e, 'Beat plan assign error');
         }
     }
 
@@ -257,7 +288,8 @@ class BeatPlanController extends Controller
                 'salesman_id'      => 'nullable|string', // allow optional override for admin/telecaller
             ]);
 
-            $salesman = $data['salesman_id'] ?? $this->salesmanId();
+            // salesman_id override is admin-only; everyone else plans for themselves.
+            $salesman = $this->targetSalesman($data['salesman_id'] ?? null);
 
             $dates = DailyAllocator::resolveDates(
                 $data['start_date'], $data['end_date'] ?? null, isset($data['days']) ? (int) $data['days'] : null, $data['weekdays'] ?? []
@@ -304,16 +336,10 @@ class BeatPlanController extends Controller
         } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
             return response()->json([
                 'success' => false,
-                'error'   => 'Authentication failed: ' . $e->getMessage(),
+                'error'   => 'Authentication failed',
             ], 401);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            throw $e; // let Laravel answer 422 instead of the generic 500 below
         } catch (\Exception $e) {
-            \Log::error('Beat plan auto-distribute error', ['exception' => $e]);
-            return response()->json([
-                'success' => false,
-                'error'   => $e->getMessage(),
-            ], 500);
+            return $this->failure($e, 'Beat plan auto-distribute error');
         }
     }
 
@@ -486,11 +512,7 @@ class BeatPlanController extends Controller
                 'data'    => $data,
             ]);
         } catch (\Exception $e) {
-            \Log::error('Beat plan today error', ['error' => $e->getMessage()]);
-            return response()->json([
-                'success' => false,
-                'error'   => $e->getMessage(),
-            ], 500);
+            return $this->failure($e, 'Beat plan today error');
         }
     }
 
@@ -669,14 +691,10 @@ class BeatPlanController extends Controller
         } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
             return response()->json([
                 'success' => false,
-                'error'   => 'Authentication failed: ' . $e->getMessage(),
+                'error'   => 'Authentication failed',
             ], 401);
         } catch (\Exception $e) {
-            \Log::error('Beat plan week error', ['error' => $e->getMessage()]);
-            return response()->json([
-                'success' => false,
-                'error'   => $e->getMessage(),
-            ], 500);
+            return $this->failure($e, 'Beat plan week error');
         }
     }
 
@@ -740,14 +758,10 @@ class BeatPlanController extends Controller
         } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
             return response()->json([
                 'success' => false,
-                'error'   => 'Authentication failed: ' . $e->getMessage(),
+                'error'   => 'Authentication failed',
             ], 401);
         } catch (\Exception $e) {
-            \Log::error('Beat plan account stats error', ['error' => $e->getMessage()]);
-            return response()->json([
-                'success' => false,
-                'error'   => $e->getMessage(),
-            ], 500);
+            return $this->failure($e, 'Beat plan account stats error');
         }
     }
 
@@ -767,14 +781,10 @@ class BeatPlanController extends Controller
         } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
             return response()->json([
                 'success' => false,
-                'error'   => 'Authentication failed: ' . $e->getMessage(),
+                'error'   => 'Authentication failed',
             ], 401);
         } catch (\Exception $e) {
-            \Log::error('Beat plan myPlans error', ['error' => $e->getMessage()]);
-            return response()->json([
-                'success' => false,
-                'error'   => $e->getMessage(),
-            ], 500);
+            return $this->failure($e, 'Beat plan myPlans error');
         }
     }
 
@@ -793,14 +803,10 @@ class BeatPlanController extends Controller
         } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
             return response()->json([
                 'success' => false,
-                'error'   => 'Authentication failed: ' . $e->getMessage(),
+                'error'   => 'Authentication failed',
             ], 401);
         } catch (\Exception $e) {
-            \Log::error('Beat plan unassign error', ['error' => $e->getMessage()]);
-            return response()->json([
-                'success' => false,
-                'error'   => $e->getMessage(),
-            ], 500);
+            return $this->failure($e, 'Beat plan unassign error');
         }
     }
 
@@ -823,14 +829,10 @@ class BeatPlanController extends Controller
         } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
             return response()->json([
                 'success' => false,
-                'error'   => 'Authentication failed: ' . $e->getMessage(),
+                'error'   => 'Authentication failed',
             ], 401);
         } catch (\Exception $e) {
-            \Log::error('Beat plan unassignBulk error', ['error' => $e->getMessage()]);
-            return response()->json([
-                'success' => false,
-                'error'   => $e->getMessage(),
-            ], 500);
+            return $this->failure($e, 'Beat plan unassignBulk error');
         }
     }
 
@@ -895,8 +897,7 @@ class BeatPlanController extends Controller
 
             return response()->json(['success' => true, 'data' => $data]);
         } catch (\Exception $e) {
-            \Log::error('Beat plan followups error', ['error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+            return $this->failure($e, 'Beat plan followups error');
         }
     }
 
@@ -909,8 +910,7 @@ class BeatPlanController extends Controller
 
             return response()->json(['success' => true, 'data' => $f]);
         } catch (\Exception $e) {
-            \Log::error('Beat plan markFollowupDone error', ['error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+            return $this->failure($e, 'Beat plan markFollowupDone error');
         }
     }
 
@@ -940,8 +940,7 @@ class BeatPlanController extends Controller
 
             return response()->json(['success' => true, 'data' => $f], 201);
         } catch (\Exception $e) {
-            \Log::error('Beat plan createFollowup error', ['error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+            return $this->failure($e, 'Beat plan createFollowup error');
         }
     }
 
@@ -959,8 +958,7 @@ class BeatPlanController extends Controller
 
             return response()->json(['success' => true, 'data' => $f]);
         } catch (\Exception $e) {
-            \Log::error('Beat plan rescheduleFollowup error', ['error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+            return $this->failure($e, 'Beat plan rescheduleFollowup error');
         }
     }
 }

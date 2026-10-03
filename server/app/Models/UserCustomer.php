@@ -33,5 +33,6 @@ class UserCustomer extends Model
         'lead_account_id',
         'session_id',
         'push_notif_id',
+        'register_date',
     ];
 }

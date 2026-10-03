@@ -57,10 +57,16 @@ class PincodeGeocoder
      * @param string[] $pincodes
      * @return array<string, array{0: float, 1: float}> found pincodes only
      */
+    /** Lookups per request (~1.1 s each) — keeps a big plan under PHP's time limit. */
+    public const MAX_LOOKUPS_PER_CALL = 15;
+
     public static function lookupMany(array $pincodes): array
     {
         $out = [];
-        foreach (array_values($pincodes) as $i => $pincode) {
+        // Anything beyond the cap stays unlocated for now (sequenced last, the
+        // same as a pincode the geocoder can't find) and is looked up on a
+        // later request.
+        foreach (array_slice(array_values($pincodes), 0, self::MAX_LOOKUPS_PER_CALL) as $i => $pincode) {
             if ($i > 0) {
                 usleep(1_100_000);
             }

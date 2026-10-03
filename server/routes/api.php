@@ -35,30 +35,48 @@ Route::get('/health', [HealthController::class, 'index']);
 // Pincode lookup proxy (api.postalpincode.in is unreachable from web client)
 Route::get('/utils/pincode/{pincode}', [PincodeController::class, 'lookup']);
 
-// Roles CRUD (role_crm table)
-Route::get('/masters/roles',         [MastersController::class, 'roles']);
-Route::post('/masters/roles',        [MastersController::class, 'storeRole']);
-Route::delete('/masters/roles/{id}', [MastersController::class, 'destroyRole']);
-// Unit list (units_master table) — Sales Order line-item unit dropdown
-Route::get('/masters/units', [MastersController::class, 'units']);
-// Language list (language_crm table) — Employee / Lead Account language dropdown
-Route::get('/masters/languages', [MastersController::class, 'languages']);
-// List staff/employees (simple public endpoint for dashboards)
-Route::get('/employees', [MastersController::class, 'employees']);
-Route::post('/employees', [MastersController::class, 'store']);
-Route::put('/employees/{id}', [MastersController::class, 'update']);
-Route::get('/employees/{id}', [MastersController::class, 'show']);
-
 // OTP Auth
 Route::prefix('auth')->group(function () {
     Route::post('/send-otp',   [OtpAuthController::class, 'sendOtp']);
-    Route::post('/verify-otp', [OtpAuthController::class, 'verifyOtp']);
+    Route::post('/verify-otp', [OtpAuthController::class, 'verifyOtp'])->middleware('throttle:otp');
 
     Route::middleware('jwtauth')->group(function () {
         Route::get('/me',       [OtpAuthController::class, 'me']);
         Route::post('/logout',  [OtpAuthController::class, 'logout']);
     });
 });
+
+// Lead images are loaded by Image.network (no auth header) — filenames are
+// random UUIDs, so this stays public. Everything below the webhook block is
+// behind jwtauth.
+Route::get('/lead-accounts/image/{filename}', [LeadsAccountController::class, 'showImage']);
+
+// ---------------------------------------------------------------------------
+// Knowlarity webhooks (inbound from Knowlarity - no CRM auth, secret-protected)
+// Register this exact URL in the SuperReceptionist account:
+//   Resources > Hook APIs > Call Data Post API -> https://yourcrm.com/api/webhooks/knowlarity/{secret}/call-completed
+// (this file is mounted under /api - see bootstrap/app.php)
+// ---------------------------------------------------------------------------
+Route::post('/webhooks/knowlarity/{secret}/call-completed', [KnowlarityWebhookController::class, 'callCompleted']);
+
+// ===========================================================================
+// Everything below requires a valid JWT.
+// ===========================================================================
+Route::middleware('jwtauth')->group(function () {
+
+// Roles CRUD (role_crm table) — writes are admin-only
+Route::get('/masters/roles',         [MastersController::class, 'roles']);
+Route::post('/masters/roles',        [MastersController::class, 'storeRole'])->middleware('role:admin');
+Route::delete('/masters/roles/{id}', [MastersController::class, 'destroyRole'])->middleware('role:admin');
+// Unit list (units_master table) — Sales Order line-item unit dropdown
+Route::get('/masters/units', [MastersController::class, 'units']);
+// Language list (language_crm table) — Employee / Lead Account language dropdown
+Route::get('/masters/languages', [MastersController::class, 'languages']);
+// Staff list/detail (read: any staff; create/update: admin only)
+Route::get('/employees', [MastersController::class, 'employees']);
+Route::post('/employees', [MastersController::class, 'store'])->middleware('role:admin');
+Route::put('/employees/{id}', [MastersController::class, 'update'])->middleware('role:admin');
+Route::get('/employees/{id}', [MastersController::class, 'show']);
 
 // ---------------------------------------------------------------------------
 // Lead Accounts CRUD
@@ -88,7 +106,6 @@ Route::prefix('lead-accounts')->group(function () {
     Route::get('/',                [LeadsAccountController::class, 'index']);
     Route::post('/',               [LeadsAccountController::class, 'store']);
     Route::post('/upload-image',   [LeadsAccountController::class, 'uploadImage']);
-    Route::get('/image/{filename}', [LeadsAccountController::class, 'showImage']);
     Route::get('/check-contact',   [LeadsAccountController::class, 'checkContact']); // must be before /{id}
     Route::get('/pending',         [LeadsAccountController::class, 'pendingList'])->middleware('role:admin,teleadmin'); // must be before /{id}
     Route::get('/pending-count',   [LeadsAccountController::class, 'pendingCount'])->middleware('role:admin,teleadmin'); // must be before /{id}
@@ -124,14 +141,14 @@ Route::prefix('pincode-geo')->middleware(['jwtauth', 'role:admin,teleadmin'])->g
 // ---------------------------------------------------------------------------
 Route::prefix('areas')->group(function () {
     Route::get('/', [AreaController::class, 'index']);
-    Route::post('/', [AreaController::class, 'store']);
+    Route::post('/', [AreaController::class, 'store'])->middleware('role:admin');
     Route::get('/{id}', [AreaController::class, 'show']);
-    Route::put('/{id}', [AreaController::class, 'update']);
-    Route::delete('/{id}', [AreaController::class, 'destroy']);
+    Route::put('/{id}', [AreaController::class, 'update'])->middleware('role:admin');
+    Route::delete('/{id}', [AreaController::class, 'destroy'])->middleware('role:admin');
 
-    Route::post('/{id}/pincodes', [AreaController::class, 'addPincodes']);
-    Route::put('/{id}/pincodes/{pincode}', [AreaController::class, 'updatePincode']);
-    Route::delete('/{id}/pincodes/{pincode}', [AreaController::class, 'deletePincode']);
+    Route::post('/{id}/pincodes', [AreaController::class, 'addPincodes'])->middleware('role:admin');
+    Route::put('/{id}/pincodes/{pincode}', [AreaController::class, 'updatePincode'])->middleware('role:admin');
+    Route::delete('/{id}/pincodes/{pincode}', [AreaController::class, 'deletePincode'])->middleware('role:admin');
 });
 
 // ---------------------------------------------------------------------------
@@ -153,8 +170,8 @@ Route::prefix('attendance')->group(function () {
 Route::prefix('admin/attendance')->group(function () {
     Route::get('/pending',                   [AttendanceController::class, 'pendingList']);
     Route::get('/pending-count',             [AttendanceController::class, 'pendingCount']);
-    Route::get('/settings/{employeeMobile}', [AttendanceController::class, 'getSettings']);
-    Route::put('/settings/{employeeMobile}', [AttendanceController::class, 'updateSettings']);
+    Route::get('/settings/{employeeMobile}', [AttendanceController::class, 'getSettings'])->middleware('role:admin');
+    Route::put('/settings/{employeeMobile}', [AttendanceController::class, 'updateSettings'])->middleware('role:admin');
     Route::post('/{id}/approve',             [AttendanceController::class, 'approve']);
     Route::post('/{id}/reject',              [AttendanceController::class, 'reject']);
     Route::get('/{employeeMobile}',          [AttendanceController::class, 'adminEmployeeAttendance']);
@@ -216,8 +233,8 @@ Route::prefix('telecaller-report')
 Route::prefix('area-assign')->group(function () {
     Route::get('/',                [AreaAssignController::class, 'index']);
     Route::get('/{employeeId}',    [AreaAssignController::class, 'show']);
-    Route::post('/{employeeId}',   [AreaAssignController::class, 'save']);
-    Route::delete('/{employeeId}', [AreaAssignController::class, 'destroy']);
+    Route::post('/{employeeId}',   [AreaAssignController::class, 'save'])->middleware('role:admin');
+    Route::delete('/{employeeId}', [AreaAssignController::class, 'destroy'])->middleware('role:admin');
 });
 
 // ---------------------------------------------------------------------------
@@ -242,8 +259,8 @@ Route::prefix('customer-assign')->middleware('jwtauth')->group(function () {
 Route::prefix('incharge-assign')->group(function () {
     Route::get('/',                    [InchargeAssignController::class, 'index']);
     Route::get('/{headInchargeId}',    [InchargeAssignController::class, 'show']);
-    Route::post('/{headInchargeId}',   [InchargeAssignController::class, 'save']);
-    Route::delete('/{headInchargeId}', [InchargeAssignController::class, 'destroy']);
+    Route::post('/{headInchargeId}',   [InchargeAssignController::class, 'save'])->middleware('role:admin');
+    Route::delete('/{headInchargeId}', [InchargeAssignController::class, 'destroy'])->middleware('role:admin');
 });
 
 // ---------------------------------------------------------------------------
@@ -331,14 +348,6 @@ Route::prefix('telecaller')->group(function () {
 });
 
 // ---------------------------------------------------------------------------
-// Knowlarity webhooks (inbound from Knowlarity - no CRM auth, secret-protected)
-// Register this exact URL in the SuperReceptionist account:
-//   Resources > Hook APIs > Call Data Post API -> https://yourcrm.com/api/webhooks/knowlarity/{secret}/call-completed
-// (this file is mounted under /api - see bootstrap/app.php)
-// ---------------------------------------------------------------------------
-Route::post('/webhooks/knowlarity/{secret}/call-completed', [KnowlarityWebhookController::class, 'callCompleted']);
-
-// ---------------------------------------------------------------------------
 // Action Log (was Order Funnel) — check-out form for the unified visit screen
 // ---------------------------------------------------------------------------
 Route::prefix('action-log')->group(function () {
@@ -359,3 +368,5 @@ Route::prefix('accounts/{accountId}')->middleware('jwtauth')->group(function () 
     Route::get('/call-recording/{id}',    [AccountHistoryController::class, 'callRecording']);
     Route::get('/ledger',                 [AccountHistoryController::class, 'ledger']);
 });
+
+}); // end jwtauth group

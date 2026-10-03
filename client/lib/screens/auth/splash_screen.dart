@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../services/api_service.dart';
 import '../../services/user_service.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -21,6 +22,17 @@ class _SplashScreenState extends State<SplashScreen> {
     await Future.delayed(const Duration(seconds: 2));
 
     if (!mounted) return;
+
+    // A stored token can be expired (30-day TTL) or revoked — check it once
+    // so the user lands on login instead of a dashboard full of empty lists.
+    // Only an explicit 401 logs out; being offline keeps the session.
+    if (UserService.isLoggedIn) {
+      final valid = await ApiService.validateSession();
+      if (valid == false) {
+        await UserService.logout();
+      }
+      if (!mounted) return;
+    }
 
     // Determine where to navigate based on login state
     if (UserService.isLoggedIn) {

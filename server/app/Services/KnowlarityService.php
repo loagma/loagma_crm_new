@@ -14,10 +14,12 @@ class KnowlarityService
 
     public function __construct()
     {
-        $this->baseUrl      = config('knowlarity.base_url');
-        $this->srApiKey     = config('knowlarity.sr_api_key');
-        $this->appAccessKey = config('knowlarity.app_access_key');
-        $this->srNumber     = config('knowlarity.sr_number');
+        // (string): a missing env var must not TypeError the typed properties
+        // and take down every controller that injects this service.
+        $this->baseUrl      = (string) config('knowlarity.base_url');
+        $this->srApiKey     = (string) config('knowlarity.sr_api_key');
+        $this->appAccessKey = (string) config('knowlarity.app_access_key');
+        $this->srNumber     = (string) config('knowlarity.sr_number');
     }
 
     protected function headers(array $extra = []): array

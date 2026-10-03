@@ -39,17 +39,22 @@ class BeatPlan extends Model
      */
     public function firesOn(\Carbon\Carbon $date): bool
     {
+        // Carbon 3's diffInDays() is signed: $from->diffInDays($to) = to − from.
+        // Mirror dayFiringQuery()'s SQL exactly: DATEDIFF(date, anchor).
+        $daysFrom = fn ($anchor) => (int) round($anchor->copy()->startOfDay()->diffInDays($date->copy()->startOfDay()));
+
         return match ($this->frequency) {
             'weekly'  => in_array($date->shortDayName, $this->days ?? [])
                        && ($this->week_anchor_date === null
-                           || (int)$date->diffInDays($this->week_anchor_date) % 14 < 7),
+                           || (($daysFrom($this->week_anchor_date) % 14) + 14) % 14 < 7),
             'monthly' => $this->month_date === $date->day,
             'specific_dates' => in_array($date->format('Y-m-d'), $this->specific_dates ?? []),
             'appointment' => $this->appointment_date !== null
                            && $this->appointment_date->format('Y-m-d') === $date->format('Y-m-d'),
             'n_days'  => $this->start_date !== null
                          && $this->interval_days > 0
-                         && $date->diffInDays($this->start_date) % $this->interval_days === 0,
+                         && $daysFrom($this->start_date) >= 0
+                         && $daysFrom($this->start_date) % $this->interval_days === 0,
             default   => false,
         };
     }

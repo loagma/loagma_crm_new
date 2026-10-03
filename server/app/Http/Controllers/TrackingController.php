@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Attendance;
 use App\Models\DeliStaff;
 use App\Models\LocationPing;
+use App\Support\Hierarchy;
 use App\Support\RouteDistance;
 use App\Support\RouteSnapper;
 use Carbon\Carbon;
@@ -43,6 +44,23 @@ class TrackingController extends Controller
         // Same proven pattern as AttendanceController::authMobile() — the
         // default guard is web/session, so auth() resolves to null here.
         return JWTAuth::parseToken()->authenticate()->mobile;
+    }
+
+    /**
+     * Mobiles the logged-in senior may track: null = unrestricted (admin),
+     * otherwise their own hierarchy subtree (incharge_assign_crm).
+     */
+    private function viewerScope(): ?array
+    {
+        $viewer = DeliStaff::where('mobile', $this->authMobile())->first();
+        abort_if(!$viewer, 403, 'Unauthorized');
+        return Hierarchy::subtreeForViewer($viewer);
+    }
+
+    private function assertCanTrack(string $mobile): void
+    {
+        $scope = $this->viewerScope();
+        abort_if($scope !== null && !\in_array($mobile, $scope, true), 403, 'That employee is not in your team');
     }
 
     // ─── Employee: Batch ping ingest ──────────────────────────────────────────
@@ -171,11 +189,13 @@ class TrackingController extends Controller
         $this->autoCloseStaleShifts();
 
         $today = Carbon::today()->toDateString();
+        $scope = $this->viewerScope();
 
         $open = Attendance::with('employee:mobile,name,role')
             ->where('date', $today)
             ->whereNotNull('punch_in_time')
             ->whereNull('punch_out_time')
+            ->when($scope !== null, fn ($q) => $q->whereIn('employee_mobile', $scope ?: ['__none__']))
             ->get();
 
         $data = $open->map(function (Attendance $a) use ($today) {
@@ -219,11 +239,13 @@ class TrackingController extends Controller
         $validated = $request->validate([
             'date' => 'required|date_format:Y-m-d',
         ]);
-        $date = $validated['date'];
+        $date  = $validated['date'];
+        $scope = $this->viewerScope();
 
         $records = Attendance::with('employee:mobile,name,role')
             ->where('date', $date)
             ->whereNotNull('punch_in_time')
+            ->when($scope !== null, fn ($q) => $q->whereIn('employee_mobile', $scope ?: ['__none__']))
             ->get();
 
         $data = $records->map(function (Attendance $a) use ($date) {
@@ -280,6 +302,7 @@ class TrackingController extends Controller
 
         $today  = Carbon::today()->toDateString();
         $mobile = $validated['mobile'];
+        $this->assertCanTrack($mobile);
 
         // Full day's trail in one query: the distance total always spans the
         // whole day, while the returned points honor ?since= (delta polling).
@@ -328,6 +351,7 @@ class TrackingController extends Controller
 
         $mobile = $validated['mobile'];
         $date   = $validated['date'];
+        $this->assertCanTrack($mobile);
 
         $points = LocationPing::where('employee_mobile', $mobile)
             ->where('date', $date)
@@ -390,15 +414,19 @@ class TrackingController extends Controller
         $today  = Carbon::today()->toDateString();
         $cutoff = Carbon::now()->subHours(config('tracking.autoclose_hours'));
 
+        // Only two cases are safe to close automatically:
+        //  - a shift left open from an EARLIER day (forgot to punch out);
+        //  - a shift TODAY whose tracking was alive and then went silent.
+        // A same-day shift that never pinged (telecallers, web users — no
+        // background tracking) is a person still at work, not a ghost; closing
+        // it used to stamp a punch-out at shift end, often in the future, and
+        // lock them out of punching out themselves.
         $stale = Attendance::whereNotNull('punch_in_time')
             ->whereNull('punch_out_time')
             ->where(function ($q) use ($today, $cutoff) {
                 $q->where('date', '<', $today)
                   ->orWhere(function ($q2) use ($cutoff) {
                       $q2->whereNotNull('last_ping_at')->where('last_ping_at', '<', $cutoff);
-                  })
-                  ->orWhere(function ($q3) use ($cutoff) {
-                      $q3->whereNull('last_ping_at')->where('punch_in_time', '<', $cutoff);
                   });
             })
             ->get();
@@ -415,6 +443,10 @@ class TrackingController extends Controller
                 $closeAt  = $shiftEnd->greaterThan($record->punch_in_time)
                     ? $shiftEnd
                     : $record->punch_in_time;
+            }
+            // Never record a punch-out in the future.
+            if (Carbon::parse($closeAt)->greaterThan(Carbon::now())) {
+                $closeAt = Carbon::now();
             }
 
             $record->update([

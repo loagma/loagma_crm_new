@@ -167,6 +167,16 @@ class ComplaintController extends Controller
         $role = strtolower($staff->role ?? '');
         $query = Complaint::orderByDesc('created_at');
 
+        // The raised_by / assigned_to filters may only name yourself or (for a
+        // senior) someone in your own team — admin may name anyone.
+        foreach (['raised_by', 'assigned_to'] as $filter) {
+            $target = (string) request()->query($filter, '');
+            if ($target !== '' && $role !== 'admin' && $target !== (string) $staff->mobile
+                && !\in_array($target, $this->getDescendantMobiles($staff->mobile), true)) {
+                return response()->json(['success' => false, 'message' => 'Not allowed to view that employee\'s complaints'], 403);
+            }
+        }
+
         if (request()->filled('raised_by')) {
             // Explicit "my complaints" view — always allowed for one's own mobile;
             // an approver may also filter down to a specific descendant.
@@ -195,7 +205,7 @@ class ComplaintController extends Controller
             }
         }
 
-        $perPage = (int) request()->query('per_page', 20);
+        $perPage = min(max((int) request()->query('per_page', 20), 1), 200);
         $page    = (int) request()->query('page', 1);
         $p       = $query->paginate($perPage, ['*'], 'page', $page);
 

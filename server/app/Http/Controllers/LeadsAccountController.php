@@ -117,9 +117,18 @@ class LeadsAccountController extends Controller
     public function index(): JsonResponse
     {
         $q       = request()->query('q');
-        $perPage = (int) request()->query('per_page', 20);
+        $perPage = min(max((int) request()->query('per_page', 20), 1), 1000);
 
         $query = LeadsAccount::orderBy('createdAt', 'desc');
+
+        // A non-approver asking for the unfiltered list only gets their own
+        // leads — the app always sends area/pincode or created_by filters for
+        // them, so this just closes the "drop the filter, see everything" hole.
+        $hasScopeFilter = request()->filled('area_ids') || request()->filled('pincodes')
+            || request()->filled('pincode') || request()->filled('created_by');
+        if (!$hasScopeFilter && !$this->isApprover()) {
+            $query->where('createdById', $this->authMobile());
+        }
 
         if ($q) {
             $needle = '%' . mb_strtolower($q) . '%';
@@ -232,7 +241,7 @@ class LeadsAccountController extends Controller
 
     public function pendingList(): JsonResponse
     {
-        $perPage = (int) request()->query('per_page', 20);
+        $perPage = min(max((int) request()->query('per_page', 20), 1), 1000);
         $page    = (int) request()->query('page', 1);
         $q       = request()->query('q');
 
@@ -304,6 +313,16 @@ class LeadsAccountController extends Controller
             ], 422);
         }
 
+        // The shared `user` table is latin1 on prod — non-English text in these
+        // fields would make the insert fail. Ask for an edit instead of a 500.
+        $bad = \App\Support\Latin1::badFields($account->toArray(), ['personName', 'businessName', 'address', 'city', 'state', 'pincode']);
+        if ($bad) {
+            return response()->json([
+                'success' => false,
+                'message' => 'The customer record only supports English (Latin) characters. Please edit these fields first: ' . implode(', ', $bad),
+            ], 422);
+        }
+
         $customer = \DB::transaction(function () use ($account) {
             // `user.userid` has no auto-increment or default on this shared,
             // legacy-managed table — every other write path in this app only
@@ -337,6 +356,7 @@ class LeadsAccountController extends Controller
                 // otherwise — omitting them fails the insert outright.
                 'session_id'    => '',
                 'push_notif_id' => '',
+                'register_date' => time(),
             ]);
 
             $account->update([
@@ -451,7 +471,18 @@ class LeadsAccountController extends Controller
             'createdById'   => 'nullable|string|max:191',
         ])->validate();
 
-        $account = LeadsAccount::create($validated);
+        // accountCode is MAX+1 (see LeadsAccount::boot) and UNIQUE — two
+        // simultaneous creates can pick the same code; retry with a fresh one.
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                $account = LeadsAccount::create($validated);
+                break;
+            } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+                if ($attempt >= 5 || stripos($e->getMessage(), 'accountcode') === false) {
+                    throw $e;
+                }
+            }
+        }
 
         return response()->json(['success' => true, 'data' => $account], 201);
     }
@@ -512,16 +543,25 @@ class LeadsAccountController extends Controller
             'rejectionNotes'    => 'nullable|string|max:191',
         ])->validate();
 
-        // A creator fixing a rejected lead and saving again re-enters the
-        // review queue automatically — regardless of what the client sends —
-        // so a resubmission can never get silently stuck as "rejected".
-        $wasRejected = $account->approval_status === 'rejected';
+        // Review fields belong to the approval flow (approve()/reject()) —
+        // only an approver may touch them through a plain edit.
         $editorIsApprover = false;
         try {
             $editorIsApprover = $this->isApprover();
         } catch (\Throwable $e) {
             // No/invalid token — treat as a non-approver (safe default).
         }
+        if (!$editorIsApprover) {
+            unset(
+                $validated['approvedById'], $validated['approvedAt'], $validated['isApproved'],
+                $validated['verificationNotes'], $validated['rejectionNotes']
+            );
+        }
+
+        // A creator fixing a rejected lead and saving again re-enters the
+        // review queue automatically — regardless of what the client sends —
+        // so a resubmission can never get silently stuck as "rejected".
+        $wasRejected = $account->approval_status === 'rejected';
         if ($wasRejected && !$editorIsApprover && !\array_key_exists('approval_status', $validated)) {
             $validated['approval_status'] = 'pending';
             $validated['rejectionNotes']  = null;
@@ -540,6 +580,11 @@ class LeadsAccountController extends Controller
 
         if (!$account) {
             return response()->json(['success' => false, 'message' => 'Lead account not found'], 404);
+        }
+
+        // Only an approver or the lead's own creator may delete it.
+        if (!$this->isApprover() && (string) $account->createdById !== (string) $this->authMobile()) {
+            return response()->json(['success' => false, 'message' => 'You are not allowed to delete this lead'], 403);
         }
 
         $account->delete();

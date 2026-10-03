@@ -77,6 +77,23 @@ class ApiService {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  /// Is the stored token still accepted by the server?
+  /// true = valid, false = rejected (401: expired/invalid → log out),
+  /// null = couldn't tell (offline, timeout, server error) → keep the session.
+  static Future<bool?> validateSession() async {
+    try {
+      final url = Uri.parse('${ApiConfig.baseUrl}/api/auth/me');
+      final response = await http
+          .get(url, headers: _authHeaders)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode == 401) return false;
+      if (response.statusCode >= 200 && response.statusCode < 300) return true;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<void> logout() async {
     try {
       final url = Uri.parse('${ApiConfig.baseUrl}/api/auth/logout');

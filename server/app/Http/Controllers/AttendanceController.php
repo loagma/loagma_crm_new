@@ -353,7 +353,7 @@ class AttendanceController extends Controller
     public function myHistory(): JsonResponse
     {
         $mobile  = $this->authMobile();
-        $perPage = (int) request()->query('per_page', 20);
+        $perPage = min(max((int) request()->query('per_page', 20), 1), 200);
         $page    = (int) request()->query('page', 1);
 
         $p = Attendance::where('employee_mobile', $mobile)
@@ -413,7 +413,7 @@ class AttendanceController extends Controller
             $query->whereIn('employee_mobile', $mobiles);
         }
 
-        $perPage = (int) request()->query('per_page', 50);
+        $perPage = min(max((int) request()->query('per_page', 50), 1), 200);
         $page    = (int) request()->query('page', 1);
 
         $p = $query->orderByDesc('date')->paginate($perPage, ['*'], 'page', $page);
@@ -434,6 +434,18 @@ class AttendanceController extends Controller
 
     public function adminEmployeeAttendance(string $employeeMobile): JsonResponse
     {
+        // Admin sees anyone; everyone else only themselves or someone in
+        // their own chain below them (same rule as approve/reject).
+        $viewer = $this->approverStaff();
+        if (!$viewer) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
+        }
+        if (strtolower($viewer->role ?? '') !== 'admin'
+            && (string) $viewer->mobile !== (string) $employeeMobile
+            && !\in_array((string) $employeeMobile, $this->getDescendantMobiles($viewer->mobile), true)) {
+            return response()->json(['success' => false, 'message' => 'That employee is not in your team'], 403);
+        }
+
         // Calendar mode: month=YYYY-MM returns every record in that month (no pagination).
         $month = request()->query('month');
         if ($month) {
@@ -452,7 +464,7 @@ class AttendanceController extends Controller
             return response()->json(['success' => true, 'data' => $records]);
         }
 
-        $perPage = (int) request()->query('per_page', 20);
+        $perPage = min(max((int) request()->query('per_page', 20), 1), 200);
         $page    = (int) request()->query('page', 1);
 
         $p = Attendance::where('employee_mobile', $employeeMobile)

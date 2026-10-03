@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'tracking_service.dart';
+
 class UserService extends ChangeNotifier {
   static const _keyToken  = 'token';
   static const _keyId     = 'user_id';
@@ -42,14 +44,20 @@ class UserService extends ChangeNotifier {
   /// Save a real session from the API verify-otp response.
   static Future<void> loginFromApi(Map<String, dynamic> response) async {
     final prefs  = await SharedPreferences.getInstance();
-    final data   = response['data'] as Map<String, dynamic>;
-    final token  = response['token'] as String;
+    // Tolerant parsing: the API may send numbers as strings (or vice versa)
+    // depending on the DB driver — a hard `as` cast here made login fail.
+    final data   = Map<String, dynamic>.from((response['data'] as Map?) ?? const {});
+    final token  = response['token']?.toString() ?? '';
+    if (token.isEmpty) {
+      throw Exception('Login response did not include a token');
+    }
 
     _token  = token;
-    _role   = data['role']   as String?;
-    _name   = data['name']   as String?;
-    _mobile = (data['mobile'] ?? data['contactNumber']) as String?;
-    _id     = data['id']     as int?;
+    _role   = data['role']?.toString();
+    _name   = data['name']?.toString();
+    _mobile = (data['mobile'] ?? data['contactNumber'])?.toString();
+    final rawId = data['id'];
+    _id     = rawId is int ? rawId : int.tryParse('${rawId ?? ''}');
 
     await prefs.setString(_keyToken, token);
     if (_role   != null) await prefs.setString(_keyRole,   _role!);
@@ -60,24 +68,15 @@ class UserService extends ChangeNotifier {
     _instance.notifyListeners();
   }
 
-  /// Dev-mode only: create a fake session without a real token.
-  static Future<void> login({
-    required String role,
-    required String contactNumber,
-  }) async {
-    final prefs = await SharedPreferences.getInstance();
-    _role   = role;
-    _mobile = contactNumber;
-    _token  = 'dev_token';
-
-    await prefs.setString(_keyToken,  'dev_token');
-    await prefs.setString(_keyRole,   role);
-    await prefs.setString(_keyMobile, contactNumber);
-    
-    _instance.notifyListeners();
-  }
-
   static Future<void> logout() async {
+    // Stop GPS tracking first — otherwise the foreground location service
+    // keeps running (and posting pings) after the user has logged out.
+    try {
+      await TrackingService.stop();
+    } catch (_) {
+      // Never block logout on the tracking plugin.
+    }
+
     final prefs = await SharedPreferences.getInstance();
     _token  = null;
     _role   = null;

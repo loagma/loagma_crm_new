@@ -164,7 +164,7 @@ class TeamReportController extends Controller
             ->distinct()->pluck('employee_mobile')
             ->map(fn ($m) => (string) $m)->flip();
 
-        $rangeDays = $from->copy()->startOfDay()->diffInDays($to->copy()->startOfDay()) + 1;
+        $rangeDays = (int) round($from->copy()->startOfDay()->diffInDays($to->copy()->startOfDay())) + 1;
         $isSingleDay = $fromYmd === $toYmd;
 
         $employees = $roster->map(function (DeliStaff $s) use (

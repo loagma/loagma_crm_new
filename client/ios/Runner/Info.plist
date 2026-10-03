@@ -53,6 +53,10 @@
 	<array>
 		<string>location</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Loagma CMS uses the camera to take your attendance selfie and photos of shops, leads and merchandise.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Loagma CMS lets you choose shop, lead and merchandise photos from your photo library.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Loagma CMS uses your microphone for voice search when creating a sales order.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

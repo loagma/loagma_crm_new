@@ -82,7 +82,7 @@ class MastersController extends Controller
     public function employees(): JsonResponse
     {
         $q       = request()->query('q', null);
-        $perPage = (int) request()->query('per_page', 20);
+        $perPage = min(max((int) request()->query('per_page', 20), 1), 1000);
 
         $query = DeliStaff::select(
             'deli_id', 'mobile', 'name', 'role',
@@ -162,6 +162,18 @@ class MastersController extends Controller
             unset($validated['password']);
         }
 
+        // deli_staff is shared with the delivery app: never let "create"
+        // silently overwrite someone who already exists (edits go through PUT).
+        if (DeliStaff::where('mobile', $validated['mobile'])->exists()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'An employee with this mobile number already exists.',
+                'errors'  => ['mobile' => ['An employee with this mobile number already exists.']],
+            ], 422);
+        }
+
+        $validated = $this->coerceNotNullColumns($validated);
+
         // deli_id has no default / auto-increment on the live table — allocate manually
         // (see DeliStaffSeeder). Lock the table while reading max() to avoid duplicate
         // ids from concurrent requests.
@@ -212,8 +224,31 @@ class MastersController extends Controller
             return response()->json(['success' => false, 'message' => 'Not found'], 404);
         }
 
-        $staff->fill($validated)->save();
+        $staff->fill($this->coerceNotNullColumns($validated))->save();
 
         return response()->json(['success' => true, 'data' => $staff]);
+    }
+
+    /**
+     * Prod `deli_staff.admin_id` / `is_locked` are NOT NULL (default 0) — an
+     * explicit null from the form must become 0 or MariaDB rejects the write.
+     */
+    private function coerceNotNullColumns(array $data): array
+    {
+        // deli_staff is latin1 on prod — reject non-English text with a 422
+        // rather than letting MariaDB fail the write with a 500.
+        $bad = \App\Support\Latin1::badFields($data, ['name', 'city', 'state', 'pincode', 'language']);
+        if ($bad) {
+            throw \Illuminate\Validation\ValidationException::withMessages(
+                array_fill_keys($bad, 'Please use English (Latin) characters only.')
+            );
+        }
+
+        foreach (['admin_id', 'is_locked'] as $col) {
+            if (array_key_exists($col, $data) && $data[$col] === null) {
+                $data[$col] = 0;
+            }
+        }
+        return $data;
     }
 }

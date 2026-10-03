@@ -112,7 +112,10 @@ class SalesOrderDraftController extends Controller
 
             DB::table('cart')->insert([
                 'cart_id'           => $nextId,
-                'userid'            => $accountType === 'customer' ? (int) $accountId : 0,
+                // Always 0: the account lives in account_ref. Putting the real
+                // customer id here would let the consumer app's own cart query
+                // (WHERE userid = ?) pick up this CRM draft row as a cart item.
+                'userid'            => 0,
                 'addressId'         => 0,
                 'product_id'        => 0,
                 'vendor_product_id' => 0,
