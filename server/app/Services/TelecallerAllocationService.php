@@ -18,26 +18,32 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Geographic, capacity-based daily calling allocation for telecallers.
+ * Geographic, date-range calling plan for telecallers.
  *
- * Two independent rules combine into the daily list:
- *  - geography (GeoSequencer): which pincode — and which account inside it —
- *    comes next, from each pincode's own location (pincode numbers are only
+ * Two independent rules combine into the plan:
+ *  - geography (GeoSequencer): the order of pincodes — and of accounts inside
+ *    each — from each pincode's own location (pincode numbers are only
  *    identifiers; customer coordinates are never used);
- *  - capacity (DailyAllocator): how many accounts today, with no per-pincode
- *    quota, so a half-finished pincode carries forward into the next day.
+ *  - days (DailyAllocator::split): when the plan is created, the ordered
+ *    accounts are split once over the From–To range and every account keeps
+ *    that fixed date (tc_allocation_item_crm.allocated_date).
  *
- * The queue is tc_allocation_item_crm ordered by (pincode_rank, account_rank);
- * "where we stopped" is simply the lowest-ranked pending row. Today's list is
- * built lazily on the first request of each IST day, so a day the telecaller
- * doesn't work consumes nothing.
+ * Nothing is re-divided or carried forward automatically. An account whose
+ * date passed without a call is "missed" (status still assigned/in_progress,
+ * date < today) and the telecaller reassigns it to a date of their choice.
+ * Accounts added later (new pincodes merged in, new customers in the plan's
+ * pincodes) come in unscheduled (status pending, no date) for the telecaller
+ * to date the same way.
  */
 class TelecallerAllocationService
 {
     public const EXCLUDED_LABELS = ['do_not_call', 'wrong_number'];
 
-    // Accounts still owed a call in this plan (pending + handed out but unworked).
+    // Accounts still owed a call: unscheduled (pending) or dated but not called.
     private const OPEN = ['pending', 'assigned', 'in_progress'];
+
+    // Dated and not yet called — "missed" once the date has passed.
+    private const DUE = ['assigned', 'in_progress'];
 
     public function activePlan(string $mobile): ?TcAllocationPlan
     {
@@ -45,12 +51,11 @@ class TelecallerAllocationService
     }
 
     /**
-     * Create the telecaller's plan for $startDate..$endDate, or merge newly
-     * selected pincodes into the active one: the sequence is recomputed over
-     * the union, open accounts are re-ranked, new accounts are queued,
-     * completed history is untouched. On a merge the plan keeps its original
-     * start date and takes the new end date; the remaining accounts are
-     * re-divided over the remaining days from the next daily allocation.
+     * Create the telecaller's plan for $startDate..$endDate — every account
+     * gets a fixed date, split evenly in geographic order — or merge newly
+     * selected pincodes into the active plan: their accounts are added
+     * unscheduled (the telecaller dates them), existing accounts keep their
+     * dates, and the plan's To date is updated (nothing is re-divided).
      */
     public function createOrMerge(string $mobile, array $pincodes, string $startDate, string $endDate): TcAllocationPlan
     {
@@ -78,65 +83,65 @@ class TelecallerAllocationService
                 ]);
             }
 
-            $sequence = $plan ? $this->mergedSequence($plan, $union) : $this->sequenceFor($union)['sequence'];
-
             if ($plan) {
+                $sequence = $this->mergedSequence($plan, $union);
                 $plan->update([
                     'selected_pincodes' => $union,
                     'pincode_sequence'  => $sequence,
                     'end_date'          => $endDate,
                 ]);
-            } else {
-                $plan = TcAllocationPlan::create([
-                    'employee_mobile'   => $mobile,
-                    'selected_pincodes' => $union,
-                    'pincode_sequence'  => $sequence,
-                    'daily_capacity'    => 0,
-                    'start_date'        => $startDate,
-                    'end_date'          => $endDate,
-                    'status'            => 'active',
-                ]);
+                // New accounts come in unscheduled; existing ones only get re-ranked.
+                $this->upsertQueue($plan, $this->rankAccounts($candidates, $sequence));
+                return $plan->fresh();
             }
 
-            $this->upsertQueue($plan, $this->rankAccounts($candidates, $sequence));
+            $sequence = $this->sequenceFor($union)['sequence'];
+            $rows = $this->rankAccounts($candidates, $sequence);
+            $dates = DailyAllocator::datesFor(count($rows), $startDate, $endDate);
+            foreach ($rows as $i => &$row) {
+                $row['status'] = 'assigned';
+                $row['allocated_date'] = $dates[$i];
+            }
+            unset($row);
 
-            // daily_capacity holds the current per-day figure (shown on the
-            // dashboard as the daily target); allocateDay() refreshes it.
-            $open = TcAllocationItem::where('plan_id', $plan->id)->whereIn('status', self::OPEN)->count();
-            $from = max(Carbon::today()->toDateString(), $plan->start_date->toDateString());
-            $plan->update(['daily_capacity' => DailyAllocator::quotaFor($open, $from, $from, $endDate)]);
+            $plan = TcAllocationPlan::create([
+                'employee_mobile'   => $mobile,
+                'selected_pincodes' => $union,
+                'pincode_sequence'  => $sequence,
+                // Informational: accounts per day when the plan was made.
+                'daily_capacity'    => (int) ceil(count($rows) / DailyAllocator::daysInclusive($startDate, $endDate)),
+                'start_date'        => $startDate,
+                'end_date'          => $endDate,
+                'status'            => 'active',
+            ]);
+            $this->upsertQueue($plan, $rows);
 
             return $plan->fresh();
         });
     }
 
     /**
-     * Today's allocated accounts, allocating them first if this is the first
-     * request of the IST day. Returns [plan|null, items[]].
+     * Today's list: the accounts dated today, in plan order. Returns
+     * [plan|null, items[]]. Also queues accounts that newly appeared in the
+     * plan's pincodes (unscheduled) and skips accounts labelled do-not-call.
      */
     public function today(string $mobile): array
     {
         $today = Carbon::today()->toDateString();
 
-        $plan = DB::transaction(function () use ($mobile, $today) {
+        $plan = DB::transaction(function () use ($mobile) {
             $plan = TcAllocationPlan::where('employee_mobile', $mobile)
                 ->where('status', 'active')->lockForUpdate()->first();
-            if (!$plan) {
-                return null;
+            if ($plan) {
+                $this->queueNewAccounts($plan);
+                $this->skipLabelled($plan);
+                $this->completeIfDone($plan);
             }
-
-            $alreadyToday = TcAllocationItem::where('plan_id', $plan->id)
-                ->where('allocated_date', $today)->exists();
-            if (!$alreadyToday) {
-                $this->allocateDay($plan, $today);
-            }
-            return $plan->fresh();
+            return $plan?->fresh();
         });
 
-        if (!$plan) {
-            // Completed/cancelled plans still show what was handed out today.
-            $plan = TcAllocationPlan::where('employee_mobile', $mobile)->latest('id')->first();
-        }
+        // Completed/cancelled plans still show what was dated today.
+        $plan ??= TcAllocationPlan::where('employee_mobile', $mobile)->latest('id')->first();
         if (!$plan) {
             return [null, []];
         }
@@ -149,7 +154,7 @@ class TelecallerAllocationService
         return [$plan, $this->enrich($items)];
     }
 
-    /** Plan progress for the Allotted Customer screen. */
+    /** Plan progress + every account's date/status for the Allotted Customer screen. */
     public function progress(string $mobile): ?array
     {
         $plan = $this->activePlan($mobile);
@@ -157,40 +162,165 @@ class TelecallerAllocationService
             return null;
         }
 
-        $byStatus = TcAllocationItem::where('plan_id', $plan->id)
-            ->select('status', DB::raw('COUNT(*) as n'))->groupBy('status')->pluck('n', 'status');
         $today = Carbon::today()->toDateString();
         $start = $plan->start_date->toDateString();
         $end = $plan->end_date->toDateString();
-        $remaining = TcAllocationItem::where('plan_id', $plan->id)
-            ->whereIn('status', self::OPEN)
-            ->select('pincode', DB::raw('COUNT(*) as n'), DB::raw('MIN(pincode_rank) as r'))
-            ->groupBy('pincode')->orderBy('r')->get()
-            ->map(fn ($r) => ['pincode' => $r->pincode, 'remaining' => (int) $r->n])->values();
 
-        $total = (int) $byStatus->sum();
+        $items = TcAllocationItem::where('plan_id', $plan->id)
+            ->orderBy('pincode_rank')->orderBy('account_rank')
+            ->get(['account_id', 'pincode', 'status', 'allocated_date']);
+
+        $schedule = [];
+        $byStatus = [];
+        $missed = 0;
+        $unscheduled = 0;
+        $todayCount = 0;
+        $remaining = [];
+        foreach ($items as $it) {
+            $date = $it->allocated_date?->toDateString();
+            $byStatus[$it->status] = ($byStatus[$it->status] ?? 0) + 1;
+            if ($date === null) {
+                $unscheduled += $it->status === 'pending' ? 1 : 0;
+            } else {
+                $schedule[$it->account_id] = ['date' => $date, 'status' => $it->status];
+                $todayCount += $date === $today ? 1 : 0;
+                $missed += ($date < $today && in_array($it->status, self::DUE, true)) ? 1 : 0;
+            }
+            if (in_array($it->status, self::OPEN, true)) {
+                $remaining[$it->pincode] = ($remaining[$it->pincode] ?? 0) + 1;
+            }
+        }
+
+        $total = $items->count();
         $open = (int) collect(self::OPEN)->sum(fn ($s) => $byStatus[$s] ?? 0);
 
         return [
             'plan_id'           => $plan->id,
+            'today'             => $today,
             'start_date'        => $start,
             'end_date'          => $end,
             'total_days'        => DailyAllocator::daysInclusive($start, $end),
-            // Day N of the range (0 before it starts; can exceed total_days when overdue).
+            // Day N of the range (0 before it starts; can exceed total_days after the To date).
             'day'               => $today < $start ? 0 : DailyAllocator::daysInclusive($start, $today),
             'days_left'         => $today > $end ? 0 : DailyAllocator::daysInclusive(max($today, $start), $end),
-            'overdue'           => $today > $end && $open > 0,
-            // Current per-day figure: remaining ÷ remaining days.
             'daily_capacity'    => $plan->daily_capacity,
+            'today_count'       => $todayCount,
             'selected_pincodes' => $plan->selected_pincodes,
             'pincode_sequence'  => $plan->pincode_sequence,
             'total'             => $total,
             'done'              => $total - $open,
             'pending'           => $open,
+            'missed'            => $missed,
+            'unscheduled'       => $unscheduled,
             'status_counts'     => $byStatus,
-            'remaining_by_pincode' => $remaining,
+            'remaining_by_pincode' => collect($remaining)
+                ->map(fn ($n, $p) => ['pincode' => (string) $p, 'remaining' => $n])->values(),
+            // account_id => {date: Y-m-d, status} for every dated account.
+            'schedule'          => $schedule,
             'created_at'        => $plan->created_at,
         ];
+    }
+
+    /**
+     * Set the date of the given accounts in the telecaller's active plan —
+     * used for missed accounts (date passed, not called), unscheduled ones
+     * (added later) and to move any not-yet-called account. Called, callback
+     * and done accounts are left alone. A date past the plan's To date
+     * extends the To date. Returns how many accounts were updated.
+     */
+    public function reassign(string $mobile, array $accountIds, string $date): int
+    {
+        return DB::transaction(function () use ($mobile, $accountIds, $date) {
+            $plan = TcAllocationPlan::where('employee_mobile', $mobile)
+                ->where('status', 'active')->lockForUpdate()->first();
+            if (!$plan) {
+                return 0;
+            }
+
+            $updated = 0;
+            foreach (array_chunk(array_values(array_unique(array_map('strval', $accountIds))), 500) as $chunk) {
+                $updated += TcAllocationItem::where('plan_id', $plan->id)
+                    ->whereIn('account_id', $chunk)
+                    ->whereIn('status', ['pending', 'assigned', 'in_progress', 'skipped'])
+                    ->update(['status' => 'assigned', 'allocated_date' => $date, 'completed_at' => null]);
+            }
+            if ($date > $plan->end_date->toDateString()) {
+                $plan->update(['end_date' => $date]);
+            }
+            return $updated;
+        });
+    }
+
+    /**
+     * Auto-distribute the given accounts (in the given order) over $dates —
+     * the chosen weekdays of a From–To range, or the first N matching days
+     * from a start date (see DailyAllocator::datesInRange / datesByCount): the
+     * dates are filled in consecutive even blocks, so accounts that were
+     * selected together (typically a pincode at a time) stay on the same or
+     * neighbouring days. Only open or skipped accounts of the active plan
+     * move; called accounts are left alone. A date past the plan's To date
+     * extends it.
+     *
+     * @param string[] $accountIds in selection order
+     * @param string[] $dates      Y-m-d, the days that receive accounts
+     * @return array{updated: int, skipped_done: int, not_in_plan: int, dates: array<string, int>}|null
+     *         null when there is no active plan
+     * @throws ValidationException when there are no dates
+     */
+    public function distribute(string $mobile, array $accountIds, array $dates): ?array
+    {
+        $dates = array_values(array_unique($dates));
+        sort($dates);
+        if (empty($dates)) {
+            throw ValidationException::withMessages([
+                'weekdays' => 'None of the selected days falls between these dates.',
+            ]);
+        }
+
+        return DB::transaction(function () use ($mobile, $accountIds, $dates) {
+            $plan = TcAllocationPlan::where('employee_mobile', $mobile)
+                ->where('status', 'active')->lockForUpdate()->first();
+            if (!$plan) {
+                return null;
+            }
+
+            $ids = array_values(array_unique(array_map('strval', $accountIds)));
+            $inPlan = [];
+            foreach (array_chunk($ids, 500) as $chunk) {
+                foreach (TcAllocationItem::where('plan_id', $plan->id)->whereIn('account_id', $chunk)
+                    ->get(['account_id', 'status']) as $it) {
+                    $inPlan[$it->account_id] = $it->status;
+                }
+            }
+
+            // Selection order is kept; only accounts that can still be called get a date.
+            $movable = array_values(array_filter($ids, fn ($id) => isset($inPlan[$id])
+                && in_array($inPlan[$id], ['pending', 'assigned', 'in_progress', 'skipped'], true)));
+            $positions = DailyAllocator::blocksOver(count($movable), $dates);
+
+            $byDate = [];
+            foreach ($movable as $i => $accountId) {
+                $byDate[$positions[$i]][] = $accountId;
+            }
+            foreach ($byDate as $date => $group) {
+                foreach (array_chunk($group, 500) as $chunk) {
+                    TcAllocationItem::where('plan_id', $plan->id)
+                        ->whereIn('account_id', $chunk)
+                        ->update(['status' => 'assigned', 'allocated_date' => $date, 'completed_at' => null]);
+                }
+            }
+
+            if ($byDate && ($lastUsed = max(array_keys($byDate))) > $plan->end_date->toDateString()) {
+                $plan->update(['end_date' => $lastUsed]);
+            }
+
+            return [
+                'updated'      => count($movable),
+                'skipped_done' => count(array_filter($ids, fn ($id) => isset($inPlan[$id]) && !in_array($id, $movable, true))),
+                'not_in_plan'  => count(array_filter($ids, fn ($id) => !isset($inPlan[$id]))),
+                'dates'        => array_map('count', $byDate),
+            ];
+        });
     }
 
     public function cancel(string $mobile): bool
@@ -200,7 +330,8 @@ class TelecallerAllocationService
     }
 
     /**
-     * Reflect a logged call on the matching account in today's allocation.
+     * Reflect a logged call on the matching account in the active plan,
+     * whatever its date (a missed account called later counts too).
      * Called from CallLog's saved event, so manual logs, action-log calls and
      * Knowlarity calls (created as 'pending', resolved by the webhook) all count.
      */
@@ -218,7 +349,7 @@ class TelecallerAllocationService
             // account for that.
             'invalid'  => $log->source === 'knowlarity' ? null : 'skipped',
             // answered, complaint, busy, no_answer, switch_off: the attempt is
-            // logged, so the account is done for this cycle.
+            // logged, so the account is done.
             default    => 'completed',
         };
         if ($status === null) {
@@ -233,7 +364,7 @@ class TelecallerAllocationService
 
         TcAllocationItem::where('plan_id', $planId)
             ->where('account_id', (string) $log->account_id)
-            ->whereIn('status', ['assigned', 'in_progress'])
+            ->whereIn('status', self::OPEN)
             ->update([
                 'status'       => $status,
                 'call_log_id'  => $log->id,
@@ -241,49 +372,16 @@ class TelecallerAllocationService
             ]);
     }
 
-    // ── Daily allocation ─────────────────────────────────────────────────────────
+    // ── Upkeep ───────────────────────────────────────────────────────────────────
 
-    private function allocateDay(TcAllocationPlan $plan, string $today): void
+    private function completeIfDone(TcAllocationPlan $plan): void
     {
-        $start = $plan->start_date->toDateString();
-        $end = $plan->end_date->toDateString();
-        if ($today < $start) {
-            return; // plan hasn't started yet
-        }
-
-        // Carry forward: anything handed out on an earlier day but never worked
-        // goes back to pending at its original rank, so it is served first.
-        TcAllocationItem::where('plan_id', $plan->id)
-            ->whereIn('status', ['assigned', 'in_progress'])
-            ->where('allocated_date', '<', $today)
-            ->update(['status' => 'pending', 'allocated_date' => null]);
-
-        $this->queueNewAccounts($plan);
-        $this->skipLabelled($plan);
-
-        // Re-divide what's left over the days left (today..end_date).
-        $open = TcAllocationItem::where('plan_id', $plan->id)->where('status', 'pending')->count();
-        if ($open === 0) {
+        if (!TcAllocationItem::where('plan_id', $plan->id)->whereIn('status', self::OPEN)->exists()) {
             $plan->update(['status' => 'completed']);
-            return;
-        }
-        $quota = DailyAllocator::quotaFor($open, $today, $start, $end);
-        $plan->update(['daily_capacity' => $quota]);
-
-        $pending = TcAllocationItem::where('plan_id', $plan->id)
-            ->where('status', 'pending')
-            ->orderBy('pincode_rank')->orderBy('account_rank')
-            ->limit($quota)
-            ->pluck('id')->all();
-        $ids = DailyAllocator::take($pending, $quota);
-
-        foreach (array_chunk($ids, 500) as $chunk) {
-            TcAllocationItem::whereIn('id', $chunk)
-                ->update(['status' => 'assigned', 'allocated_date' => $today]);
         }
     }
 
-    /** Accounts that appeared in the plan's pincodes since it was built. */
+    /** Accounts that appeared in the plan's pincodes since it was built — added unscheduled. */
     private function queueNewAccounts(TcAllocationPlan $plan): void
     {
         $candidates = $this->candidates($plan->employee_mobile, $plan->selected_pincodes ?? []);
@@ -321,7 +419,7 @@ class TelecallerAllocationService
             ->whereIn('label', self::EXCLUDED_LABELS)->pluck('account_id')->all();
         foreach (array_chunk($labelled, 500) as $chunk) {
             TcAllocationItem::where('plan_id', $plan->id)
-                ->where('status', 'pending')
+                ->whereIn('status', self::OPEN)
                 ->whereIn('account_id', $chunk)
                 ->update(['status' => 'skipped']);
         }
@@ -365,8 +463,9 @@ class TelecallerAllocationService
     }
 
     /**
-     * Insert new queue rows as pending; for rows already in the plan only the
-     * position (pincode + ranks) changes — status and history are kept.
+     * Insert new rows (unscheduled `pending` unless the row carries its own
+     * status/date); for rows already in the plan only the position
+     * (pincode + ranks) changes — status, date and history are kept.
      */
     private function upsertQueue(TcAllocationPlan $plan, array $rows): void
     {
@@ -375,6 +474,7 @@ class TelecallerAllocationService
             'plan_id'         => $plan->id,
             'employee_mobile' => $plan->employee_mobile,
             'status'          => 'pending',
+            'allocated_date'  => null,
             'created_at'      => $now,
             'updated_at'      => $now,
         ], $rows);

@@ -6,7 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_service.dart';
 import '../../services/user_service.dart';
 import '../../widgets/account_map_screen.dart';
-import '../shared/auto_distribute_dialog.dart';
+import '../shared/auto_distribute_flow.dart';
 import '../telecaller/daily_plan_sheet.dart';
 import 'customer_detail_screen.dart';
 
@@ -45,6 +45,23 @@ void _tallyPlanIntoDayCounts(Map<String, dynamic> plan, Map<String, int> counts)
         }
       }
   }
+}
+
+// Daily Calling Plan (telecaller allocation) — each account in the plan has
+// one date (actual if already handed out, otherwise the server's forecast),
+// tallied into the same Mon–Sun chips as the beat plans.
+void _tallyDateIntoDayCounts(String ymd, Map<String, int> counts) {
+  final parsed = DateTime.tryParse(ymd);
+  if (parsed == null) return;
+  final key = _kDayOrder[parsed.weekday - 1];
+  if (counts.containsKey(key)) counts[key] = counts[key]! + 1;
+}
+
+String? _allocDateLabel(String? ymd, {bool missed = false}) {
+  final d = ymd == null ? null : DateTime.tryParse(ymd);
+  if (d == null) return null;
+  const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return '${missed ? 'Missed' : 'Daily Plan'}: ${_kDayOrder[d.weekday - 1]} ${d.day} ${m[d.month - 1]}';
 }
 
 class AllottedCustomerAccountsScreen extends StatefulWidget {
@@ -89,6 +106,31 @@ class _AllottedCustomerAccountsScreenState
   // there's no active plan. Only loaded for telecallers.
   Map<String, dynamic>? _allocPlan;
   bool get _isTelecaller => UserService.currentRole == 'telecaller';
+
+  // account_id → its fixed Daily Plan date (Y-m-d), from the plan's `schedule`.
+  Map<String, String> get _allocDates {
+    final s = _allocPlan?['schedule'];
+    if (s is! Map) return const {};
+    return {
+      for (final e in s.entries)
+        if (e.value is Map) '${e.key}': '${(e.value as Map)['date']}',
+    };
+  }
+
+  // Accounts whose date has passed without a call — the telecaller
+  // reassigns them with Auto-Distribute (nothing moves automatically).
+  Set<String> get _missedIds {
+    final s = _allocPlan?['schedule'];
+    final today = '${_allocPlan?['today'] ?? ''}';
+    if (s is! Map || today.isEmpty) return const {};
+    return {
+      for (final e in s.entries)
+        if (e.value is Map &&
+            '${(e.value as Map)['date']}'.compareTo(today) < 0 &&
+            const ['assigned', 'in_progress'].contains((e.value as Map)['status']))
+          '${e.key}',
+    };
+  }
 
   // ── Load ─────────────────────────────────────────────────────────────────────
 
@@ -332,7 +374,6 @@ class _AllottedCustomerAccountsScreenState
         inPlan: inPlan,
         planStart: DateTime.tryParse('${_allocPlan?['start_date'] ?? ''}'),
         planEnd: DateTime.tryParse('${_allocPlan?['end_date'] ?? ''}'),
-        pendingInPlan: (_allocPlan?['pending'] as num?)?.toInt() ?? 0,
       ),
     );
     if (result == null || !mounted) return;
@@ -383,10 +424,11 @@ class _AllottedCustomerAccountsScreenState
     final day = (plan?['day'] as num?)?.toInt() ?? 0;
     final done = (plan?['done'] as num?)?.toInt() ?? 0;
     final pending = (plan?['pending'] as num?)?.toInt() ?? 0;
-    final perDay = (plan?['daily_capacity'] as num?)?.toInt() ?? 0;
+    final todayCount = (plan?['today_count'] as num?)?.toInt() ?? 0;
     final totalDays = (plan?['total_days'] as num?)?.toInt() ?? 0;
     final daysLeft = (plan?['days_left'] as num?)?.toInt() ?? 0;
-    final overdue = plan?['overdue'] == true;
+    final missedCount = (plan?['missed'] as num?)?.toInt() ?? 0;
+    final unscheduled = (plan?['unscheduled'] as num?)?.toInt() ?? 0;
     final pinCount = ((plan?['selected_pincodes'] as List?) ?? []).length;
     String fmtDate(dynamic v) {
       final d = DateTime.tryParse('${v ?? ''}');
@@ -395,9 +437,11 @@ class _AllottedCustomerAccountsScreenState
       return '${d.day} ${m[d.month - 1]}';
     }
     final dayLabel = day == 0 ? 'Starts ${fmtDate(plan?['start_date'])}' : 'Day $day of $totalDays';
-    final left = overdue
-        ? ' · overdue'
-        : (pending > 0 && daysLeft > 0 ? ' · $daysLeft day(s) left' : '');
+    final left = daysLeft > 0 ? ' · $daysLeft day(s) left' : '';
+    final attention = [
+      if (missedCount > 0) '$missedCount missed',
+      if (unscheduled > 0) '$unscheduled without date',
+    ];
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -429,11 +473,18 @@ class _AllottedCustomerAccountsScreenState
           Text(
             hasPlan
                 ? '${fmtDate(plan['start_date'])} – ${fmtDate(plan['end_date'])} · $pinCount pincode(s) · $dayLabel\n'
-                    '$done done · $pending pending · ~$perDay/day$left'
-                : 'Pick pincodes and a From–To date range. Customers are divided over those days, '
-                    'ordered by location, and a fresh list appears in Today Worklist each day.',
+                    '$todayCount today · $done done · $pending pending$left'
+                : 'Pick pincodes and a From–To date range. Customers are split once over those days, '
+                    'ordered by location; each day\'s list appears in Today Worklist.',
             style: const TextStyle(fontSize: 12, color: Colors.black87, height: 1.35),
           ),
+          if (attention.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              '${attention.join(' · ')} — select them below and tap "Auto-Distribute" to give them new dates',
+              style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Colors.red.shade700),
+            ),
+          ],
           const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
@@ -483,6 +534,9 @@ class _AllottedCustomerAccountsScreenState
     final counts = {for (final d in _dayOrder) d: 0};
     for (final plan in _beatPlans.values) {
       _tallyPlanIntoDayCounts(plan, counts);
+    }
+    for (final ymd in _allocDates.values) {
+      _tallyDateIntoDayCounts(ymd, counts);
     }
     return counts;
   }
@@ -764,40 +818,83 @@ class _AllottedCustomerAccountsScreenState
   }
 
   Future<void> _showAutoDistributeDialog() async {
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AutoDistributeDialog(selectedCount: _selected.length),
-    );
+    final result = await showAutoDistributeFlow(context, _selected.length);
     if (result == null || !mounted) return;
 
     final startDate = result['start_date'] as String;
-    final endDate   = result['end_date'] as String;
+    final endDate   = result['end_date'] as String?; // From–To mode
+    final nDays     = result['days'] as int?;        // "N days" mode
+    final weekdays  = (result['weekdays'] as List).cast<String>();
 
-    // Round-robin should follow the order the user actually picked
-    // customers in (so "select A, then B, then C" maps A/B/C onto
-    // day 1/2/3 in that order), not the pincode-grouped display order.
-    // _selected is a LinkedHashSet, so it already preserves that order —
-    // build an id-keyed lookup once and walk _selected instead of _groups.
+    // Follow the order the user actually picked customers in, not the
+    // pincode-grouped display order. _selected is a LinkedHashSet, so it
+    // already preserves that order — build an id-keyed lookup once and walk
+    // _selected instead of _groups.
     final byKey = <String, Map<String, dynamic>>{};
     for (final g in _groups) {
       for (final a in (g['accounts'] as List<Map<String, dynamic>>)) {
         byKey[_key(a)] = a;
       }
     }
-    final selected = _selected.map((k) => byKey[k]).whereType<Map<String, dynamic>>().toList();
+    var selected = _selected.map((k) => byKey[k]).whereType<Map<String, dynamic>>().toList();
+
+    // With a Daily Plan the customers are laid out in the plan's pincode
+    // order (stable within a pincode), so each day covers neighbouring pincodes.
+    final usePlan = _isTelecaller && _allocPlan != null;
+    if (usePlan) {
+      final rank = <String, int>{
+        for (final (i, p) in ((_allocPlan!['pincode_sequence'] as List?) ?? []).indexed) '$p': i,
+      };
+      int rankOf(Map<String, dynamic> a) => rank['${a['pincode'] ?? ''}'] ?? rank.length;
+      final indexed = selected.indexed.toList()
+        ..sort((x, y) {
+          final r = rankOf(x.$2) - rankOf(y.$2);
+          return r != 0 ? r : x.$1 - y.$1;
+        });
+      selected = [for (final e in indexed) e.$2];
+    }
 
     final accountIds = selected.map((a) => a['id'] as String? ?? '').where((id) => id.isNotEmpty).toList();
-    final accountTypes = selected.map((a) => (a['_type'] as String?) == 'customer' ? 'customer' : 'lead').toList();
+    final accountTypes = selected
+        .where((a) => (a['id'] as String? ?? '').isNotEmpty)
+        .map((a) => (a['_type'] as String?) == 'customer' ? 'customer' : 'lead')
+        .toList();
 
     if (accountIds.isEmpty) return;
 
     if (mounted) setState(() => _actionLoading = true);
+
+    if (usePlan) {
+      // Active Daily Plan → the dates go into the plan.
+      final res = await ApiService.distributeAllocation(
+        accountIds,
+        startDate: startDate,
+        endDate: endDate,
+        days: nDays,
+        weekdays: weekdays,
+      );
+      if (!mounted) return;
+      final data = res['data'];
+      final ok = res['success'] == true;
+      setState(() {
+        _actionLoading = false;
+        if (data is Map) _allocPlan = Map<String, dynamic>.from(data);
+        if (ok) _selected.clear();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('${res['message']}'),
+        backgroundColor: ok ? const Color(0xFF43A047) : Colors.red,
+      ));
+      return;
+    }
+
     final res = await ApiService.autoDistributeBeatPlan(
       accountIds: accountIds,
       accountTypes: accountTypes,
       startDate: startDate,
       endDate: endDate,
+      days: nDays,
+      weekdays: weekdays,
     );
     if (!mounted) return;
 
@@ -1026,9 +1123,16 @@ class _AllottedCustomerAccountsScreenState
             final leads = accounts.where((a) => (a['_type'] as String?) == 'lead').toList();
             final customers = accounts.where((a) => (a['_type'] as String?) == 'customer').toList();
 
-            // Count with beat plans
-            final leadsWithPlan = leads.where((a) => _beatPlans.containsKey(a['id'] as String? ?? '')).length;
-            final customersWithPlan = customers.where((a) => _beatPlans.containsKey(a['id'] as String? ?? '')).length;
+            // "Assign" = has a beat plan OR is in the telecaller's Daily Plan.
+            final allocDates = _allocDates;
+            bool assigned(Map<String, dynamic> a) {
+              final id = '${a['id'] ?? ''}';
+              return _beatPlans.containsKey(id) || allocDates.containsKey(id);
+            }
+            final leadsWithPlan = leads.where(assigned).length;
+            final customersWithPlan = customers.where(assigned).length;
+            final missedIds = _missedIds;
+            bool missed(Map<String, dynamic> a) => missedIds.contains('${a['id'] ?? ''}');
 
             // Selected by type
             final selectedLeads = leads.where((a) => _selected.contains(_key(a))).length;
@@ -1054,6 +1158,10 @@ class _AllottedCustomerAccountsScreenState
               keyOf:        _key,
               onToggleAccount: _toggleSelect,
               beatPlans:    _beatPlans,
+              allocDates:   allocDates,
+              missedIds:    missedIds,
+              missedL:      leads.where(missed).length,
+              missedC:      customers.where(missed).length,
             );
           }),
 
@@ -1140,6 +1248,10 @@ class _PincodeSection extends StatefulWidget {
   final String Function(Map<String, dynamic>) keyOf;
   final void Function(String)        onToggleAccount;
   final Map<String, Map<String, dynamic>> beatPlans;
+  final Map<String, String>          allocDates; // Daily Plan: account_id → Y-m-d
+  final Set<String>                  missedIds;  // Daily Plan: date passed, not called
+  final int                          missedL;
+  final int                          missedC;
 
   const _PincodeSection({
     required this.pincode,
@@ -1161,6 +1273,10 @@ class _PincodeSection extends StatefulWidget {
     required this.keyOf,
     required this.onToggleAccount,
     required this.beatPlans,
+    this.allocDates = const {},
+    this.missedIds = const {},
+    this.missedL = 0,
+    this.missedC = 0,
   });
 
   @override
@@ -1187,8 +1303,10 @@ class _PincodeSectionState extends State<_PincodeSection> {
     });
   }
 
-  bool _hasPlan(Map<String, dynamic> a) =>
-      widget.beatPlans.containsKey(a['id'] as String? ?? '');
+  bool _hasPlan(Map<String, dynamic> a) {
+    final id = '${a['id'] ?? ''}';
+    return widget.beatPlans.containsKey(id) || widget.allocDates.containsKey(id);
+  }
 
   // Per-pincode breakdown: weekly/specific-dates day counts + monthly/n_days
   // totals for this pincode's assigned accounts.
@@ -1197,6 +1315,8 @@ class _PincodeSectionState extends State<_PincodeSection> {
     var monthly = 0;
     var nDays   = 0;
     for (final a in widget.filteredAccounts) {
+      final allocDate = widget.allocDates['${a['id'] ?? ''}'];
+      if (allocDate != null) _tallyDateIntoDayCounts(allocDate, counts);
       final plan = widget.beatPlans[a['id'] as String? ?? ''];
       if (plan == null) continue;
       switch (plan['frequency'] as String?) {
@@ -1219,6 +1339,8 @@ class _PincodeSectionState extends State<_PincodeSection> {
         return widget.filteredAccounts.where(_hasPlan).toList();
       case 'remaining':
         return widget.filteredAccounts.where((a) => !_hasPlan(a)).toList();
+      case 'missed':
+        return widget.filteredAccounts.where((a) => widget.missedIds.contains('${a['id'] ?? ''}')).toList();
       case 'selected':
         return widget.filteredAccounts
             .where((a) => widget.selectedKeys.contains(widget.keyOf(a)))
@@ -1311,6 +1433,14 @@ class _PincodeSectionState extends State<_PincodeSection> {
                       active: _filter == 'remaining',
                       onTap: () => _switchFilter('remaining'),
                     )),
+                    if (widget.missedL + widget.missedC > 0) ...[
+                      const SizedBox(width: 5),
+                      Expanded(child: _FilterBtn(
+                        label: 'Missed', countL: widget.missedL, countC: widget.missedC,
+                        active: _filter == 'missed',
+                        onTap: () => _switchFilter('missed'),
+                      )),
+                    ],
                     const SizedBox(width: 5),
                     Expanded(child: _FilterBtn(
                       label: 'Selected', countL: widget.selectedL, countC: widget.selectedC,
@@ -1375,6 +1505,8 @@ class _PincodeSectionState extends State<_PincodeSection> {
               isSelected: selectedKeys.contains(keyOf(a)),
               onCheckTap: () => onToggleAccount(keyOf(a)),
               plan:       beatPlans[a['id'] as String? ?? ''],
+              allocDate:  widget.allocDates['${a['id'] ?? ''}'],
+              allocMissed: widget.missedIds.contains('${a['id'] ?? ''}'),
             )),
             if (visibleAccounts.isEmpty)
               Padding(
@@ -1402,12 +1534,16 @@ class _AccountCard extends StatelessWidget {
   final bool                  isSelected;
   final VoidCallback          onCheckTap; // checkbox toggle
   final Map<String, dynamic>? plan;       // active beat plan, if any
+  final String?               allocDate;  // Daily Plan day (Y-m-d), if any
+  final bool                  allocMissed; // that day passed without a call
 
   const _AccountCard({
     required this.account,
     required this.isSelected,
     required this.onCheckTap,
     this.plan,
+    this.allocDate,
+    this.allocMissed = false,
   });
 
   // Build a short human label for the active plan
@@ -1614,24 +1750,29 @@ class _AccountCard extends StatelessWidget {
             if (area.isNotEmpty)
               Text('Main area : $area',
                   style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
-            // Assigned beat-plan chip
-            if (_planLabel != null) ...[
+            // Assigned beat-plan / Daily Plan chips
+            for (final (label, red) in [
+              if (_planLabel != null) (_planLabel!, false),
+              if (_allocDateLabel(allocDate, missed: allocMissed) case final l?) (l, allocMissed),
+            ]) ...[
               const SizedBox(height: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF43A047).withValues(alpha: 0.10),
+                  color: (red ? Colors.red : const Color(0xFF43A047)).withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFF43A047).withValues(alpha: 0.30)),
+                  border: Border.all(color: (red ? Colors.red : const Color(0xFF43A047)).withValues(alpha: 0.30)),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.event_repeat_rounded, size: 12, color: Color(0xFF2E7D32)),
+                    Icon(red ? Icons.event_busy_rounded : Icons.event_repeat_rounded,
+                        size: 12, color: red ? Colors.red.shade700 : const Color(0xFF2E7D32)),
                     const SizedBox(width: 4),
-                    Text(_planLabel!,
-                        style: const TextStyle(
-                            fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF2E7D32))),
+                    Text(label,
+                        style: TextStyle(
+                            fontSize: 10.5, fontWeight: FontWeight.w700,
+                            color: red ? Colors.red.shade700 : const Color(0xFF2E7D32))),
                   ],
                 ),
               ),

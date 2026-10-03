@@ -85,6 +85,78 @@ class TelecallerAllocationController extends Controller
         ]);
     }
 
+    // ── POST /telecaller/allocation/reassign — set a date for chosen accounts ───
+    // For missed accounts (date passed, not called), unscheduled ones (added
+    // after the plan was made) or moving any not-yet-called account.
+    public function reassign(): JsonResponse
+    {
+        $mobile = $this->mobile();
+        $today = Carbon::today()->toDateString();
+
+        $data = validator(request()->only(['account_ids', 'date']), [
+            'account_ids'   => 'required|array|min:1',
+            'account_ids.*' => 'required|string|max:64',
+            'date'          => "required|date_format:Y-m-d|after_or_equal:$today",
+        ])->validate();
+
+        $updated = $this->allocation->reassign($mobile, $data['account_ids'], $data['date']);
+
+        return response()->json([
+            'success' => $updated > 0,
+            'message' => $updated > 0 ? "$updated customer(s) set to {$data['date']}" : 'None of these customers can be rescheduled',
+            'updated' => $updated,
+            'data'    => $this->allocation->progress($mobile),
+        ], $updated > 0 ? 200 : 422);
+    }
+
+    // ── POST /telecaller/allocation/distribute — auto-distribute over weekdays ──
+    // Selected accounts (in the order sent) are spread in even consecutive
+    // blocks over the chosen weekdays between start_date and end_date.
+    public function distribute(): JsonResponse
+    {
+        $mobile = $this->mobile();
+        $today = Carbon::today()->toDateString();
+
+        $maxDays = (int) config('telecaller.allocation_max_days', 366);
+        // Either a To date (From–To range) or `days` ("N days" mode: the first
+        // N dates on the chosen weekdays counted from start_date).
+        $data = validator(request()->only(['account_ids', 'start_date', 'end_date', 'days', 'weekdays']), [
+            'account_ids'   => 'required|array|min:1',
+            'account_ids.*' => 'required|string|max:64',
+            'start_date'    => "required|date_format:Y-m-d|after_or_equal:$today",
+            'end_date'      => 'required_without:days|nullable|date_format:Y-m-d|after_or_equal:start_date',
+            'days'          => "required_without:end_date|nullable|integer|min:1|max:$maxDays",
+            'weekdays'      => 'nullable|array',
+            'weekdays.*'    => 'string|in:' . implode(',', DailyAllocator::WEEKDAYS),
+        ])->validate();
+
+        $days = isset($data['days']) ? (int) $data['days'] : null;
+        if ($days === null && DailyAllocator::daysInclusive($data['start_date'], $data['end_date']) > $maxDays) {
+            throw ValidationException::withMessages(['end_date' => "The date range can be at most $maxDays days."]);
+        }
+
+        $dates = DailyAllocator::resolveDates($data['start_date'], $data['end_date'] ?? null, $days, $data['weekdays'] ?? []);
+        $result = $this->allocation->distribute($mobile, $data['account_ids'], $dates);
+        if ($result === null) {
+            return response()->json(['success' => false, 'message' => 'No active daily plan'], 404);
+        }
+
+        $ok = $result['updated'] > 0;
+        $parts = ["{$result['updated']} customer(s) distributed over " . count($result['dates']) . ' day(s)'];
+        if ($result['skipped_done'] > 0) $parts[] = "{$result['skipped_done']} already called";
+        if ($result['not_in_plan'] > 0) $parts[] = "{$result['not_in_plan']} not in your daily plan";
+
+        return response()->json([
+            'success'      => $ok,
+            'message'      => $ok ? implode(' · ', $parts) : 'None of these customers can be distributed (' . implode(' · ', array_slice($parts, 1)) . ')',
+            'updated'      => $result['updated'],
+            'skipped_done' => $result['skipped_done'],
+            'not_in_plan'  => $result['not_in_plan'],
+            'dates'        => $result['dates'],
+            'data'         => $this->allocation->progress($mobile),
+        ], $ok ? 200 : 422);
+    }
+
     // ── PATCH /telecaller/allocation/items/{id} — manual skip / in progress ─────
     public function updateItem(string $id): JsonResponse
     {

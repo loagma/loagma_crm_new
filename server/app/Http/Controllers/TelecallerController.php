@@ -8,6 +8,7 @@ use App\Models\CallLog;
 use App\Models\DeliStaff;
 use App\Models\InchargeAssign;
 use App\Models\LeadsAccount;
+use App\Models\TcAllocationItem;
 use App\Models\TcAllocationPlan;
 use App\Models\TelecallerLabel;
 use App\Services\KnowlarityService;
@@ -218,10 +219,12 @@ class TelecallerController extends Controller
                     ['label' => 'Interested', 'value' => $interested],
                     ['label' => 'Customers', 'value' => $conversions],
                 ],
-                // The active allocation plan's current per-day count (remaining
-                // customers ÷ remaining days); 60 is the default without a plan.
-                'daily_target' => (int) (TcAllocationPlan::where('employee_mobile', $mobile)
-                    ->where('status', 'active')->value('daily_capacity') ?? 60),
+                // Customers dated today in the active Daily Plan; 60 is the
+                // default without a plan.
+                'daily_target' => ($planId = TcAllocationPlan::where('employee_mobile', $mobile)
+                    ->where('status', 'active')->value('id'))
+                    ? TcAllocationItem::where('plan_id', $planId)->where('allocated_date', $todayStr)->count()
+                    : 60,
             ],
         ]);
     }

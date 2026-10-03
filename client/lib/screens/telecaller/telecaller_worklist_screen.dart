@@ -5,7 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../widgets/account_map_screen.dart';
-import '../shared/auto_distribute_dialog.dart';
+import '../shared/auto_distribute_flow.dart';
 import 'telecaller_mock_data.dart';
 
 /// Worklist — Customers-style list (mockup): search, filter chips, and rich
@@ -522,53 +522,86 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
   );
 
   Future<void> _showAutoDistributeDialog() async {
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AutoDistributeDialog(selectedCount: _selected.length),
-    );
+    final result = await showAutoDistributeFlow(context, _selected.length);
     if (result == null || !mounted) return;
 
     final startDate = result['start_date'] as String;
-    final endDate   = result['end_date'] as String;
+    final endDate   = result['end_date'] as String?; // From–To mode
+    final nDays     = result['days'] as int?;        // "N days" mode
+    final weekdays  = (result['weekdays'] as List).cast<String>();
 
-    // Round-robin should follow the order the user actually selected
-    // accounts in, not their position in the (sorted/filtered) _items list —
-    // _selected is a LinkedHashSet so it already preserves that order.
+    // Follow the order the user actually selected accounts in, not their
+    // position in the (sorted/filtered) _items list — _selected is a
+    // LinkedHashSet so it already preserves that order.
     final byId = {for (final w in _items) '${w['account_id']}': w};
-    final selected = _selected.map((id) => byId[id]).whereType<Map<String, dynamic>>().toList();
-    final accountIds = selected.map((w) => '${w['account_id'] ?? ''}').where((id) => id.isNotEmpty).toList();
-    final accountTypes = selected.map((w) => (w['account_type'] as String?) == 'customer' ? 'customer' : 'lead').toList();
-
-    if (accountIds.isEmpty) return;
+    var selected = _selected.map((id) => byId[id]).whereType<Map<String, dynamic>>().toList();
 
     setState(() => _distributing = true);
-    final res = await ApiService.autoDistributeBeatPlan(
-      accountIds: accountIds,
-      accountTypes: accountTypes,
-      startDate: startDate,
-      endDate: endDate,
-    );
+
+    // An active Daily Plan takes the dates (in its pincode order); otherwise
+    // fall back to the beat plan.
+    final plan = await ApiService.getAllocationPlan();
+    if (!mounted) return;
+    if (plan != null) {
+      final rank = <String, int>{
+        for (final (i, p) in ((plan['pincode_sequence'] as List?) ?? []).indexed) '$p': i,
+      };
+      int rankOf(Map<String, dynamic> w) => rank['${w['pincode'] ?? ''}'] ?? rank.length;
+      final indexed = selected.indexed.toList()
+        ..sort((x, y) {
+          final r = rankOf(x.$2) - rankOf(y.$2);
+          return r != 0 ? r : x.$1 - y.$1;
+        });
+      selected = [for (final e in indexed) e.$2];
+    }
+
+    final withId = selected.where((w) => '${w['account_id'] ?? ''}'.isNotEmpty).toList();
+    final accountIds = withId.map((w) => '${w['account_id']}').toList();
+    final accountTypes = withId.map((w) => (w['account_type'] as String?) == 'customer' ? 'customer' : 'lead').toList();
+
+    if (accountIds.isEmpty) {
+      setState(() => _distributing = false);
+      return;
+    }
+
+    bool ok;
+    String message;
+    if (plan != null) {
+      final res = await ApiService.distributeAllocation(
+        accountIds,
+        startDate: startDate,
+        endDate: endDate,
+        days: nDays,
+        weekdays: weekdays,
+      );
+      ok = res['success'] == true;
+      message = '${res['message']}';
+    } else {
+      final res = await ApiService.autoDistributeBeatPlan(
+        accountIds: accountIds,
+        accountTypes: accountTypes,
+        startDate: startDate,
+        endDate: endDate,
+        days: nDays,
+        weekdays: weekdays,
+      );
+      ok = res != null && res['success'] == true;
+      message = ok ? (res['message']?.toString() ?? 'Accounts auto-distributed') : 'Failed to auto-distribute. Try again.';
+    }
     if (!mounted) return;
 
-    if (res != null && res['success'] == true) {
-      setState(() {
-        _distributing = false;
+    setState(() {
+      _distributing = false;
+      if (ok) {
         _selected.clear();
         _selectMode = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(res['message']?.toString() ?? 'Accounts auto-distributed'),
-        backgroundColor: const Color(0xFF43A047),
-      ));
-      _load();
-    } else {
-      setState(() => _distributing = false);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Failed to auto-distribute. Try again.'),
-        backgroundColor: Colors.red,
-      ));
-    }
+      }
+    });
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: ok ? const Color(0xFF43A047) : Colors.red,
+    ));
+    if (ok) _load();
   }
 
   // ── Daily allocation banner ─────────────────────────────────────────────────

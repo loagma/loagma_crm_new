@@ -316,6 +316,8 @@ Route::prefix('telecaller')->group(function () {
         Route::post('/allocation',              [TelecallerAllocationController::class, 'store']);
         Route::delete('/allocation',            [TelecallerAllocationController::class, 'destroy']);
         Route::get('/allocation/today',         [TelecallerAllocationController::class, 'today']);
+        Route::post('/allocation/reassign',     [TelecallerAllocationController::class, 'reassign']);
+        Route::post('/allocation/distribute',   [TelecallerAllocationController::class, 'distribute']);
         Route::patch('/allocation/items/{id}',  [TelecallerAllocationController::class, 'updateItem']);
     });
 

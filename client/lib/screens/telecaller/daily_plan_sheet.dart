@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
 /// Bottom sheet for the telecaller's geographic daily calling plan: pick
-/// pincodes (or Select All) and a From–To date range. The customers are
-/// divided over those days (every calendar day counts) and re-divided each
-/// morning by the server. Pincodes already in the active plan stay ticked and
-/// can't be removed — new ones are merged in; on an update the From date is
-/// fixed and only the To date can move.
+/// pincodes (or Select All) and a From–To date range. On create the customers
+/// are split once over those days (every calendar day counts) and each keeps
+/// that fixed date. Pincodes already in the active plan stay ticked and can't
+/// be removed — new ones are merged in without dates; on an update the From
+/// date is fixed and only the To date can move.
 /// Pops with `(pincodes, start, end)` or null.
 class DailyPlanSheet extends StatefulWidget {
   const DailyPlanSheet({
@@ -14,14 +14,12 @@ class DailyPlanSheet extends StatefulWidget {
     required this.inPlan,
     this.planStart,
     this.planEnd,
-    this.pendingInPlan = 0,
   });
 
   final List<({String pincode, int count})> pincodes;
   final Set<String> inPlan;
   final DateTime? planStart; // active plan's From date (locked on update)
   final DateTime? planEnd;
-  final int pendingInPlan; // accounts still open in the active plan
 
   @override
   State<DailyPlanSheet> createState() => _DailyPlanSheetState();
@@ -86,17 +84,14 @@ class _DailyPlanSheetState extends State<DailyPlanSheet> {
     final selectable = _selectable;
     final allPicked = selectable.every(_picked.contains);
 
-    // Preview of the split: accounts ÷ days. On an update the days counted
-    // are today..To (or From..To if the plan hasn't started) and the
-    // accounts are what's still open plus the newly added pincodes.
-    final today = _day(DateTime.now());
-    final from = _start == null ? null : (_isUpdate && _start!.isBefore(today) ? today : _start!);
-    final days = (from != null && _end != null) ? _end!.difference(from).inDays + 1 : 0;
+    // New plan: preview of the one-time split (accounts ÷ days). Update:
+    // nothing is re-divided — accounts of newly added pincodes come in
+    // without a date for the telecaller to set.
+    final days = (_start != null && _end != null) ? _end!.difference(_start!).inDays + 1 : 0;
     final newAccounts = widget.pincodes
         .where((p) => _picked.contains(p.pincode) && !widget.inPlan.contains(p.pincode))
         .fold(0, (s, p) => s + p.count);
-    final toDivide = _isUpdate ? widget.pendingInPlan + newAccounts : pickedAccounts;
-    final perDay = days > 0 ? (toDivide / days).ceil() : 0;
+    final perDay = days > 0 ? (pickedAccounts / days).ceil() : 0;
     final canSubmit = _start != null && _end != null && days > 0 && _picked.isNotEmpty;
 
     return Padding(
@@ -142,7 +137,12 @@ class _DailyPlanSheetState extends State<DailyPlanSheet> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
                 child: Text(
-                  '$toDivide customers ÷ $days day(s) ≈ $perDay per day',
+                  _isUpdate
+                      ? (newAccounts > 0
+                          ? '$newAccounts new customer(s) will be added without a date — '
+                              'select them in the list and tap "Auto-Distribute". Existing dates stay as they are.'
+                          : 'Existing dates stay as they are.')
+                      : '$pickedAccounts customers ÷ $days day(s) ≈ $perDay per day (each customer gets a fixed date)',
                   style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF8A6D1F)),
                 ),
               ),

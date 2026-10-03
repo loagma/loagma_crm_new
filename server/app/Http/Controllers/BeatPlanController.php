@@ -6,6 +6,7 @@ use App\Models\ActionLog;
 use App\Models\BeatPlan;
 use App\Models\BeatPlanFollowup;
 use App\Models\LeadsAccount;
+use App\Support\DailyAllocator;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -238,7 +239,7 @@ class BeatPlanController extends Controller
         }
     }
 
-    // ── 1b. Auto-distribute (select N accounts, spread round-robin over a date range) ──
+    // ── 1b. Auto-distribute (select N accounts, spread in even blocks over the chosen weekdays of a date range) ──
 
     public function autoDistribute(): JsonResponse
     {
@@ -249,25 +250,32 @@ class BeatPlanController extends Controller
                 'account_types'    => 'required|array',
                 'account_types.*'  => 'required|string|in:lead,customer',
                 'start_date'       => 'required|date_format:Y-m-d',
-                'end_date'         => 'required|date_format:Y-m-d|after_or_equal:start_date',
+                'end_date'         => 'required_without:days|nullable|date_format:Y-m-d|after_or_equal:start_date',
+                'days'             => 'required_without:end_date|nullable|integer|min:1|max:' . (int) config('telecaller.allocation_max_days', 366), // "N days" mode: first N matching days from start_date
+                'weekdays'         => 'nullable|array', // short names Mon..Sun; empty/absent = every day
+                'weekdays.*'       => 'string|in:' . implode(',', DailyAllocator::WEEKDAYS),
                 'salesman_id'      => 'nullable|string', // allow optional override for admin/telecaller
             ]);
 
             $salesman = $data['salesman_id'] ?? $this->salesmanId();
 
-            $dates = [];
-            $cursor = Carbon::createFromFormat('Y-m-d', $data['start_date'], self::TZ)->startOfDay();
-            $end    = Carbon::createFromFormat('Y-m-d', $data['end_date'], self::TZ)->startOfDay();
-            while ($cursor->lte($end)) {
-                $dates[] = $cursor->toDateString();
-                $cursor->addDay();
+            $dates = DailyAllocator::resolveDates(
+                $data['start_date'], $data['end_date'] ?? null, isset($data['days']) ? (int) $data['days'] : null, $data['weekdays'] ?? []
+            );
+            if (empty($dates)) {
+                return response()->json([
+                    'success' => false,
+                    'error'   => 'None of the selected days falls between these dates.',
+                ], 422);
             }
+            // Consecutive even blocks in the order the accounts were selected.
+            $assigned = DailyAllocator::blocksOver(count($data['account_ids']), $dates);
 
             $saved = [];
             $counts = array_fill_keys($dates, 0);
             foreach ($data['account_ids'] as $i => $accountId) {
                 $accountType = $data['account_types'][$i] ?? 'lead';
-                $date = $dates[$i % count($dates)];
+                $date = $assigned[$i];
                 $plan = BeatPlan::updateOrCreate(
                     ['account_id' => $accountId, 'salesman_id' => $salesman],
                     [
@@ -298,6 +306,8 @@ class BeatPlanController extends Controller
                 'success' => false,
                 'error'   => 'Authentication failed: ' . $e->getMessage(),
             ], 401);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e; // let Laravel answer 422 instead of the generic 500 below
         } catch (\Exception $e) {
             \Log::error('Beat plan auto-distribute error', ['exception' => $e]);
             return response()->json([

@@ -1429,6 +1429,69 @@ class ApiService {
       }) ??
       {'success': false, 'message': 'Request failed'};
 
+  /// Auto-distribute [accountIds] (in selection order) over the chosen
+  /// [weekdays] (Mon..Sun) between [startDate] and [endDate] in the active
+  /// Daily Plan, in even consecutive blocks. Returns {success, message,
+  /// data: plan progress}.
+  static Future<Map<String, dynamic>> distributeAllocation(
+    List<String> accountIds, {
+    required String startDate,
+    String? endDate,   // From–To mode…
+    int? days,         // …or "N days" mode (first N matching weekdays from startDate)
+    required List<String> weekdays,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/allocation/distribute');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({
+            'account_ids': accountIds,
+            'start_date': startDate,
+            'end_date': ?endDate,
+            'days': ?days,
+            'weekdays': weekdays,
+          }))
+          .timeout(const Duration(seconds: 60));
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map) {
+        final errors = decoded['errors'];
+        final firstError = errors is Map && errors.isNotEmpty ? errors.values.first : null;
+        return {
+          'success': decoded['success'] == true,
+          'message': '${firstError is List ? firstError.first : decoded['message'] ?? 'Request failed'}',
+          'data': decoded['data'],
+        };
+      }
+    } catch (e) {
+      print('distributeAllocation failed: $e');
+    }
+    return {'success': false, 'message': 'Network error'};
+  }
+
+  /// Set the plan date (yyyy-MM-dd, today or later) of the given accounts —
+  /// for missed, unscheduled or not-yet-called ones. Returns
+  /// {success, message, data: plan progress}.
+  static Future<Map<String, dynamic>> reassignAllocation(List<String> accountIds, String date) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/telecaller/allocation/reassign');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode({'account_ids': accountIds, 'date': date}))
+          .timeout(const Duration(seconds: 30));
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map) {
+        final errors = decoded['errors'];
+        final firstError = errors is Map && errors.isNotEmpty ? errors.values.first : null;
+        return {
+          'success': decoded['success'] == true,
+          'message': '${firstError is List ? firstError.first : decoded['message'] ?? 'Request failed'}',
+          'data': decoded['data'],
+        };
+      }
+    } catch (e) {
+      print('reassignAllocation failed: $e');
+    }
+    return {'success': false, 'message': 'Network error'};
+  }
+
   static Future<bool> cancelAllocationPlan() async =>
       (await _tcAllocationRequest('DELETE', ''))?['success'] == true;
 
@@ -2341,8 +2404,10 @@ class ApiService {
     required List<String> accountIds,
     required List<String> accountTypes,  // 'lead' or 'customer' for each account
     required String startDate,           // YYYY-MM-DD
-    required String endDate,             // YYYY-MM-DD
+    String? endDate,                     // YYYY-MM-DD (From–To mode)
+    int? days,                           // "N days" mode: first N matching weekdays from startDate
     String? salesmanId,                  // override — e.g. telecaller's own mobile
+    List<String>? weekdays,              // Mon..Sun; only these days get accounts (null = every day)
   }) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/beat-plan/auto-distribute');
     try {
@@ -2350,8 +2415,10 @@ class ApiService {
         'account_ids':   accountIds,
         'account_types': accountTypes,
         'start_date':    startDate,
-        'end_date':      endDate,
+        'end_date':      ?endDate,
+        'days':          ?days,
         'salesman_id':   ?salesmanId,
+        'weekdays':      ?weekdays,
       };
       final res = await http.post(url, headers: _authHeaders, body: jsonEncode(body))
           .timeout(const Duration(seconds: 30));
