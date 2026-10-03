@@ -95,7 +95,6 @@ CREATE TABLE IF NOT EXISTS `LeadsAccount_crm` (
   `source` enum('referral','campaign','walk_in','cold_call','website','other') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `contactNumber` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL,
   `language` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `dateOfBirth` datetime DEFAULT NULL,
   `customerStage` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `funnelStage` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `gstNumber` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
@@ -114,7 +113,6 @@ CREATE TABLE IF NOT EXISTS `LeadsAccount_crm` (
   `longitude` double DEFAULT NULL,
   `areaId` bigint unsigned DEFAULT NULL,
   `assignedToId` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `assignedDays` json DEFAULT NULL,
   `createdById` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `approvedById` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `approvedAt` datetime DEFAULT NULL,
@@ -376,7 +374,6 @@ CREATE TABLE IF NOT EXISTS `pincode_geo_crm` (
   `lat` double NOT NULL,
   `lng` double NOT NULL,
   `source` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'derived',
-  `sample_count` int unsigned NOT NULL DEFAULT '0',
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`pincode`)

@@ -26,7 +26,6 @@ class LeadsAccount extends Model
         'contactNumber',
         'language',
         'source',
-        'dateOfBirth',
         'customerStage',
         'funnelStage',
         'gstNumber',
@@ -45,7 +44,6 @@ class LeadsAccount extends Model
         'longitude',
         'areaId',
         'assignedToId',
-        'assignedDays',
         'createdById',
         'approvedById',
         'approvedAt',
@@ -57,11 +55,9 @@ class LeadsAccount extends Model
     ];
 
     protected $casts = [
-        'dateOfBirth'  => 'datetime',
         'approvedAt'   => 'datetime',
         'isActive'     => 'boolean',
         'isApproved'   => 'boolean',
-        'assignedDays' => 'array',
         'latitude'     => 'float',
         'longitude'    => 'float',
         'areaId'       => 'integer',

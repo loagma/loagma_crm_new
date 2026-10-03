@@ -433,11 +433,11 @@ class LeadsAccountController extends Controller
     {
         $data = request()->only([
             'businessName', 'businessType', 'businessSize', 'personName',
-            'contactNumber', 'language', 'source', 'dateOfBirth', 'customerStage', 'funnelStage',
+            'contactNumber', 'language', 'source', 'customerStage', 'funnelStage',
             'gstNumber', 'panCard', 'ownerImage', 'shopImage', 'isActive',
             'pincode', 'country', 'state', 'district', 'city', 'area',
             'address', 'latitude', 'longitude', 'areaId',
-            'assignedToId', 'assignedDays', 'createdById',
+            'assignedToId', 'createdById',
         ]);
 
         $validated = validator($data, [
@@ -452,7 +452,6 @@ class LeadsAccountController extends Controller
             'funnelStage'   => 'required|string|max:191',
             'area'          => 'required|string|max:191',
             'pincode'       => 'required|string|max:191',
-            'dateOfBirth'   => 'nullable|date',
             'gstNumber'     => 'nullable|string|max:191',
             'panCard'       => 'nullable|string|max:191',
             'ownerImage'    => 'nullable|string|max:191',
@@ -467,7 +466,6 @@ class LeadsAccountController extends Controller
             'longitude'     => 'nullable|numeric|between:-180,180',
             'areaId'        => 'nullable|integer',
             'assignedToId'  => 'nullable|string|max:191',
-            'assignedDays'  => 'nullable|array',
             'createdById'   => 'nullable|string|max:191',
         ])->validate();
 
@@ -499,11 +497,11 @@ class LeadsAccountController extends Controller
 
         $data = request()->only([
             'businessName', 'businessType', 'businessSize', 'personName',
-            'contactNumber', 'language', 'source', 'dateOfBirth', 'customerStage', 'funnelStage',
+            'contactNumber', 'language', 'source', 'customerStage', 'funnelStage',
             'gstNumber', 'panCard', 'ownerImage', 'shopImage', 'isActive',
             'pincode', 'country', 'state', 'district', 'city', 'area',
             'address', 'latitude', 'longitude', 'areaId',
-            'assignedToId', 'assignedDays',
+            'assignedToId',
             'approvedById', 'approvedAt', 'isApproved',
             'verificationNotes', 'rejectionNotes',
         ]);
@@ -520,7 +518,6 @@ class LeadsAccountController extends Controller
             'funnelStage'       => 'sometimes|required|string|max:191',
             'area'              => 'sometimes|required|string|max:191',
             'pincode'           => 'sometimes|required|string|max:191',
-            'dateOfBirth'       => 'nullable|date',
             'gstNumber'         => 'nullable|string|max:191',
             'panCard'           => 'nullable|string|max:191',
             'ownerImage'        => 'nullable|string|max:191',
@@ -535,7 +532,6 @@ class LeadsAccountController extends Controller
             'longitude'         => 'nullable|numeric|between:-180,180',
             'areaId'            => 'nullable|integer',
             'assignedToId'      => 'nullable|string|max:191',
-            'assignedDays'      => 'nullable|array',
             'approvedById'      => 'nullable|string|max:191',
             'approvedAt'        => 'nullable|date',
             'isApproved'        => 'nullable|boolean',

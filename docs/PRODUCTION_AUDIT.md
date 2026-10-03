@@ -147,8 +147,9 @@
   - 29 languages.
 - **Not added (not used by CRM code):**
   - dev's `deli_staff.otp`/`otp_expires_at`
-  - `user.party_code` (only read with a fallback)
+  - `user.party_code` (only read with a fallback; not a CRM column)
   - `units_master.dimension`/`base_unit_name`
+- **Dead columns removed** (from the code and from `changes.sql`): `LeadsAccount_crm.dateOfBirth`, `LeadsAccount_crm.assignedDays`, `pincode_geo_crm.sample_count`. The app never sent, showed or read them, and they were empty in dev.
 
 **Verified:**
 - Loaded the prod structure into a scratch MariaDB, then ran `changes.sql` twice: no errors, no duplicate rows.

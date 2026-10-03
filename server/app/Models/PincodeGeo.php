@@ -11,11 +11,10 @@ class PincodeGeo extends Model
     public $incrementing = false;
     protected $keyType = 'string';
 
-    protected $fillable = ['pincode', 'lat', 'lng', 'source', 'sample_count'];
+    protected $fillable = ['pincode', 'lat', 'lng', 'source'];
 
     protected $casts = [
         'lat'          => 'float',
         'lng'          => 'float',
-        'sample_count' => 'integer',
     ];
 }

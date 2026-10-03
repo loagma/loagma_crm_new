@@ -221,7 +221,7 @@ class TelecallerAllocationController extends Controller
 
         $geo = PincodeGeo::updateOrCreate(
             ['pincode' => $pincode],
-            ['lat' => (float) $data['lat'], 'lng' => (float) $data['lng'], 'source' => 'manual', 'sample_count' => 0],
+            ['lat' => (float) $data['lat'], 'lng' => (float) $data['lng'], 'source' => 'manual'],
         );
 
         return response()->json(['success' => true, 'data' => $geo]);

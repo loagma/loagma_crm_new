@@ -588,7 +588,6 @@ class TelecallerAllocationService
                     'lat'          => $lat,
                     'lng'          => $lng,
                     'source'       => 'geocoded',
-                    'sample_count' => 0,
                     'created_at'   => $now,
                     'updated_at'   => $now,
                 ];
