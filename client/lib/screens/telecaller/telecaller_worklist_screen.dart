@@ -363,6 +363,7 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
       w['city'],
       w['area'],
       w['phone'],
+      w['account_id'],
     ].map((e) => '${e ?? ''}'.toLowerCase()).join(' ');
     return hay.contains(q);
   }
@@ -663,7 +664,7 @@ class _TelecallerWorklistScreenState extends State<TelecallerWorklistScreen>
                 controller: _searchCtrl,
                 onChanged: (v) => setState(() => _search = v),
                 decoration: const InputDecoration(
-                  hintText: 'Search name, company, city…',
+                  hintText: 'Search name, mobile, customer id, city…',
                   border: InputBorder.none,
                   isCollapsed: true,
                   contentPadding: EdgeInsets.symmetric(vertical: 13),

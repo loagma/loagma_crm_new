@@ -57,6 +57,14 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
   bool _loading = false;
   bool _failed = false;
   List<Map<String, dynamic>> _results = [];
+  final _codeCtrl = TextEditingController();
+  String _codeQuery = '';
+
+  List<Map<String, dynamic>> get _shownResults {
+    final q = _codeQuery.trim().toLowerCase();
+    if (q.isEmpty) return _results;
+    return _results.where((p) => _codeOf(p).toLowerCase().contains(q)).toList();
+  }
 
   // Bumped on every new search; a response is only applied if it's still the
   // most recent one requested — guards a slower earlier request from
@@ -80,6 +88,7 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
   void dispose() {
     _debounce?.cancel();
     _searchCtrl.dispose();
+    _codeCtrl.dispose();
     if (_listening) _speech.stop();
     super.dispose();
   }
@@ -229,6 +238,42 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
             ),
           ),
         ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _codeCtrl,
+          onChanged: (v) => setState(() => _codeQuery = v),
+          style: const TextStyle(fontSize: 13),
+          decoration: InputDecoration(
+            hintText: 'Search by product code…',
+            hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+            prefixIcon: const Icon(Icons.qr_code_rounded, color: kGoldDark, size: 18),
+            suffixIcon: _codeQuery.isEmpty
+                ? null
+                : IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 16),
+                    onPressed: () {
+                      _codeCtrl.clear();
+                      setState(() => _codeQuery = '');
+                    },
+                  ),
+            isDense: true,
+            filled: true,
+            fillColor: const Color(0xFFFAFAFA),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: kGold.withValues(alpha: 0.5)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: kGold.withValues(alpha: 0.5)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: kGold, width: 1.4),
+            ),
+          ),
+        ),
         if (widget.secondaryHeader != null) ...[
           const SizedBox(height: 12),
           widget.secondaryHeader!,
@@ -271,7 +316,7 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
                     ],
                   ),
                 )
-              : _results.isEmpty
+              : _shownResults.isEmpty
               ? Center(
                   child: Text(
                     'No products found',
@@ -280,11 +325,11 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
                 )
               : ListView.separated(
                   padding: const EdgeInsets.only(bottom: 76),
-                  itemCount: _results.length,
+                  itemCount: _shownResults.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 10),
                   itemBuilder: (context, i) => _ProductCatalogCard(
-                    key: ValueKey(_results[i]['product_id']),
-                    product: _results[i],
+                    key: ValueKey(_shownResults[i]['product_id']),
+                    product: _shownResults[i],
                     onQtyChanged: widget.onQtyChanged,
                     qtyFor: widget.qtyFor,
                   ),
@@ -293,6 +338,17 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
       ],
     );
   }
+}
+
+String _codeOf(Map<String, dynamic> p) {
+  String seg(dynamic v) => (v == null || v.toString().isEmpty) ? '-' : v.toString();
+  return 'Code: ${[
+    seg(p['vendor_id']),
+    seg(p['vendor_product_id']),
+    seg(p['cat_id']),
+    seg(p['subcat_id']),
+    seg(p['product_id']),
+  ].join('-')}';
 }
 
 class _ProductCatalogCard extends StatefulWidget {
