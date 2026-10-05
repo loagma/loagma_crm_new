@@ -60,12 +60,6 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
   final _codeCtrl = TextEditingController();
   String _codeQuery = '';
 
-  List<Map<String, dynamic>> get _shownResults {
-    final q = _codeQuery.trim().toLowerCase();
-    if (q.isEmpty) return _results;
-    return _results.where((p) => _codeOf(p).toLowerCase().contains(q)).toList();
-  }
-
   // Bumped on every new search; a response is only applied if it's still the
   // most recent one requested — guards a slower earlier request from
   // overwriting a faster later one.
@@ -93,7 +87,17 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
     super.dispose();
   }
 
+  void _onCodeChanged(String v) {
+    setState(() => _codeQuery = v);
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 350), () {
+      final code = v.trim();
+      _search(code.isNotEmpty ? code : _searchCtrl.text.trim());
+    });
+  }
+
   void _onChanged(String q) {
+    if (_codeQuery.trim().isNotEmpty) return;
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () => _search(q));
   }
@@ -241,7 +245,7 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
         const SizedBox(height: 10),
         TextField(
           controller: _codeCtrl,
-          onChanged: (v) => setState(() => _codeQuery = v),
+          onChanged: _onCodeChanged,
           style: const TextStyle(fontSize: 13),
           decoration: InputDecoration(
             hintText: 'Search by product code…',
@@ -253,7 +257,7 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
                     icon: const Icon(Icons.close_rounded, size: 16),
                     onPressed: () {
                       _codeCtrl.clear();
-                      setState(() => _codeQuery = '');
+                      _onCodeChanged('');
                     },
                   ),
             isDense: true,
@@ -316,7 +320,7 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
                     ],
                   ),
                 )
-              : _shownResults.isEmpty
+              : _results.isEmpty
               ? Center(
                   child: Text(
                     'No products found',
@@ -325,11 +329,11 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
                 )
               : ListView.separated(
                   padding: const EdgeInsets.only(bottom: 76),
-                  itemCount: _shownResults.length,
+                  itemCount: _results.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 10),
                   itemBuilder: (context, i) => _ProductCatalogCard(
-                    key: ValueKey(_shownResults[i]['product_id']),
-                    product: _shownResults[i],
+                    key: ValueKey(_results[i]['product_id']),
+                    product: _results[i],
                     onQtyChanged: widget.onQtyChanged,
                     qtyFor: widget.qtyFor,
                   ),
@@ -338,17 +342,6 @@ class _ProductCatalogSearchState extends State<ProductCatalogSearch> {
       ],
     );
   }
-}
-
-String _codeOf(Map<String, dynamic> p) {
-  String seg(dynamic v) => (v == null || v.toString().isEmpty) ? '-' : v.toString();
-  return 'Code: ${[
-    seg(p['vendor_id']),
-    seg(p['vendor_product_id']),
-    seg(p['cat_id']),
-    seg(p['subcat_id']),
-    seg(p['product_id']),
-  ].join('-')}';
 }
 
 class _ProductCatalogCard extends StatefulWidget {
