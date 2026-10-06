@@ -239,10 +239,14 @@ class TelecallerAllocationService
 
             $updated = 0;
             foreach (array_chunk(array_values(array_unique(array_map('strval', $accountIds))), 500) as $chunk) {
-                $updated += TcAllocationItem::where('plan_id', $plan->id)
+                $query = TcAllocationItem::where('plan_id', $plan->id)
                     ->whereIn('account_id', $chunk)
-                    ->whereIn('status', ['pending', 'assigned', 'in_progress', 'skipped'])
-                    ->update(['status' => 'assigned', 'allocated_date' => $date, 'completed_at' => null]);
+                    ->whereIn('status', ['pending', 'assigned', 'in_progress', 'skipped']);
+                // Count matching accounts, not changed rows: MySQL reports 0
+                // "affected" rows when an account already has this date, which
+                // made a no-op reassign look like a failure.
+                $updated += (clone $query)->count();
+                $query->update(['status' => 'assigned', 'allocated_date' => $date, 'completed_at' => null]);
             }
             if ($date > $plan->end_date->toDateString()) {
                 $plan->update(['end_date' => $date]);

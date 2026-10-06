@@ -64,7 +64,7 @@ class TelecallerController extends Controller
     // since the table is generically keyed by the parent's mobile.
     private function getAssignedInchargeMobiles(string $parentMobile): array
     {
-        $assign = InchargeAssign::where('head_incharge_id', (int) $parentMobile)->first();
+        $assign = InchargeAssign::where('head_incharge_id', (string) $parentMobile)->first();
         if (!$assign || empty($assign->incharge_ids)) return [];
         return array_map('strval', $assign->incharge_ids);
     }

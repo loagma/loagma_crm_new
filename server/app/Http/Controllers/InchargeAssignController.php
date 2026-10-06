@@ -18,7 +18,7 @@ class InchargeAssignController extends Controller
 
     public function show(string $headInchargeId): JsonResponse
     {
-        $assign = InchargeAssign::where('head_incharge_id', (int) $headInchargeId)->first();
+        $assign = InchargeAssign::where('head_incharge_id', (string) $headInchargeId)->first();
         return response()->json([
             'success' => true,
             'data'    => $assign ? $assign->toArray() : null,
@@ -39,7 +39,7 @@ class InchargeAssignController extends Controller
         $inchargeNames = $validated['incharge_names'] ?? [];
 
         $assign = InchargeAssign::updateOrCreate(
-            ['head_incharge_id' => (int) $headInchargeId],
+            ['head_incharge_id' => (string) $headInchargeId],
             [
                 'incharge_ids'   => array_values(array_map('intval',  $inchargeIds)),
                 'incharge_names' => array_values(array_map('strval', $inchargeNames)),
@@ -54,7 +54,7 @@ class InchargeAssignController extends Controller
 
     public function destroy(string $headInchargeId): JsonResponse
     {
-        $deleted = InchargeAssign::where('head_incharge_id', (int) $headInchargeId)->delete();
+        $deleted = InchargeAssign::where('head_incharge_id', (string) $headInchargeId)->delete();
         return response()->json([
             'success' => (bool) $deleted,
             'message' => $deleted ? 'Assignment removed' : 'No assignment found',

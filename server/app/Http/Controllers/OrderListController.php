@@ -23,7 +23,7 @@ class OrderListController extends Controller
         $q          = trim((string) request()->query('q', ''));
         $status     = request()->query('payment_status');
         $buyerId    = request()->query('buyer_userid');
-        $perPage    = (int) request()->query('per_page', 20);
+        $perPage    = min(max((int) request()->query('per_page', 20), 1), 200);
         $page       = max(1, (int) request()->query('page', 1));
 
         $query = DB::table('orders')

@@ -34,7 +34,7 @@ class Hierarchy
      */
     public static function childMobiles(string $parentMobile): array
     {
-        $assign = InchargeAssign::where('head_incharge_id', (int) $parentMobile)->first();
+        $assign = InchargeAssign::where('head_incharge_id', (string) $parentMobile)->first();
         if (!$assign || empty($assign->incharge_ids)) {
             return [];
         }

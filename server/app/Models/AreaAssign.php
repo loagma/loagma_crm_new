@@ -17,7 +17,7 @@ class AreaAssign extends Model
     protected $casts = [
         'area_ids'    => 'array',
         'area_names'  => 'array',
-        'employee_id' => 'integer',
+        'employee_id' => 'string', // staff mobile, varchar(20) like deli_staff.mobile (API still returns it as a number — see toArray)
     ];
 
     public function toArray(): array

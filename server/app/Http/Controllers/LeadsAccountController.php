@@ -61,7 +61,7 @@ class LeadsAccountController extends Controller
         ]);
 
         $file = $validated['image'];
-        $name = 'lead_' . Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
+        $name = 'lead_' . Str::uuid()->toString() . '.' . $file->extension();
         $file->storeAs(self::UPLOAD_DIR, $name);
 
         return response()->json([
@@ -349,7 +349,8 @@ class LeadsAccountController extends Controller
                 'longitude'     => $account->longitude ?? 0,
                 'user_type'     => $this->mapBusinessTypeToUserType($account->businessType),
                 'is_approved'   => 'YES',
-                'account_state' => 'active',
+                // Consumer app vocabulary: complete / incomplete ('active' is not a value it uses).
+                'account_state' => 'complete',
                 'lead_account_id' => $account->id,
                 // These `text` columns have no real DEFAULT in MySQL/TiDB
                 // (TEXT/BLOB can't take one) despite SHOW COLUMNS implying
@@ -612,6 +613,13 @@ class LeadsAccountController extends Controller
                   ->orWhereRaw('LOWER(shop_name) LIKE ?', [$needle])
                   ->orWhereRaw('LOWER(contactno) LIKE ?', [$needle]);
             });
+        }
+
+        // Without a pincode filter this is a name/phone search (or nothing at
+        // all) — cap it so a short query can't dump the whole `user` table.
+        // Pincode-scoped lists (Allotted Customers) stay complete.
+        if (empty($pincodes)) {
+            $query->limit(200);
         }
 
         $customers = $query->get([

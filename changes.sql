@@ -1,12 +1,14 @@
 -- =============================================================================
--- Loagma CRM — changes to apply on the PRODUCTION database (MariaDB 10.11)
+-- Loagma CRM — changes to apply on the PRODUCTION database
+-- Works on MariaDB 10.x (prod) and MySQL 8.
 -- =============================================================================
 -- Generated 2026-10-03 by diffing the dev DB (what the CRM code actually uses)
 -- against updated-loagma-structure.sql (prod).
 --
--- How to run: phpMyAdmin → select the prod database → SQL tab → paste → Go.
+-- How to run: phpMyAdmin / MySQL Workbench → select the database → run the whole file.
 --
--- Safe to run more than once: every statement is IF NOT EXISTS / INSERT IGNORE.
+-- Safe to run more than once: tables use IF NOT EXISTS, columns are added only
+-- when missing, and master rows use INSERT IGNORE.
 -- Nothing here drops, renames or modifies an existing prod column or row.
 -- Shared tables (deli_staff, user, cart) only get NEW, nullable/defaulted
 -- columns, so the consumer and delivery apps are unaffected.
@@ -55,7 +57,7 @@ CREATE TABLE IF NOT EXISTS `area_assign_crm` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `area_ids` json NOT NULL,
   `area_names` json NOT NULL,
-  `employee_id` bigint unsigned NOT NULL,
+  `employee_id` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
@@ -64,7 +66,7 @@ CREATE TABLE IF NOT EXISTS `area_assign_crm` (
 
 CREATE TABLE IF NOT EXISTS `incharge_assign_crm` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `head_incharge_id` bigint unsigned NOT NULL,
+  `head_incharge_id` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
   `incharge_ids` json NOT NULL,
   `incharge_names` json NOT NULL,
   `created_at` timestamp NULL DEFAULT NULL,
@@ -112,9 +114,9 @@ CREATE TABLE IF NOT EXISTS `LeadsAccount_crm` (
   `latitude` double DEFAULT NULL,
   `longitude` double DEFAULT NULL,
   `areaId` bigint unsigned DEFAULT NULL,
-  `assignedToId` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `createdById` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `approvedById` varchar(191) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `assignedToId` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `createdById` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `approvedById` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `approvedAt` datetime DEFAULT NULL,
   `isApproved` tinyint(1) NOT NULL DEFAULT '0',
   `approval_status` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
@@ -131,6 +133,9 @@ CREATE TABLE IF NOT EXISTS `LeadsAccount_crm` (
   KEY `leadsaccount_crm_isactive_index` (`isActive`),
   KEY `leadsaccount_crm_areaid_index` (`areaId`),
   KEY `leadsaccount_crm_assignedtoid_index` (`assignedToId`),
+  KEY `leadsaccount_crm_contactnumber_index` (`contactNumber`),
+  KEY `leadsaccount_crm_createdbyid_index` (`createdById`),
+  KEY `leadsaccount_crm_approval_status_index` (`approval_status`),
   UNIQUE KEY `leadsaccount_crm_accountcode_unique` (`accountCode`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -240,7 +245,7 @@ CREATE TABLE IF NOT EXISTS `action_log_stage_crm` (
 
 CREATE TABLE IF NOT EXISTS `action_log_crm` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `employee_mobile` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `employee_mobile` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
   `role` enum('salesman','telecaller') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'salesman',
   `account_id` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `account_type` enum('lead','customer') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
@@ -278,12 +283,13 @@ CREATE TABLE IF NOT EXISTS `action_log_crm` (
   KEY `order_funnel_response_crm_employee_mobile_index` (`employee_mobile`),
   KEY `order_funnel_response_crm_account_id_index` (`account_id`),
   KEY `action_log_crm_call_log_id_index` (`call_log_id`),
-  KEY `action_log_crm_account_id_created_at_index` (`account_id`,`created_at`)
+  KEY `action_log_crm_account_id_created_at_index` (`account_id`,`created_at`),
+  KEY `action_log_crm_employee_mobile_check_out_at_index` (`employee_mobile`,`check_out_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `call_log_crm` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `employee_mobile` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `employee_mobile` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `source` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'manual',
   `direction` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `knowlarity_call_id` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
@@ -302,12 +308,13 @@ CREATE TABLE IF NOT EXISTS `call_log_crm` (
   PRIMARY KEY (`id`),
   KEY `call_log_crm_employee_mobile_index` (`employee_mobile`),
   KEY `call_log_crm_account_id_index` (`account_id`),
-  KEY `call_log_crm_knowlarity_call_id_index` (`knowlarity_call_id`)
+  KEY `call_log_crm_knowlarity_call_id_index` (`knowlarity_call_id`),
+  KEY `call_log_crm_employee_mobile_called_at_index` (`employee_mobile`,`called_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `call_scripts_crm` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `employee_mobile` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `employee_mobile` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
   `title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `stage_label` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `lines` json NOT NULL,
@@ -320,7 +327,7 @@ CREATE TABLE IF NOT EXISTS `call_scripts_crm` (
 
 CREATE TABLE IF NOT EXISTS `telecaller_label_crm` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `employee_mobile` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `employee_mobile` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
   `account_id` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `account_type` enum('lead','customer') COLLATE utf8mb4_unicode_ci NOT NULL,
   `label` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -336,9 +343,9 @@ CREATE TABLE IF NOT EXISTS `complaint_crm` (
   `account_id` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `account_type` enum('lead','customer') COLLATE utf8mb4_unicode_ci NOT NULL,
   `source_channel` enum('telecaller_call','salesman_visit') COLLATE utf8mb4_unicode_ci NOT NULL,
-  `raised_by` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `assigned_to` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `assigned_by` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `raised_by` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `assigned_to` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `assigned_by` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `assigned_at` timestamp NULL DEFAULT NULL,
   `call_log_id` bigint unsigned DEFAULT NULL,
   `beat_plan_id` bigint unsigned DEFAULT NULL,
@@ -346,7 +353,7 @@ CREATE TABLE IF NOT EXISTS `complaint_crm` (
   `description` text COLLATE utf8mb4_unicode_ci NOT NULL,
   `status` enum('open','in_progress','resolved','closed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'open',
   `resolution_notes` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `resolved_by` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `resolved_by` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `resolved_at` timestamp NULL DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL,
@@ -359,7 +366,7 @@ CREATE TABLE IF NOT EXISTS `complaint_crm` (
 
 CREATE TABLE IF NOT EXISTS `target_crm` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `telecaller_id` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `telecaller_id` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
   `period` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
   `call_target` int unsigned NOT NULL DEFAULT '0',
   `conversion_target` int unsigned NOT NULL DEFAULT '0',
@@ -416,35 +423,159 @@ CREATE TABLE IF NOT EXISTS `tc_allocation_item_crm` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- -----------------------------------------------------------------------------
+-- PART 1B — Align CRM tables that already existed before this file
+-- (no effect on a fresh prod DB: the tables above are already created this way)
+--   * every staff id = the staff member's mobile, varchar(20), like deli_staff.mobile
+--   * indexes for the lookups the app runs most
+-- Changes are only made where they are still needed (checked in information_schema).
+-- -----------------------------------------------------------------------------
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'area_assign_crm' AND COLUMN_NAME = 'employee_id' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `area_assign_crm` MODIFY `employee_id` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'incharge_assign_crm' AND COLUMN_NAME = 'head_incharge_id' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `incharge_assign_crm` MODIFY `head_incharge_id` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'action_log_crm' AND COLUMN_NAME = 'employee_mobile' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `action_log_crm` MODIFY `employee_mobile` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'call_log_crm' AND COLUMN_NAME = 'employee_mobile' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `call_log_crm` MODIFY `employee_mobile` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'call_scripts_crm' AND COLUMN_NAME = 'employee_mobile' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `call_scripts_crm` MODIFY `employee_mobile` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'telecaller_label_crm' AND COLUMN_NAME = 'employee_mobile' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `telecaller_label_crm` MODIFY `employee_mobile` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'complaint_crm' AND COLUMN_NAME = 'raised_by' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `complaint_crm` MODIFY `raised_by` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'complaint_crm' AND COLUMN_NAME = 'assigned_to' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `complaint_crm` MODIFY `assigned_to` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'complaint_crm' AND COLUMN_NAME = 'assigned_by' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `complaint_crm` MODIFY `assigned_by` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'complaint_crm' AND COLUMN_NAME = 'resolved_by' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `complaint_crm` MODIFY `resolved_by` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'target_crm' AND COLUMN_NAME = 'telecaller_id' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `target_crm` MODIFY `telecaller_id` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'LeadsAccount_crm' AND COLUMN_NAME = 'assignedToId' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `LeadsAccount_crm` MODIFY `assignedToId` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'LeadsAccount_crm' AND COLUMN_NAME = 'createdById' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `LeadsAccount_crm` MODIFY `createdById` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'LeadsAccount_crm' AND COLUMN_NAME = 'approvedById' AND COLUMN_TYPE <> 'varchar(20)') > 0,
+  'ALTER TABLE `LeadsAccount_crm` MODIFY `approvedById` VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'LeadsAccount_crm' AND INDEX_NAME = 'leadsaccount_crm_contactnumber_index') = 0,
+  'ALTER TABLE `LeadsAccount_crm` ADD INDEX `leadsaccount_crm_contactnumber_index` (`contactNumber`)', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'LeadsAccount_crm' AND INDEX_NAME = 'leadsaccount_crm_createdbyid_index') = 0,
+  'ALTER TABLE `LeadsAccount_crm` ADD INDEX `leadsaccount_crm_createdbyid_index` (`createdById`)', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'LeadsAccount_crm' AND INDEX_NAME = 'leadsaccount_crm_approval_status_index') = 0,
+  'ALTER TABLE `LeadsAccount_crm` ADD INDEX `leadsaccount_crm_approval_status_index` (`approval_status`)', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'call_log_crm' AND INDEX_NAME = 'call_log_crm_employee_mobile_called_at_index') = 0,
+  'ALTER TABLE `call_log_crm` ADD INDEX `call_log_crm_employee_mobile_called_at_index` (`employee_mobile`,`called_at`)', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'action_log_crm' AND INDEX_NAME = 'action_log_crm_employee_mobile_check_out_at_index') = 0,
+  'ALTER TABLE `action_log_crm` ADD INDEX `action_log_crm_employee_mobile_check_out_at_index` (`employee_mobile`,`check_out_at`)', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+-- beat_plan_crm.frequency must include 'appointment' (older databases were
+-- created without it, so appointment beat plans could not be saved).
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'beat_plan_crm' AND COLUMN_NAME = 'frequency' AND COLUMN_TYPE NOT LIKE '%appointment%') > 0,
+  'ALTER TABLE `beat_plan_crm` MODIFY `frequency` ENUM(''weekly'',''monthly'',''n_days'',''specific_dates'',''appointment'') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- -----------------------------------------------------------------------------
 -- PART 2 — New columns on existing shared tables
 -- -----------------------------------------------------------------------------
 
+-- Each column is added only if it is missing (checked in information_schema),
+-- so this works on MariaDB (prod) and MySQL 8, and is safe to run again.
+
 -- deli_staff: employee profile + attendance shift settings used by the CRM.
-ALTER TABLE `deli_staff`
-  ADD COLUMN IF NOT EXISTS `pincode`           VARCHAR(20)  NULL DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `city`              VARCHAR(100) NULL DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `language`          VARCHAR(50)  NULL DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `punch_in_time`     TIME         NULL DEFAULT '09:00:00',
-  ADD COLUMN IF NOT EXISTS `punch_out_time`    TIME         NULL DEFAULT '18:00:00',
-  ADD COLUMN IF NOT EXISTS `grace_minutes`     INT          NOT NULL DEFAULT 15,
-  ADD COLUMN IF NOT EXISTS `approval_required` TINYINT(1)   NOT NULL DEFAULT 1;
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'deli_staff' AND COLUMN_NAME = 'pincode') = 0,
+  'ALTER TABLE `deli_staff` ADD COLUMN `pincode` VARCHAR(20) NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'deli_staff' AND COLUMN_NAME = 'city') = 0,
+  'ALTER TABLE `deli_staff` ADD COLUMN `city` VARCHAR(100) NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'deli_staff' AND COLUMN_NAME = 'language') = 0,
+  'ALTER TABLE `deli_staff` ADD COLUMN `language` VARCHAR(50) NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'deli_staff' AND COLUMN_NAME = 'punch_in_time') = 0,
+  'ALTER TABLE `deli_staff` ADD COLUMN `punch_in_time` TIME NULL DEFAULT ''09:00:00''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'deli_staff' AND COLUMN_NAME = 'punch_out_time') = 0,
+  'ALTER TABLE `deli_staff` ADD COLUMN `punch_out_time` TIME NULL DEFAULT ''18:00:00''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'deli_staff' AND COLUMN_NAME = 'grace_minutes') = 0,
+  'ALTER TABLE `deli_staff` ADD COLUMN `grace_minutes` INT NOT NULL DEFAULT 15', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'deli_staff' AND COLUMN_NAME = 'approval_required') = 0,
+  'ALTER TABLE `deli_staff` ADD COLUMN `approval_required` TINYINT(1) NOT NULL DEFAULT 1', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- user: link from an approved lead (LeadsAccount_crm.id, a UUID) to the
 -- customer row created on approval.
-ALTER TABLE `user`
-  ADD COLUMN IF NOT EXISTS `lead_account_id` VARCHAR(36) NULL DEFAULT NULL;
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'lead_account_id') = 0,
+  'ALTER TABLE `user` ADD COLUMN `lead_account_id` VARCHAR(36) NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- cart: the CRM "Create Sales Order" draft is stored as ONE row per
 -- (staff, account) with ctype_id = 'crm_sales_draft' and userid = 0, so the
 -- consumer app's cart queries never see it.
-ALTER TABLE `cart`
-  ADD COLUMN IF NOT EXISTS `staff_id`      VARCHAR(20) NULL DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `account_ref`   VARCHAR(64) NULL DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `account_type`  VARCHAR(16) NULL DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `draft_payload` LONGTEXT    NULL DEFAULT NULL;
-ALTER TABLE `cart`
-  ADD UNIQUE KEY IF NOT EXISTS `cart_crm_draft_unique` (`staff_id`, `account_ref`, `account_type`);
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cart' AND COLUMN_NAME = 'staff_id') = 0,
+  'ALTER TABLE `cart` ADD COLUMN `staff_id` VARCHAR(20) NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cart' AND COLUMN_NAME = 'account_ref') = 0,
+  'ALTER TABLE `cart` ADD COLUMN `account_ref` VARCHAR(64) NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cart' AND COLUMN_NAME = 'account_type') = 0,
+  'ALTER TABLE `cart` ADD COLUMN `account_type` VARCHAR(16) NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cart' AND COLUMN_NAME = 'draft_payload') = 0,
+  'ALTER TABLE `cart` ADD COLUMN `draft_payload` LONGTEXT NULL DEFAULT NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- one draft row per (staff, account)
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cart' AND INDEX_NAME = 'cart_crm_draft_unique') = 0,
+  'ALTER TABLE `cart` ADD UNIQUE KEY `cart_crm_draft_unique` (`staff_id`, `account_ref`, `account_type`)', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- -----------------------------------------------------------------------------
 -- PART 3 — Required master rows (the app does not work without these)

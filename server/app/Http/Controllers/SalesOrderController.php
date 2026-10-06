@@ -6,6 +6,7 @@ use App\Support\ProductTaxResolver;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 /**
  * Minimal, safe slice of the real Sales Order model documented in
@@ -146,7 +147,7 @@ class SalesOrderController extends Controller
             return response()->json(['success' => false, 'message' => 'buyer_userid is required'], 422);
         }
 
-        $buyer = DB::table('user')->where('userid', $buyerUserId)->first(['userid']);
+        $buyer = DB::table('user')->where('userid', $buyerUserId)->first(['userid', 'contactno']);
         if (!$buyer) {
             return response()->json([
                 'success' => false,
@@ -166,7 +167,7 @@ class SalesOrderController extends Controller
         $products = DB::table('product')
             ->whereIn('product_id', $productIds)
             ->where('is_deleted', 0)
-            ->get(['product_id', 'name'])
+            ->get(['product_id', 'name', 'hsn_code'])
             ->keyBy('product_id');
         $taxes = ProductTaxResolver::forProducts($productIds);
 
@@ -201,7 +202,26 @@ class SalesOrderController extends Controller
         $areaName        = $data['area_name'] ?? null;
         $timeSlot        = $data['time_slot'] ?? 'Now';
         $documentDate    = $data['document_date'] ?? null; // Y-m-d
-        $deliveryInfo    = $data['delivery_info'] ?? [];
+        // Same shape the consumer app writes, so the admin/delivery side never
+        // meets a missing key; whatever the CRM form sent wins.
+        $deliveryInfo    = array_merge([
+            'name'            => '',
+            'address'         => '',
+            'contactno'       => (string) ($buyer->contactno ?? ''),
+            'comment'         => '',
+            'couponCode'      => '',
+            'latitude'        => 0,
+            'longitude'       => 0,
+            'expressDelivery' => '0',
+            'driverName'      => '',
+            'driverNumber'    => '',
+        ], is_array($data['delivery_info'] ?? null) ? $data['delivery_info'] : []);
+
+        // orders.admin_id is the vendor that fulfils the order (108 on every
+        // consumer order). Use the logged-in staff member's vendor, or the
+        // vendor's admin panel never sees CRM orders.
+        $staff         = JWTAuth::parseToken()->authenticate();
+        $vendorAdminId = (int) ($staff->admin_id ?? 0);
 
         $beforeDiscount = 0.0;
         foreach ($items as $item) {
@@ -220,9 +240,9 @@ class SalesOrderController extends Controller
         for ($attempt = 1; ; $attempt++) {
             try {
                 DB::transaction(function () use (
-                    $items, $taxes, $buyerUserId, $discount, $deliveryCharge, $narration, $department,
+                    $items, $taxes, $products, $buyerUserId, $discount, $deliveryCharge, $narration, $department,
                     $areaName, $timeSlot, $documentDate, $deliveryInfo, $beforeDiscount, $orderTotal,
-                    $idempotencyKey, &$orderId
+                    $idempotencyKey, $vendorAdminId, &$orderId
                 ) {
                     $nextOrderId = self::nextFreeOrderId();
                     $nextItemId  = (int) (DB::table('orders_item')->lockForUpdate()->max('item_id')) + 1;
@@ -242,10 +262,10 @@ class SalesOrderController extends Controller
                         'items_count'       => count($items),
                         'delivery_charge'   => $deliveryCharge,
                         'order_total'       => $orderTotal,
-                        'delivery_info'     => json_encode($deliveryInfo ?: (object) []),
+                        'delivery_info'     => json_encode($deliveryInfo),
                         'area_name'         => $areaName,
                         'feedback'          => '',
-                        'admin_id'          => 0,
+                        'admin_id'          => $vendorAdminId,
                         'payment_status'    => 'not_paid',
                         'discount'          => $discount,
                         'before_discount'   => $beforeDiscount,
@@ -277,6 +297,8 @@ class SalesOrderController extends Controller
                                 // OrderListController::getOrderDetail's 'pack_size' so
                                 // the order screen can show which pack was actually sold.
                                 'ps'                    => $item['pack_size'] ?? null,
+                                'selected_pack'         => $item['pack_size'] ?? null,
+                                'hsn_code'              => $products->get((int) $item['product_id'])->hsn_code ?? null,
                                 'price_inclusive'       => true,
                                 'unit_price_inclusive'  => $price,
                                 'tax_percent'           => $taxPercent,
@@ -299,7 +321,7 @@ class SalesOrderController extends Controller
                         'payment_status'  => 'not_paid',
                         'order_count'     => count($items),
                         'payment_method'  => 'cod',
-                        'delivery_info'   => json_encode($deliveryInfo ?: (object) []),
+                        'delivery_info'   => json_encode($deliveryInfo),
                         'order_total'     => $orderTotal,
                         'delivery_charge' => $deliveryCharge,
                         'discount'        => $discount,
@@ -361,7 +383,7 @@ class SalesOrderController extends Controller
         $products = DB::table('product')
             ->whereIn('product_id', $productIds)
             ->where('is_deleted', 0)
-            ->get(['product_id', 'name'])
+            ->get(['product_id', 'name', 'hsn_code'])
             ->keyBy('product_id');
         $taxes = ProductTaxResolver::forProducts($productIds);
 
@@ -380,7 +402,7 @@ class SalesOrderController extends Controller
 
         $result = null;
 
-        DB::transaction(function () use ($orderId, $items, $taxes, &$result) {
+        DB::transaction(function () use ($orderId, $items, $taxes, $products, &$result) {
             $order = DB::table('orders')->where('order_id', $orderId)->lockForUpdate()->first(['order_id', 'txn_id', 'order_state', 'discount', 'delivery_charge']);
 
             if (!$order) {
@@ -426,6 +448,8 @@ class SalesOrderController extends Controller
                     'pinfo'      => json_encode([
                         'unit'                  => $item['unit'] ?? 'PCS',
                         'ps'                    => $item['pack_size'] ?? null,
+                        'selected_pack'         => $item['pack_size'] ?? null,
+                        'hsn_code'              => $products->get((int) $item['product_id'])->hsn_code ?? null,
                         'price_inclusive'       => true,
                         'unit_price_inclusive'  => $price,
                         'tax_percent'           => $taxPercent,

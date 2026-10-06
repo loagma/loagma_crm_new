@@ -17,6 +17,11 @@ class JwtAuthenticate
             if (!$user) {
                 return response()->json(['success' => false, 'message' => 'User not found.'], 401);
             }
+            // A token stays valid 30 days — re-check the role on every request so
+            // someone moved off a CRM role (or never on one) loses access at once.
+            if (!\App\Support\CrmAccess::allows($user->role)) {
+                return response()->json(['success' => false, 'message' => 'This account does not have CRM access.'], 401);
+            }
         } catch (\Tymon\JWTAuth\Exceptions\TokenExpiredException $e) {
             return response()->json(['success' => false, 'message' => 'Token expired.'], 401);
         } catch (\Tymon\JWTAuth\Exceptions\TokenInvalidException $e) {

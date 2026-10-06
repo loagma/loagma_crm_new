@@ -10,7 +10,7 @@ class AreaController extends Controller
     public function index(): JsonResponse
     {
         $q = trim((string) request()->query('q', ''));
-        $perPage = (int) request()->query('per_page', 20);
+        $perPage = min(max((int) request()->query('per_page', 20), 1), 1000);
         $query = Area::query()->orderByDesc('id');
 
         if ($q !== '') {

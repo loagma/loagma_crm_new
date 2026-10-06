@@ -15,7 +15,7 @@ class InchargeAssign extends Model
     ];
 
     protected $casts = [
-        'head_incharge_id' => 'integer',
+        'head_incharge_id' => 'string', // staff mobile, varchar(20) like deli_staff.mobile (API still returns it as a number — see toArray)
         'incharge_ids'     => 'array',
         'incharge_names'   => 'array',
     ];

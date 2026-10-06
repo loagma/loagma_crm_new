@@ -15,7 +15,7 @@ class TelecallerScope
     /** @return array{0: int[], 1: string[]} [areaIds, pincodes] */
     public static function areaScope(string $mobile): array
     {
-        $assign = AreaAssign::where('employee_id', (int) $mobile)->first();
+        $assign = AreaAssign::where('employee_id', (string) $mobile)->first();
         $areaIds = $assign ? array_values(array_filter(array_map('intval', $assign->area_ids ?? []))) : [];
 
         $pincodes = [];

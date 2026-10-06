@@ -18,7 +18,7 @@ class AreaAssignController extends Controller
 
     public function show(string $employeeId): JsonResponse
     {
-        $assign = AreaAssign::where('employee_id', (int) $employeeId)->first();
+        $assign = AreaAssign::where('employee_id', (string) $employeeId)->first();
 
         return response()->json([
             'success' => true,
@@ -40,7 +40,7 @@ class AreaAssignController extends Controller
         $areaNames = $validated['area_names'] ?? [];
 
         $assign = AreaAssign::updateOrCreate(
-            ['employee_id' => (int) $employeeId],
+            ['employee_id' => (string) $employeeId],
             [
                 'area_ids'   => array_values(array_map('intval', $areaIds)),
                 'area_names' => array_values(array_map('strval', $areaNames)),
@@ -55,7 +55,7 @@ class AreaAssignController extends Controller
 
     public function destroy(string $employeeId): JsonResponse
     {
-        $deleted = AreaAssign::where('employee_id', (int) $employeeId)->delete();
+        $deleted = AreaAssign::where('employee_id', (string) $employeeId)->delete();
 
         return response()->json([
             'success' => (bool) $deleted,

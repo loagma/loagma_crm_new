@@ -172,6 +172,16 @@ class MastersController extends Controller
             ], 422);
         }
 
+        // A new employee with no vendor picked inherits the creating admin's
+        // vendor — admin_id decides their product catalog and which vendor
+        // their orders go to (orders.admin_id).
+        if (empty($validated['admin_id'])) {
+            $creatorVendor = (int) (\Tymon\JWTAuth\Facades\JWTAuth::parseToken()->authenticate()->admin_id ?? 0);
+            if ($creatorVendor > 0) {
+                $validated['admin_id'] = $creatorVendor;
+            }
+        }
+
         $validated = $this->coerceNotNullColumns($validated);
 
         // deli_id has no default / auto-increment on the live table — allocate manually

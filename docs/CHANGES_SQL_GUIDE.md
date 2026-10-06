@@ -305,6 +305,33 @@
 
 ---
 
+## PART 1B: Keeping the CRM tables consistent
+
+**Staff IDs.** Every column that stores a staff member is the staff member's **mobile number as `varchar(20)`**, the same as `deli_staff.mobile`. The columns are:
+- `employee_mobile`, `salesman_id`, `staff_id`
+- `raised_by`, `assigned_to`, `assigned_by`, `resolved_by`
+- `telecaller_id`
+- `assignedToId`, `createdById`, `approvedById`
+- `area_assign_crm.employee_id`, `incharge_assign_crm.head_incharge_id`
+
+**Extra indexes for the most common lookups:**
+
+| Table | Index on | Used for |
+|---|---|---|
+| `LeadsAccount_crm` | `contactNumber` | Duplicate-number check, matching incoming calls |
+| `LeadsAccount_crm` | `createdById` | "My leads" list |
+| `LeadsAccount_crm` | `approval_status` | Pending-approval list |
+| `call_log_crm` | `employee_mobile`, `called_at` | Telecaller dashboard and call history |
+| `action_log_crm` | `employee_mobile`, `check_out_at` | Today's visits and reports |
+
+On a new database the tables are created this way in Part 1, so Part 1B changes nothing. On a database where the CRM tables already existed (dev or test), Part 1B converts the old column types and adds any missing index. It keeps the data and makes each change only once.
+
+**Derived columns.** The server sets them; nobody types them in:
+- `LeadsAccount_crm.isApproved` always follows `approval_status` (true only when approved).
+- `action_log_crm.outcome_name` is always copied from the chosen outcome in `action_log_stage_crm`.
+
+---
+
 ## PART 2: New columns on existing tables
 
 ### `deli_staff` (staff table)

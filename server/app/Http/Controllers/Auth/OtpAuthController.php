@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\DeliStaff;
+use App\Support\CrmAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -17,7 +18,9 @@ class OtpAuthController extends Controller
 
         $staff = DeliStaff::where('mobile', $request->mobile)->first();
 
-        if (!$staff) {
+        // Non-CRM staff (drivers, cashiers…) share deli_staff — answer exactly
+        // as for an unknown number so the CRM doesn't reveal who exists.
+        if (!$staff || !CrmAccess::allows($staff->role)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Mobile number not registered.',
@@ -39,7 +42,7 @@ class OtpAuthController extends Controller
 
         $staff = DeliStaff::where('mobile', $request->mobile)->first();
 
-        if (!$staff) {
+        if (!$staff || !CrmAccess::allows($staff->role)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Mobile number not registered.',

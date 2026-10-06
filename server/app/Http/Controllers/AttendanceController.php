@@ -53,7 +53,7 @@ class AttendanceController extends Controller
     // parent's mobile (head_incharge_id) with children mobiles in incharge_ids.
     private function getAssignedInchargeMobiles(string $parentMobile): array
     {
-        $assign = InchargeAssign::where('head_incharge_id', (int) $parentMobile)->first();
+        $assign = InchargeAssign::where('head_incharge_id', (string) $parentMobile)->first();
         if (!$assign || empty($assign->incharge_ids)) return [];
         // incharge_ids are mobile numbers stored as integers
         return array_map('strval', $assign->incharge_ids);
@@ -108,7 +108,7 @@ class AttendanceController extends Controller
         ]);
 
         $file = $validated['image'];
-        $name = 'att_' . Str::uuid() . '.' . $file->getClientOriginalExtension();
+        $name = 'att_' . Str::uuid() . '.' . $file->extension();
         $path = $file->storeAs('attendance', $name, 'public');
 
         return response()->json(['success' => true, 'path' => '/storage/' . $path]);

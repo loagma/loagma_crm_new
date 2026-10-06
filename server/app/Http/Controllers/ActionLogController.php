@@ -323,7 +323,7 @@ class ActionLogController extends Controller
         ]);
 
         $file = $validated['image'];
-        $name = 'action_' . Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
+        $name = 'action_' . Str::uuid()->toString() . '.' . $file->extension();
         $path = $file->storeAs('action_logs', $name, 'public');
 
         return response()->json(['success' => true, 'path' => '/storage/' . $path]);

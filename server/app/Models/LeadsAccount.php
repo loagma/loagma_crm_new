@@ -83,9 +83,13 @@ class LeadsAccount extends Model
             if (!isset($model->isActive)) {
                 $model->isActive = true;
             }
-            // approval_status defaults to 'pending' via the column default;
-            // isApproved is left unset until a real approve/reject decision
-            // is made, so it no longer falsely reads as "rejected" from birth.
+        });
+
+        // isApproved is derived data: it always follows approval_status
+        // (approved → true, pending/rejected/lost → false), so the two can
+        // never disagree. The API keeps returning both.
+        static::saving(function (self $model) {
+            $model->isApproved = ($model->approval_status ?? 'pending') === 'approved';
         });
     }
 
