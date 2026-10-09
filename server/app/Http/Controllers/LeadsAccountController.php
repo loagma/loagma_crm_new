@@ -360,6 +360,31 @@ class LeadsAccountController extends Controller
                 'register_date' => time(),
             ]);
 
+            // Orders are placed against a saved address (user_addresses.id =
+            // addressId, per the order lifecycle doc), so the new customer
+            // gets one from the lead's address straight away.
+            $addressRow = [
+                'user_id'      => $nextId,
+                'full_name'    => (string) $account->personName,
+                'full_address' => (string) ($account->businessName ?? ''),
+                'phone_no'     => (string) $account->contactNumber,
+                'name'         => (string) $account->personName,
+                'address'      => (string) ($account->address ?? ''),
+                'pincode'      => $account->pincode,
+                'lat'          => (float) ($account->latitude ?? 0),
+                'lng'          => (float) ($account->longitude ?? 0),
+                'type'         => 'Home',
+                'city_id'      => (string) ($account->city ?? ''),
+                'area_id'      => (string) ($account->area ?? ''),
+                'is_default'   => '1',
+                'created_at'   => now()->format('Y-m-d H:i:s'),
+            ];
+            $hasAutoId = (bool) \DB::selectOne("SELECT 1 x FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_addresses' AND COLUMN_NAME = 'id' AND EXTRA LIKE '%auto_increment%'");
+            if (!$hasAutoId) {
+                $addressRow['id'] = (int) \DB::table('user_addresses')->lockForUpdate()->max('id') + 1;
+            }
+            \DB::table('user_addresses')->insert($addressRow);
+
             $account->update([
                 'approval_status'   => 'approved',
                 'isApproved'        => true,
@@ -635,7 +660,7 @@ class LeadsAccountController extends Controller
             ->whereIn('user_id', $customers->pluck('userid'))
             ->orderByDesc('is_default')
             ->orderBy('id')
-            ->get(['user_id', 'address', 'type', 'is_default', 'lat', 'lng'])
+            ->get(['id', 'user_id', 'address', 'type', 'is_default', 'lat', 'lng'])
             ->groupBy('user_id');
 
         $data = $customers->map(function ($c) use ($addressesByUser) {
@@ -644,7 +669,8 @@ class LeadsAccountController extends Controller
             // Address 1 is the account's own `user.address` column; Address
             // 2+ are the saved entries in `user_addresses` (default first).
             $addressList = collect();
-            if (trim((string) $c->address) !== '') {
+            if (trim((string) $c->address) !== ''
+            && !$savedAddresses->contains(fn ($a) => strtolower(trim((string) $a->address)) === strtolower(trim((string) $c->address)))) {
                 $addressList->push([
                     'address'    => $c->address,
                     'type'       => 'Account',
@@ -654,6 +680,7 @@ class LeadsAccountController extends Controller
                 ]);
             }
             $addressList = $addressList->concat($savedAddresses->map(fn ($a) => [
+                'id'         => (int) $a->id, // user_addresses.id = address_id for an order
                 'address'    => $a->address,
                 'type'       => $a->type,
                 'is_default' => $a->is_default === '1',

@@ -609,6 +609,15 @@ class TelecallerController extends Controller
 
         $leads = $this->myLeadsQuery($areaIds, $pincodes)
             ->get(['id', 'businessName', 'personName', 'contactNumber', 'area', 'city', 'pincode', 'customerStage', 'address', 'latitude', 'longitude']);
+        // A lead approved into a `user` row is a customer now — it's listed as
+        // that customer below, so drop the lead copy (orders can only be placed
+        // for a `user`, per the order lifecycle doc). Matched in PHP rather than
+        // a cross-table subquery: `user` is latin1 on prod.
+        $convertedLeadIds = $leads->isEmpty()
+            ? collect()
+            : DB::table('user')->whereIn('lead_account_id', $leads->pluck('id')->map(fn ($v) => (string) $v)->all())
+                ->pluck('lead_account_id')->flip();
+        $leads = $leads->reject(fn ($l) => $convertedLeadIds->has((string) $l->id))->values();
 
         $customers = empty($pincodes)
             ? collect()
@@ -623,7 +632,7 @@ class TelecallerController extends Controller
                 ->whereIn('user_id', $customers->pluck('userid'))
                 ->orderByDesc('is_default')
                 ->orderBy('id')
-                ->get(['user_id', 'address', 'type', 'is_default', 'lat', 'lng'])
+                ->get(['id', 'user_id', 'address', 'type', 'is_default', 'lat', 'lng'])
                 ->groupBy('user_id');
 
         $todayStr    = Carbon::today()->toDateString();
@@ -700,7 +709,8 @@ class TelecallerController extends Controller
             // 2+ are the saved entries in `user_addresses` (default first).
             $savedAddresses = $addressesByUser->get($c->userid, collect());
             $addrs = collect();
-            if (trim((string) $c->address) !== '') {
+            if (trim((string) $c->address) !== ''
+            && !$savedAddresses->contains(fn ($a) => strtolower(trim((string) $a->address)) === strtolower(trim((string) $c->address)))) {
                 $addrs->push([
                     'address'    => $c->address,
                     'type'       => 'Account',
@@ -710,6 +720,7 @@ class TelecallerController extends Controller
                 ]);
             }
             $addrs = $addrs->concat($savedAddresses->map(fn ($a) => [
+                'id'         => (int) $a->id, // user_addresses.id = address_id for an order
                 'address'    => $a->address,
                 'type'       => $a->type,
                 'is_default' => $a->is_default === '1',

@@ -35,7 +35,10 @@ Future<Map<String, dynamic>?> resolveDeliveryAddress(
   BuildContext context,
   Map<String, dynamic> acc,
 ) async {
-  final options = addressOptionsFrom(acc);
+  // An order is placed against a SAVED address (user_addresses.id is sent as
+  // address_id — see OrderPlacementService), so only entries with an id can
+  // be offered here.
+  final options = addressOptionsFrom(acc).where((a) => a['id'] != null).toList();
   if (options.isEmpty) return null;
   if (options.length == 1) return options.first;
 

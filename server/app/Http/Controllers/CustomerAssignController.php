@@ -163,14 +163,15 @@ class CustomerAssignController extends Controller
             ->whereIn('user_id', $customers->pluck('userid'))
             ->orderByDesc('is_default')
             ->orderBy('id')
-            ->get(['user_id', 'address', 'type', 'is_default', 'lat', 'lng'])
+            ->get(['id', 'user_id', 'address', 'type', 'is_default', 'lat', 'lng'])
             ->groupBy('user_id');
 
         $data = $customers->map(function ($c) use ($addressesByUser) {
             $savedAddresses = $addressesByUser->get($c->userid, collect());
 
             $addressList = collect();
-            if (trim((string) $c->address) !== '') {
+            if (trim((string) $c->address) !== ''
+            && !$savedAddresses->contains(fn ($a) => strtolower(trim((string) $a->address)) === strtolower(trim((string) $c->address)))) {
                 $addressList->push([
                     'address'    => $c->address,
                     'type'       => 'Account',
@@ -180,6 +181,7 @@ class CustomerAssignController extends Controller
                 ]);
             }
             $addressList = $addressList->concat($savedAddresses->map(fn ($a) => [
+                'id'         => (int) $a->id, // user_addresses.id = address_id for an order
                 'address'    => $a->address,
                 'type'       => $a->type,
                 'is_default' => $a->is_default === '1',

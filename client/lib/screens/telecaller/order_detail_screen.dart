@@ -6,9 +6,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../services/invoice_printer.dart';
-import '../../widgets/create_sales_order_sheet.dart' show OrderLineItem;
-import '../../widgets/order_item_form_sheet.dart';
-import '../../widgets/product_catalog_search.dart';
 import '../../widgets/single_location_map_screen.dart';
 import 'order_list_screen.dart';
 
@@ -120,23 +117,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     return double.tryParse(v.toString());
   }
 
-  // Recompute the order-level money fields from the current items list —
-  // without this, adding/editing/deleting an item leaves order_total/
-  // before_discount frozen at whatever the server originally returned.
-  void _recalcTotals() {
-    final items = (_order?['items'] as List?) ?? [];
-    final beforeDiscount = items.fold<double>(
-      0,
-      (sum, it) => sum + (_toDouble((it as Map)['item_total']) ?? 0),
-    );
-    final discount = _toDouble(_order?['discount']) ?? 0;
-    final deliveryCharge = _toDouble(_order?['delivery_charge']) ?? 0;
-    final rawTotal = beforeDiscount - discount + deliveryCharge;
-    _order!['before_discount'] = beforeDiscount;
-    _order!['order_total'] = rawTotal < 0 ? 0.0 : rawTotal;
-    _order!['items_count'] = items.length;
-  }
-
   void _showSavedSnack(String message, {bool error = false}) {
     Fluttertoast.showToast(
       msg: message,
@@ -145,289 +125,45 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
-  bool _savingItems = false;
+  bool _cancelling = false;
 
-  // Sends the full current items list to the server so the edit survives a
-  // refresh — the server only accepts this while order_state is 'pending'
-  // (see SalesOrderController::updateItems); anything else (invoiced,
-  // dispatched, etc.) is preview-only here since re-editing those safely
-  // requires stock-ledger reversal this app doesn't implement.
-  Future<void> _persistItems() async {
-    if (_order == null) return;
-    final orderState = (_order!['order_state'] ?? '').toString();
-    if (orderState != 'pending') {
-      _showSavedSnack(
-        'This order is already "$orderState" — item changes here are preview only and are NOT saved to the server.',
-        error: true,
-      );
-      // The add/edit/delete that triggered this call already mutated
-      // _order['items'] locally before we got here — without reloading,
-      // the screen would keep showing that unsaved change as if it had
-      // gone through, contradicting the toast that just said it didn't save.
-      await _load();
-      return;
-    }
-
-    setState(() => _savingItems = true);
-    final items = (_order!['items'] as List).cast<Map>();
-    final payload = items
-        .map(
-          (it) => {
-            'product_id': it['product_id'],
-            'quantity': it['quantity'],
-            'item_price': it['item_price'],
-            'unit': it['unit'] ?? 'PCS',
-            // Round-tripped so edits (or a fresh Add Item from the catalog)
-            // don't lose the pack label on the next save — the server stores
-            // it into orders_item.pinfo['ps'].
-            'pack_size': it['pack_size'],
-          },
-        )
-        .toList();
-
-    final result = await ApiService.updateOrderItems(
-      _currentOrderId,
-      payload.cast<Map<String, dynamic>>(),
-    );
-    if (!mounted) return;
-    setState(() => _savingItems = false);
-
-    if (result['success'] == true) {
-      final data = result['data'] as Map<String, dynamic>?;
-      if (data != null) {
-        setState(() {
-          _order!['before_discount'] = data['before_discount'];
-          _order!['order_total'] = data['order_total'];
-          _order!['items_count'] = data['items_count'];
-        });
-      }
-      _showSavedSnack(
-        'Saved — total ₹${(_toDouble(_order!['order_total']) ?? 0).toStringAsFixed(2)}',
-      );
-    } else {
-      _showSavedSnack(
-        (result['message'] ?? 'Could not save changes.').toString(),
-        error: true,
-      );
-      // The server rejected the change (e.g. "at least one item is
-      // required" when removing the last item) — the local list was
-      // already optimistically mutated before this call, so without this
-      // reload the screen would keep showing the failed edit as if it had
-      // gone through. Re-fetch to resync with what's actually saved.
-      await _load();
-    }
-  }
-
-  // Shown up front, before opening any item form/confirm dialog, so a
-  // non-pending order never gets locally mutated in the first place — the
-  // earlier approach (mutate first, reject after) kept producing
-  // contradictory "not saved" states that lingered on screen.
-  Future<bool> _blockIfNotEditable() async {
-    final orderState = (_order?['order_state'] ?? '').toString();
-    if (orderState == 'pending') return false;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Order Completed'),
-        content: Text(
-          'This order is already "$orderState" — items cannot be added, edited, or deleted.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-    return true;
-  }
-
-  Future<void> _showEditItemDialog(int index, Map<String, dynamic> item) async {
-    if (await _blockIfNotEditable() || !mounted) return;
-    final result = await showOrderItemFormSheet(
-      context,
-      initial: item,
-      itemNumber: index + 1,
-    );
-    if (result == null || _order == null || !mounted) return;
-    setState(() {
-      (_order!['items'] as List)[index] = {
-        ...item,
-        'product_id': result['product_id'],
-        'name': result['name'],
-        'pack_size': result['pack_size'],
-        'quantity': result['quantity'],
-        'unit': result['unit'],
-        'item_price': result['item_price'],
-        'item_total': result['item_total'],
-      };
-      _recalcTotals();
-    });
-    await _persistItems();
-  }
-
-  Future<void> _deleteItem(int index, Map<String, dynamic> item) async {
-    if (await _blockIfNotEditable() || !mounted) return;
+  // Orders follow the order lifecycle doc: no item edits after placing. A
+  // still-pending order placed from the CRM can be cancelled instead — the
+  // server restores the stock and removes the order (cancelOrder).
+  Future<void> _cancelOrder() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Remove Item'),
+        title: const Text('Cancel Order'),
         content: Text(
-          'Remove "${item['name'] ?? 'this item'}" from the order?',
+          'Cancel order #$_currentOrderId? The stock goes back and the order is removed.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+            child: const Text('Keep', style: TextStyle(color: Colors.grey)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+            child: const Text('Cancel Order', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
-    if (confirmed != true || _order == null || !mounted) return;
-    setState(() {
-      (_order!['items'] as List).removeAt(index);
-      _recalcTotals();
-    });
-    await _persistItems();
-  }
-
-  // "Add Item" opens the same catalog (real pack pricing/stock, live qty
-  // stepper) as Create Sales Order, instead of a blank hand-typed form —
-  // browsing there can pick several products in one visit, so everything
-  // picked gets folded into this order together once the sheet closes.
-  Future<void> _showAddItemDialog() async {
-    if (await _blockIfNotEditable() || !mounted) return;
-
-    final pickedQty = <String, int>{};
-    final pickedItems = <String, OrderLineItem>{};
-    String key(String productId, String? packId) =>
-        '$productId|${packId ?? ''}';
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetCtx) => StatefulBuilder(
-        builder: (sheetCtx, setModalState) => Container(
-          height: MediaQuery.of(sheetCtx).size.height * 0.92,
-          padding: EdgeInsets.fromLTRB(
-            18,
-            8,
-            18,
-            14 + MediaQuery.of(sheetCtx).viewInsets.bottom,
-          ),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            children: [
-              Center(
-                child: Container(
-                  width: 42,
-                  height: 4,
-                  margin: const EdgeInsets.only(top: 8, bottom: 14),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              ),
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Add Item',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: () => Navigator.of(sheetCtx).pop(),
-                    behavior: HitTestBehavior.opaque,
-                    child: Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.08),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Icon(
-                        Icons.close_rounded,
-                        size: 18,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Expanded(
-                child: ProductCatalogSearch(
-                  qtyFor: (productId, packId) =>
-                      pickedQty[key(productId, packId)] ?? 0,
-                  onQtyChanged:
-                      ({
-                        required productId,
-                        required packId,
-                        required qty,
-                        required buildItem,
-                      }) {
-                        setModalState(() {
-                          final k = key(productId, packId);
-                          if (qty <= 0) {
-                            pickedQty.remove(k);
-                            pickedItems.remove(k)?.dispose();
-                          } else {
-                            pickedQty[k] = qty;
-                            pickedItems[k]?.dispose();
-                            pickedItems[k] = buildItem()..qty.text = '$qty';
-                          }
-                        });
-                      },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    if (pickedItems.isEmpty || _order == null) return;
-    setState(() {
-      for (final item in pickedItems.values) {
-        (_order!['items'] as List).add({
-          'product_id': item.productId,
-          'name': item.product.text.trim(),
-          'pack_size': item.packLabel,
-          'quantity': item.qtyNum.round(),
-          'unit': item.unit,
-          'qty_delivered': 0,
-          'item_price': item.priceNum,
-          'item_total': item.productTotal,
-        });
-      }
-      _recalcTotals();
-    });
-    for (final item in pickedItems.values) {
-      item.dispose();
+    if (confirmed != true || !mounted) return;
+    setState(() => _cancelling = true);
+    final result = await ApiService.cancelSalesOrder(_currentOrderId);
+    if (!mounted) return;
+    setState(() => _cancelling = false);
+    if (result['success'] == true) {
+      _showSavedSnack('Order #$_currentOrderId cancelled');
+      Navigator.of(context).maybePop();
+    } else {
+      _showSavedSnack(
+        (result['message'] ?? 'Could not cancel the order.').toString(),
+        error: true,
+      );
     }
-    await _persistItems();
   }
 
   @override
@@ -825,49 +561,31 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       'Items ($itemsCount)',
                     ),
                   ),
-                  GestureDetector(
-                    onTap: _savingItems ? null : _showAddItemDialog,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _gold.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: _gold.withValues(alpha: 0.4)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_savingItems)
-                            const SizedBox(
-                              width: 13,
-                              height: 13,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Color(0xFFB89A3E),
-                              ),
-                            )
-                          else
-                            const Icon(
-                              Icons.add_rounded,
-                              size: 15,
-                              color: Color(0xFFB89A3E),
-                            ),
-                          const SizedBox(width: 5),
-                          Text(
-                            _savingItems ? 'Saving…' : 'Add Item',
-                            style: const TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFFB89A3E),
-                            ),
+                  if (o['can_cancel'] == true)
+                    GestureDetector(
+                      onTap: _cancelling ? null : _cancelOrder,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE53935).withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: const Color(0xFFE53935).withValues(alpha: 0.4),
                           ),
-                        ],
+                        ),
+                        child: Text(
+                          _cancelling ? 'Cancelling…' : 'Cancel Order',
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFFE53935),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
               const SizedBox(height: 10),
@@ -890,9 +608,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     ),
                   ),
                 ),
-              ...items.asMap().entries.map((entry) {
-                final index = entry.key;
-                final item = entry.value;
+              ...items.map((item) {
                 final name = (item['name'] ?? 'Item').toString();
                 final pack = (item['pack_size'] ?? '').toString();
                 final qty = (item['quantity'] as int?) ?? 0;
@@ -979,28 +695,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                      _iconBtn(
-                        const Icon(
-                          Icons.edit_rounded,
-                          size: 15,
-                          color: Color(0xFFD7BE69),
-                        ),
-                        _savingItems
-                            ? () {}
-                            : () => _showEditItemDialog(index, item),
-                        bg: const Color(0xFFD7BE69).withValues(alpha: 0.12),
-                      ),
-                      const SizedBox(width: 6),
-                      _iconBtn(
-                        const Icon(
-                          Icons.delete_outline_rounded,
-                          size: 15,
-                          color: Color(0xFFE53935),
-                        ),
-                        _savingItems ? () {} : () => _deleteItem(index, item),
-                        bg: const Color(0xFFE53935).withValues(alpha: 0.12),
                       ),
                     ],
                   ),

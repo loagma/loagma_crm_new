@@ -30,6 +30,31 @@ class BeatPlanController extends Controller
     // `user_addresses` is the customer's saved address book (one row per
     // address, one marked is_default per user) — batch-fetched and grouped
     // by user_id so a customer account can list every saved address.
+    /**
+     * lead id => customer userid, for leads that were approved into a `user`
+     * row (user.lead_account_id). Orders can only be placed for a `user`
+     * (order lifecycle doc), so such a lead must open as that customer.
+     */
+    private function customerIdsForLeads(array $leadIds): \Illuminate\Support\Collection
+    {
+        $leadIds = array_values(array_filter(array_unique(array_map('strval', $leadIds))));
+        return empty($leadIds)
+            ? collect()
+            : DB::table('user')->whereIn('lead_account_id', $leadIds)->pluck('userid', 'lead_account_id');
+    }
+
+    /** Plan rows still pointing at an approved lead are shown as its customer (in memory only). */
+    private function promoteApprovedLeads($plans): void
+    {
+        $map = $this->customerIdsForLeads($plans->where('account_type', 'lead')->pluck('account_id')->all());
+        foreach ($plans as $plan) {
+            if ($plan->account_type === 'lead' && $map->has((string) $plan->account_id)) {
+                $plan->account_type = 'customer';
+                $plan->account_id   = (string) $map->get((string) $plan->account_id);
+            }
+        }
+    }
+
     private function addressesByUserIds(array $userIds): \Illuminate\Support\Collection
     {
         if (empty($userIds)) {
@@ -40,7 +65,7 @@ class BeatPlanController extends Controller
             ->whereIn('user_id', $userIds)
             ->orderByDesc('is_default')
             ->orderBy('id')
-            ->get(['user_id', 'address', 'type', 'is_default', 'lat', 'lng'])
+            ->get(['id', 'user_id', 'address', 'type', 'is_default', 'lat', 'lng'])
             ->groupBy('user_id');
     }
 
@@ -68,7 +93,8 @@ class BeatPlanController extends Controller
     private function buildAddressList(object $user, \Illuminate\Support\Collection $savedAddresses): \Illuminate\Support\Collection
     {
         $list = collect();
-        if (trim((string) ($user->address ?? '')) !== '') {
+        if (trim((string) ($user->address ?? '')) !== ''
+            && !$savedAddresses->contains(fn ($a) => strtolower(trim((string) $a->address)) === strtolower(trim((string) ($user->address ?? ''))))) {
             $list->push([
                 'address'    => $user->address,
                 'type'       => 'Account',
@@ -79,6 +105,7 @@ class BeatPlanController extends Controller
         }
 
         $list = $list->concat($savedAddresses->map(fn ($a) => [
+            'id'         => (int) $a->id, // user_addresses.id = address_id for an order
             'address'    => $a->address,
             'type'       => $a->type,
             'is_default' => $a->is_default === '1',
@@ -357,6 +384,7 @@ class BeatPlanController extends Controller
         self::dayFiringQuery($query, $today);
 
         $plans = $query->get();
+        $this->promoteApprovedLeads($plans);
 
         // Separate leads and customers
         $leadIds = $plans->where('account_type', 'lead')->pluck('account_id')->unique()->values()->toArray();
@@ -456,6 +484,10 @@ class BeatPlanController extends Controller
             $fLeadIds = array_values(array_unique([...$fLeadIds, ...$fUnknown]));
             $fCustIds = array_values(array_unique([...$fCustIds, ...$fUnknown]));
 
+            // a follow-up on a lead that has since been approved → its customer
+            $fPromoted = $this->customerIdsForLeads($fLeadIds);
+            $fCustIds  = array_values(array_unique([...$fCustIds, ...$fPromoted->values()->map(fn ($v) => (string) $v)->all()]));
+
             $fLeads = !empty($fLeadIds) ? LeadsAccount::whereIn('id', $fLeadIds)->get()->keyBy('id') : collect();
             $fCust  = !empty($fCustIds) ? DB::table('user')->whereIn('userid', $fCustIds)->get()->keyBy('userid') : collect();
             $fAddr  = $this->addressesByUserIds($fCustIds);
@@ -472,6 +504,9 @@ class BeatPlanController extends Controller
 
             foreach ($extraFollow as $accId => $f) {
                 $account = null; $type = $f->account_type;
+                if ($fPromoted->has((string) $accId)) {
+                    $accId = (string) $fPromoted->get((string) $accId);
+                }
                 if ($fCust->has($accId)) {
                     $type = 'customer';
                     $account = $this->customerAccountPayload($fCust->get($accId), $fAddr->get($accId, collect()));
@@ -531,6 +566,7 @@ class BeatPlanController extends Controller
                     ->where('is_active', true);
                 self::dayFiringQuery($query, $date);
                 $plans = $query->get();
+                $this->promoteApprovedLeads($plans);
 
                 // Separate leads and customers
                 $leadIds = $plans->where('account_type', 'lead')->pluck('account_id')->unique()->values()->toArray();

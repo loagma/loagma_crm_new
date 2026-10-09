@@ -88,11 +88,12 @@ Route::get('/orders', [OrderListController::class, 'index']);
 Route::get('/orders/owner/{buyerUserId}/products', [OrderListController::class, 'ownerProductHistory']); // must be before /orders/{orderId}
 Route::get('/orders/{orderId}', [OrderListController::class, 'show']);
 
-// Sales Order create (draft/pending only — see server/app/Http/Controllers/SalesOrderController.php)
-Route::get('/sales-orders/next-order-id', [SalesOrderController::class, 'nextOrderId']); // must be before POST /sales-orders in case of future {id} routes
-Route::get('/sales-orders/delivery-rule', [SalesOrderController::class, 'deliveryRule']); // cart_type min-order/delivery/express rule for the CRM order sheet
+// Sales orders — written exactly as ORDER_LIFECYCLE_FOR_NEW_FRONTEND.md describes
+// (see OrderPlacementService): preview ≈ calculateOrderDetails, store ≈
+// placeNewOrder, cancel ≈ cancelOrder (pending CRM orders only).
+Route::post('/sales-orders/preview', [SalesOrderController::class, 'preview']); // must be before POST /sales-orders in case of future {id} routes
 Route::post('/sales-orders', [SalesOrderController::class, 'store']);
-Route::put('/orders/{orderId}/items', [SalesOrderController::class, 'updateItems']); // edit items on an existing pending order
+Route::post('/orders/{orderId}/cancel', [SalesOrderController::class, 'cancel']);
 Route::get('/products/search', [ProductController::class, 'search']);
 
 // Un-submitted Create Sales Order cart, per (staff member, account) — stored as

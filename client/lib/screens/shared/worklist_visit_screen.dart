@@ -387,7 +387,7 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(realOrderId != null
                 ? 'Sales order #$realOrderId created — ₹$amt'
-                : 'Not saved — this account is a lead, not a registered customer yet.'),
+                : 'Not saved — this is still a lead. Approve it to make it a customer before placing orders.'),
             backgroundColor: realOrderId != null ? _green : null,
           ));
         },
@@ -1081,7 +1081,12 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
   // ── Order History tab ────────────────────────────────────────────────────
   Widget _ordersTab() {
     if (!_isCustomer) {
-      return _placeholder('No order history — this account is a lead, not a registered customer.');
+      // Orders exist only for a registered customer (`user` row), per the
+      // order lifecycle doc. A lead's "Customer" stage is just a label — it
+      // becomes a customer once an admin/teleadmin approves it.
+      return _placeholder(
+          'No order history — this is still a lead (stage: ${_acc['customerStage'] ?? 'Lead'}). '
+          'Approve it to make it a customer before placing orders.');
     }
     if (_loadingOrders) return _loader();
     if (_ordersFailed) {

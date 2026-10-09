@@ -421,66 +421,103 @@ class ApiService {
     return null;
   }
 
-  /// Create a real Sales Order (draft/`pending` state — see SalesOrderController).
-  /// Only works when [buyerUserId] is a real registered customer (a `user` row);
-  /// returns null (with the server's message logged) otherwise.
-  static Future<Map<String, dynamic>?> createSalesOrder({
+  /// One order line as the server expects it — a catalog product + its
+  /// vendor pack (vendor_product_id + pack_id) and a whole quantity. The
+  /// price, tax, delivery charge, offers and time slot are all worked out on
+  /// the server (see OrderPlacementService / ORDER_LIFECYCLE doc).
+  static Map<String, dynamic> _orderBody({
     required String buyerUserId,
+    required int addressId,
     required List<Map<String, dynamic>> items,
-    double discount = 0,
-    double deliveryCharge = 0,
-    String? narration,
-    String? department,
-    String? areaName,
-    String? timeSlot,
-    String? documentDate,
-    Map<String, dynamic>? deliveryInfo,
+    String? promoCode,
+    double? totalAmount,
+  }) => {
+        'buyer_userid': buyerUserId,
+        'address_id':   addressId,
+        'items':        items,
+        if (promoCode != null && promoCode.trim().isNotEmpty) 'promo_code': promoCode.trim(),
+        'total_amount': ?totalAmount,
+      };
+
+  /// First error message out of a Laravel 422 body (or the plain message).
+  static String _serverMessage(Map<String, dynamic> decoded, String fallback) {
+    final errors = decoded['errors'];
+    if (errors is Map && errors.isNotEmpty) {
+      final first = errors.values.first;
+      if (first is List && first.isNotEmpty) return first.first.toString();
+    }
+    return (decoded['message'] ?? fallback).toString();
+  }
+
+  /// The bill exactly as the order would be written (≈ calculateOrderDetails):
+  /// items at the live price, free items, delivery charge, offer/promo
+  /// discounts, time slot and total. Writes nothing.
+  /// Returns {success: true, data: {...}} or {success: false, message: '...'}.
+  static Future<Map<String, dynamic>> previewSalesOrder({
+    required String buyerUserId,
+    required int addressId,
+    required List<Map<String, dynamic>> items,
+    String? promoCode,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/sales-orders/preview');
+    try {
+      final response = await http
+          .post(url, headers: _authHeaders, body: jsonEncode(_orderBody(
+              buyerUserId: buyerUserId, addressId: addressId, items: items, promoCode: promoCode)))
+          .timeout(const Duration(seconds: 20));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {
+        return {'success': true, 'data': Map<String, dynamic>.from(decoded['data'] as Map)};
+      }
+      return {'success': false, 'message': _serverMessage(decoded, 'Could not calculate the order.')};
+    } catch (e) {
+      print('previewSalesOrder error: $e');
+      return {'success': false, 'message': 'Network error — check your connection.'};
+    }
+  }
+
+  /// Place the order (≈ placeNewOrder). The server recalculates everything and
+  /// rejects the order if [totalAmount] no longer matches its own total.
+  /// Returns {success: true, data: {order_id, master_order_id, order_total}}
+  /// or {success: false, message: '...'}.
+  static Future<Map<String, dynamic>> createSalesOrder({
+    required String buyerUserId,
+    required int addressId,
+    required List<Map<String, dynamic>> items,
+    required double totalAmount,
+    String? promoCode,
   }) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/sales-orders');
     try {
       final response = await http
-          .post(
-            url,
-            headers: _authHeaders,
-            body: jsonEncode({
-              'buyer_userid':     buyerUserId,
-              'items':            items,
-              'discount':         discount,
-              'delivery_charge':  deliveryCharge,
-              'narration':     ?narration,
-              'department':    ?department,
-              'area_name':     ?areaName,
-              'time_slot':     ?timeSlot,
-              'document_date': ?documentDate,
-              'delivery_info': ?deliveryInfo,
-            }),
-          )
-          .timeout(const Duration(seconds: 20));
+          .post(url, headers: _authHeaders, body: jsonEncode(_orderBody(
+              buyerUserId: buyerUserId, addressId: addressId, items: items,
+              promoCode: promoCode, totalAmount: totalAmount)))
+          .timeout(const Duration(seconds: 30));
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {
-        return decoded['data'] as Map<String, dynamic>?;
+        return {'success': true, 'data': Map<String, dynamic>.from(decoded['data'] as Map)};
       }
-      print('createSalesOrder failed: ${decoded['message'] ?? response.body}');
+      return {'success': false, 'message': _serverMessage(decoded, 'Could not create the order.')};
     } catch (e) {
       print('createSalesOrder error: $e');
+      return {'success': false, 'message': 'Network error — check your connection.'};
     }
-    return null;
   }
 
-  /// Persist an add/edit/remove of items against an EXISTING order (server
-  /// only allows this while the order is still `pending` — see
-  /// SalesOrderController::updateItems). Returns the raw decoded response
-  /// (not just `data`) so callers can show the server's own rejection
-  /// message, e.g. when the order is already invoiced/dispatched.
-  static Future<Map<String, dynamic>> updateOrderItems(String orderId, List<Map<String, dynamic>> items) async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/orders/$orderId/items');
+  /// Cancel a pending order placed from the CRM (≈ cancelOrder): stock is
+  /// restored and the order rows are removed.
+  static Future<Map<String, dynamic>> cancelSalesOrder(String orderId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/orders/$orderId/cancel');
     try {
-      final response = await http
-          .put(url, headers: _authHeaders, body: jsonEncode({'items': items}))
-          .timeout(const Duration(seconds: 20));
-      return jsonDecode(response.body) as Map<String, dynamic>;
+      final response = await http.post(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {
+        return {'success': true};
+      }
+      return {'success': false, 'message': _serverMessage(decoded, 'Could not cancel the order.')};
     } catch (e) {
-      print('updateOrderItems error: $e');
+      print('cancelSalesOrder error: $e');
       return {'success': false, 'message': 'Network error — check your connection.'};
     }
   }
@@ -557,43 +594,6 @@ class ApiService {
       print('clearOrderDraft error: $e');
       return false;
     }
-  }
-
-  /// Non-authoritative preview of the order_id the next Sales Order would get
-  /// (not reserved — the real id is assigned at create time).
-  static Future<int?> getNextSalesOrderId() async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/sales-orders/next-order-id');
-    try {
-      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 15));
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-        final data = decoded['data'] as Map<String, dynamic>?;
-        return data?['next_order_id'] as int?;
-      }
-      print('getNextSalesOrderId status ${response.statusCode}: ${response.body}');
-    } catch (e) {
-      print('getNextSalesOrderId error: $e');
-    }
-    return null;
-  }
-
-  /// Fetch the min-order/delivery-charge/express rule (from `cart_type`) that
-  /// governs Create Sales Order's auto delivery-charge calculation. Returns
-  /// null on any failure — the sheet treats that as "no rule available" and
-  /// charges nothing rather than blocking order creation.
-  static Future<Map<String, dynamic>?> getDeliveryRule() async {
-    final url = Uri.parse('${ApiConfig.baseUrl}/api/sales-orders/delivery-rule');
-    try {
-      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 10));
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-        return decoded['data'] as Map<String, dynamic>?;
-      }
-      print('getDeliveryRule status ${response.statusCode}: ${response.body}');
-    } catch (e) {
-      print('getDeliveryRule error: $e');
-    }
-    return null;
   }
 
   /// Fetch a single lead account by id.

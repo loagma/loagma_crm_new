@@ -98,7 +98,7 @@ Scores are engineering judgement based on the checks above, not an external cert
 | # | Severity | Finding | Status |
 |---|---|---|---|
 | S1 | Critical | Public employee create/edit could overwrite any staff role or password (account takeover) | ✅ Fixed: login + admin role; duplicate mobile refused |
-| S2 | Critical | Public sales-order create/edit; any pending order editable, including consumer-app orders | ✅ Fixed: login required; only `CRM-` orders editable |
+| S2 | Critical | Public sales-order create/edit; any pending order editable, including consumer-app orders | ✅ Fixed: login required; orders can no longer be edited; only a pending CRM order (`txn_id` starting `crm`) can be cancelled |
 | S3 | Critical | Public order list/detail and customer list (all customer PII) | ✅ Fixed |
 | S4 | Critical | Public area / area-assign / hierarchy edits, which control approval rights | ✅ Fixed: login + admin role |
 | **S5** | **Critical** | **NEW: delivery-app staff could log in to the CRM.** `deli_staff` is shared: drivers, cashiers, counter, billing and dispatch staff all have passwords (27 such accounts in dev). Any of them could log in and read every customer and order. | ✅ **Fixed:** login and every request now require a role listed in `role_crm`; others get "not registered" |
@@ -170,9 +170,10 @@ Also checked, and clean:
 | Master rows | 9 roles, 8 visit outcomes, 29 languages |
 | Dead columns | **0**. `otp`, `otp_expires_at`, `dateOfBirth`, `assignedDays` and `sample_count` were removed from the code and kept out of `changes.sql` |
 
-- **Legacy tables used by the CRM:** 14.
-  - It writes to 6: `deli_staff`, `user`, `orders`, `orders_item`, `master_orders`, `cart`.
-  - It only reads 8: `user_addresses`, `product`, `vendor_products`, `product_taxes`, `taxes`, `units_master`, `cart_type`, `admin`.
+- **Legacy tables used by the CRM:**
+  - It writes to 11: `deli_staff`, `user`, `user_addresses` (on lead approval), `orders`, `orders_item`, `master_orders`, `cart` (draft only), `vendor_products` (stock), `promo` (`max_use`), `promo_log`, `offer_log`.
+  - It only reads: `product`, `product_taxes`, `taxes`, `units_master`, `admin`, `offers`, `timing_slot_groups`, `time_slots`.
+  - No new table was added for orders.
 - **Safety:** `changes.sql` only *adds*. Tables use `IF NOT EXISTS`, columns are added only when missing (checked in `information_schema`), master rows use `INSERT IGNORE`, and it never drops or changes existing columns or rows.
 - **Works on MariaDB (prod) and MySQL 8.** Tested by running it twice on each: MariaDB 10.4 scratch copy of prod, and the MySQL 8.0.40 `test_cms` database.
 - **Line-by-line explanation:** `docs/CHANGES_SQL_GUIDE.md`.
@@ -204,9 +205,12 @@ The CRM writes to exactly **6 shared tables**. Each write was compared, column b
 |---|---|---|
 | `deli_staff` | Admin creates/edits an employee; admin sets shift times | `name`, `mobile`, `role`, `password` (PIN), `admin_id` (vendor), `pincode`, `city`, `state`, `language`, `lat`/`lng`, `is_locked`, shift times. New `deli_id` = next number. An existing mobile is never overwritten. |
 | `user` | Admin/teleadmin approves a lead | New customer row: `name`, `shop_name`, `contactno`, `address`/`shop_address`, `pincode`, `city`, `state`, `latitude`/`longitude`, `user_type` (B2B for wholesale/manufacturer/distributor, else B2C), `is_approved='YES'`, `account_state='complete'`, `register_date=now`, `lead_account_id`. Duplicate phone numbers refused. |
-| `orders` | Staff creates a sales order; edits items of a CRM order | `order_id` (next free across `orders` + `master_orders`), `txn_id='CRM-…'`, `buyer_userid`, `order_state='pending'`, `payment_method='cod'`, `payment_status='not_paid'`, totals, `delivery_info`, `time_slot`, `area_name`, `bill_dt`, `department`, `bill_narration`, `idempotency_key`, `admin_id` (vendor). Draft only: no invoice, stock or ledger change. |
-| `orders_item` | Same as above | One row per item: `product_id`, `quantity` (whole number), `item_price`, `item_total`, `pinfo` (unit, pack, GST split from `product_taxes`, `hsn_code`, `selected_pack`). |
-| `master_orders` | Same as above | Mirror row with the same id: totals, `delivery_info`, `payment_status`, `status='1'`. |
+| `master_orders` | Staff places an order (inserted first) | Auto-increment `id`; `user_id`, `payment_method='cod'`, `payment_status='pending'`, `order_count` (paid lines only), `txn_id`, `delivery_info`, `delivery_charge`, `before_discount`, `discount`, `order_total`, `status=1`. See §6C. |
+| `orders` | Same, one row per vendor | Auto-increment `order_id`; `master_order_id`, `buyer_userid`, that vendor's totals and `items_count`, `delivery_info`, `time_slot` (vendor slot text), `ctype_id='vegetables_fruits'`, `area_name='AMT'`, `admin_id` (vendor), `order_state='pending'`, `payment_status='not_paid'`, `txn_id='crm…'` (20 chars). |
+| `orders_item` | Same | Paid and free rows: `pinfo` (the pack snapshot), `quantity`, `qty_loaded`, live `item_price`, `item_total`, `vendor_product_id`, `commission=0`; free rows have `offers='free_item'` and price 0. |
+| `vendor_products` | Place (deduct) / cancel (restore) | `packs` JSON: `stk` and `in_stk` on every pack, as in the doc's `updateStock`. |
+| `promo`, `promo_log`, `offer_log` | Place, when a promo or offer applies | `max_use − 1` and one `promo_log` row per order; one `offer_log` row per free item and per new-customer discount (not for % off offers, as in the doc). Cancel deletes the `offer_log` rows. |
+| `user_addresses` | Lead approved → customer | One saved address (`is_default='1'`), so the customer has an `address_id` to order against. |
 | `cart` | Staff edits the "Create Sales Order" cart | One draft row per (staff, shop): `ctype_id='crm_sales_draft'`, `userid=0`, `product_id=0`, `pack_id='crmdraft:…'`, plus `staff_id`, `account_ref`, `account_type`, `draft_payload` (JSON). Deleted when the order is created. |
 
 **Fixed in this round:**
@@ -219,10 +223,67 @@ The CRM writes to exactly **6 shared tables**. Each write was compared, column b
 | L4 | Low | Item `pinfo` lacked `hsn_code` and `selected_pack`, which the admin sales module documents. | The invoice may show no HSN or pack for CRM items. | Both added; the existing keys are kept. |
 
 **Checked and left as they are:**
-- **`orders_item.vendor_product_id`:** left empty. The admin sales module also leaves it empty; it's resolved at invoicing (`docs/SALES_MODULE.md`).
+- **`orders_item.vendor_product_id`:** now filled, because the order lifecycle doc writes it (§6C).
 - **`orders.salesman_id`:** left empty. The admin app links this column to `LoginUser_crm.id`, a different staff table. CRM staff live in `deli_staff`, so filling it would point at the wrong table.
 - **`master_orders.txn_id` differs from `orders.txn_id`:** consumer orders do the same.
 - **Dev data:** most dev rows marked `CRM-` with `admin_id = 108` are seed data (`docs/SEED_DATA_CONTEXT.md`). The 211 orders the CRM app created live have `admin_id = 0`; that's the bug fixed by L1. Prod starts fresh.
+
+---
+
+## 6C. Order creation now follows `ORDER_LIFECYCLE_FOR_NEW_FRONTEND (1).md` (2026-10-09)
+
+Sir's doc describes how the consumer app writes an order (`calculateOrderDetails` → `placeNewOrder` → `cancelOrder`). The CRM now writes orders the same way. Where the doc lists a known bug (§13 gotchas), the fixed behaviour was built.
+
+**The only difference:** the item list comes from the CRM screen (product + pack + quantity) instead of the customer's `cart` rows. The cart is on hold until sir answers the questions below.
+
+**What was wrong before, and what it is now:**
+
+| # | Before | Now (as in the doc) |
+|---|---|---|
+| 1 | `qty_loaded` never set | `qty_loaded = quantity` |
+| 2 | Delivery charge from `cart_type` + add-ons, worked out in the app | From the vendor's `timing_slot_groups`, worked out on the server |
+| 3 | `time_slot` = a picked date | Vendor `time_slots` text, e.g. `10 Oct 8:00am  to  10 Oct 10:00pm` (cut-off and clamps applied) |
+| 4 | Price typed in the app | Live `vendor_products.packs[pack].rp` |
+| 5 | Add-on charges (hamali, transport…) folded into delivery | Removed (the doc has none) |
+| 6 | No stock check or deduction | Checked, re-checked inside the transaction (row lock) and deducted; restored on cancel |
+| 7 | No minimum order | `user.shop_plot_no` (when numeric), else ₹1000 (₹100 for a vendor-128-only cart); vendor 125 ≥ ₹500 |
+| 8 | `delivery_info` typed in the app | Built from the chosen saved `user_addresses` row |
+| 9 | MAX+1 ids, `order_id = master id` | Auto-increment, master inserted first |
+| 10 | `txn_id = CRM-{id}-{ts}` | 20 random hex chars starting `crm` (marks CRM orders, so no new table) |
+| 11 | `payment_status = not_paid` on master | `pending` |
+| 12 | Delivery charge added after the discount | Inside `before_discount`; `order_total` = after discount |
+| 13 | Custom `pinfo` | The pack snapshot (`tx, op, rp, sn, ps, pu, pi, stk, in_stk, bc`) |
+| 14 | `vendor_product_id` empty | Set |
+| 15 | Real area, default ctype | `area_name='AMT'`, `ctype_id='vegetables_fruits'` |
+| 16 | No offers / promo | 5 offer types + 4 promo types; `offer_log`, `promo_log`, `max_use` |
+| 17 | `bill_dt`, `bill_narration`, `department` set | Not set |
+| 18 | Items editable after placing | No edit. **Cancel** = pending CRM orders only: restock, delete the rows, delete the orphan master |
+
+**Doc gotchas fixed rather than copied:**
+- `delivery_info` comes from the real `addressId`.
+- `items_count` is counted per vendor.
+- The app's total is checked against the server's own total; a mismatch is rejected.
+- The whole write is one DB transaction.
+- The promo is logged once per order.
+- Cancel removes the orphan master row.
+- `bc` counts as a buy cap only when it is a number (real data stores barcodes there).
+
+**API:**
+- New: `POST /api/sales-orders/preview`, `POST /api/sales-orders` (with `total_amount` = the preview total), `POST /api/orders/{id}/cancel`.
+- Removed: `PUT /api/orders/{id}/items`, `/sales-orders/delivery-rule`, `/sales-orders/next-order-id`.
+
+**App:**
+- The order screen shows the server's bill (items, free items, delivery charge, discounts, time slot) and a promo-code field.
+- Add-ons, express, dates, narration and the voucher number are gone.
+- A customer order needs a saved address.
+- Order detail: the edit buttons are gone; "Cancel Order" shows for pending CRM orders.
+
+**Tests:** 35/35 order checks on the MariaDB prod schema; 163/163 API checks on MySQL 8 `test_cms` (142/142 routes, rolled back); PHPUnit 17/17; `flutter analyze` 0 errors.
+
+**Waiting for sir:**
+1. **Cart:** should the CRM use the customer's own `cart` rows (`addProductToCart` rules), and may the CRM write into the customer's cart?
+2. **`unit_factors`:** what are the real values in `framework/config.php`? The CRM uses a guessed rule: size in `pu` × base unit ("500 Gms." = 0.5, "5 Kg" = 5, "nos" = 1; kg/l = 1, gm/ml = 0.001) in `server/app/Support/UnitFactors.php`.
+3. **Double stock deduction:** the doc deducts stock when the order is placed. Does the admin PMS deduct it again when it invoices the order?
 
 ---
 
@@ -309,7 +370,11 @@ The CRM writes to exactly **6 shared tables**. Each write was compared, column b
 | `ActionLogController`, `AttendanceController`, `LeadsAccountController` | Upload file names use the detected image type |
 | `LeadsAccountController` | Customer search without a pincode capped at 200 |
 | `OrderListController`, `AreaController` | `per_page` capped |
-| `SalesOrderController` | Vendor `admin_id`, full `delivery_info`, `hsn_code` + `selected_pack` in `pinfo` (L1, L3, L4) |
+| `SalesOrderController` | Rewritten on `OrderPlacementService`: preview / place / cancel per the order lifecycle doc (§6C) |
+| `server/app/Services/OrderPlacementService.php`, `server/app/Support/UnitFactors.php` (new) | The doc's calculate / place / cancel: stock, offers, promo, time slot |
+| `OrderListController` | Order detail returns `can_cancel`; unit read from `pinfo.pu` |
+| `BeatPlan`, `CustomerAssign`, `LeadsAccount`, `Telecaller` controllers | Saved addresses carry their `user_addresses.id`; lead approval creates a saved address |
+| Client: `create_sales_order_sheet.dart`, `api_service.dart`, `address_picker_dialog.dart`, `order_detail_screen.dart` | Server-priced bill + promo, saved address only, cancel instead of edit |
 | `LeadsAccountController` | Approved customer `account_state = 'complete'` (L2) |
 | `MastersController` | New employee with no vendor inherits the creating admin's `admin_id` |
 | `TelecallerAllocationService` | Reassign reports the right count when the date is unchanged (B20) |

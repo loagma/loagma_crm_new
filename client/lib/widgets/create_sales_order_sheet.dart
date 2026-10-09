@@ -78,16 +78,6 @@ class OrderLineItem {
   }
 }
 
-class OrderAddon {
-  String name;
-  final amount = TextEditingController(text: '0');
-  OrderAddon(this.name);
-
-  double get amountNum => double.tryParse(amount.text.trim()) ?? 0;
-
-  void dispose() => amount.dispose();
-}
-
 class CreateSalesOrderSheet extends StatefulWidget {
   final String name;
   final String accountId;
@@ -142,42 +132,29 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   // trips DropdownButton's "value must match exactly one item" assert. (The
   // old fallback had 'DOZ', which units_master spells 'DOZEN'.)
   List<String> _units = const ['PCS', 'KG', 'BOX', 'LTR', 'NOS'];
-  static const _addonNames = [
-    'Hamali',
-    'Transport',
-    'Packing',
-    'Discount',
-    'Other',
-  ];
-
-  int? _voucherNo; // null while loading the real preview from the server
-  DateTime _documentDate = DateTime.now();
-  DateTime _expectedDate = DateTime.now().add(const Duration(days: 1));
-  final _narration = TextEditingController();
+  // Promo code typed by staff — validated and applied by the server preview.
+  final _promo = TextEditingController();
 
   // Starts empty — items only ever arrive from the catalog's qty stepper
   // (or, for a product with no vendor pack pricing, the manual product
   // search inside _manualItemForm), never a blank line shown by default.
   final List<OrderLineItem> _lineItems = [];
-  final List<OrderAddon> _addons = [];
   bool _saving = false;
-  // True only while the Customer & Dates dialog is on screen — purely so the
-  // pencil button can show a brighter border while its dialog is open; the
-  // dialog's own visibility is otherwise managed by showDialog/Navigator.
+  // True only while the Customer dialog is on screen — purely so the pencil
+  // button can show a brighter border while its dialog is open.
   bool _customerPanelOpen = false;
-  // The Review sheet's addon editor (Hamali/Transport/etc.) starts collapsed
-  // behind a "+ Add Charges" link so the default view matches the plain
-  // item-list + Bill Details cart layout — most orders never need it.
-  bool _showAddons = false;
 
-  // Min-order/delivery-charge/express rule from `cart_type` (via
-  // ApiService.getDeliveryRule) — see SalesOrderController::deliveryRule.
-  // Null until loaded (or if the fetch failed), in which case no auto
-  // delivery/express charge is applied rather than blocking order creation.
-  Map<String, dynamic>? _deliveryRule;
-  // Salesman-toggled express delivery — only meaningful (and only shown)
-  // when the loaded rule has has_express == true.
-  bool _isExpress = false;
+  // The server's bill for a customer order (≈ calculateOrderDetails in the
+  // order lifecycle doc): live pack prices, free items, the vendor's delivery
+  // charge (timing_slot_groups), offers, promo and the delivery time slot.
+  // The order is placed against exactly this total.
+  Map<String, dynamic>? _preview;
+  String? _previewError;
+  bool _previewLoading = false;
+  int _previewSeq = 0;
+  Timer? _previewDebounce;
+  // The open Review sheet's setState, so a preview landing later refreshes it.
+  StateSetter? _reviewSetter;
 
   bool get _isCustomer => widget.accountType == 'customer';
 
@@ -204,16 +181,11 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   @override
   void initState() {
     super.initState();
-    _loadVoucherPreview();
     _loadUnits();
-    _loadDeliveryRule();
     // Leads restore too - the draft table is keyed by (staff, account) and
     // never touches `user`, so nothing here depends on the account being a
     // registered customer.
     _loadDraft();
-    // The narration field has no onChanged of its own, so watch the
-    // controller instead of threading a callback through the Review sheet.
-    _narration.addListener(_scheduleDraftSave);
   }
 
   // Restores this staff member's in-progress cart for this account so
@@ -270,26 +242,6 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         item.unitPrice.text = (r['unit_price'] ?? '0').toString();
         _lineItems.add(item);
       }
-      for (final raw in (draft['addons'] as List?) ?? const []) {
-        final r = Map<String, dynamic>.from(raw as Map);
-        final addon = OrderAddon((r['name'] ?? _addonNames.first).toString());
-        addon.amount.text = (r['amount'] ?? '0').toString();
-        _addons.add(addon);
-      }
-      // The addon editor starts collapsed, but a restored draft that has
-      // charges should show them rather than hiding them behind the link.
-      if (_addons.isNotEmpty) _showAddons = true;
-
-      final narration = (draft['narration'] ?? '').toString();
-      if (narration.isNotEmpty) {
-        // Assigning fires the listener added in initState, which would
-        // schedule a save of what is still being restored - _draftLoaded is
-        // still false here, so that save is correctly suppressed.
-        _narration.text = narration;
-      }
-      _documentDate = _parseIsoDate(draft['document_date']) ?? _documentDate;
-      _expectedDate = _parseIsoDate(draft['expected_date']) ?? _expectedDate;
-
       final addr = draft['delivery_address'];
       if (addr is Map) _draftDeliveryAddress = Map<String, dynamic>.from(addr);
 
@@ -300,11 +252,6 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     // _draftLoaded gate above; now that it's open, make sure they're stored
     // rather than waiting for the user's next tap.
     if (!_draftIsEmpty) _scheduleDraftSave();
-  }
-
-  static DateTime? _parseIsoDate(dynamic raw) {
-    if (raw is! String || raw.trim().isEmpty) return null;
-    return DateTime.tryParse(raw.trim());
   }
 
   // Everything the sheet would need to rebuild itself. Quantities and prices
@@ -328,20 +275,13 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
           },
         )
         .toList(),
-    'addons': _addons
-        .map((a) => {'name': a.name, 'amount': a.amount.text})
-        .toList(),
-    'narration': _narration.text,
-    'document_date': _isoDate(_documentDate),
-    'expected_date': _isoDate(_expectedDate),
     'delivery_address': _deliveryAddress,
   };
 
   // True once there's genuinely nothing worth restoring - an emptied cart
   // deletes its draft row instead of storing an empty one, so re-opening
   // starts clean rather than restoring a blank draft over fresh defaults.
-  bool get _draftIsEmpty =>
-      _lineItems.isEmpty && _addons.isEmpty && _narration.text.trim().isEmpty;
+  bool get _draftIsEmpty => _lineItems.isEmpty;
 
   // Called from every cart mutation. Coalesces a burst of edits into one
   // write and never blocks the UI - a failed save just means this particular
@@ -385,12 +325,6 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     );
   }
 
-  Future<void> _loadVoucherPreview() async {
-    final next = await ApiService.getNextSalesOrderId();
-    if (!mounted) return;
-    setState(() => _voucherNo = next);
-  }
-
   Future<void> _loadUnits() async {
     final units = await ApiService.getUnits();
     final names = units
@@ -407,12 +341,6 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         if (!names.contains(i.unit)) i.unit = names.first;
       }
     });
-  }
-
-  Future<void> _loadDeliveryRule() async {
-    final rule = await ApiService.getDeliveryRule();
-    if (!mounted || rule == null) return;
-    setState(() => _deliveryRule = rule);
   }
 
   Future<void> _pickUnit(OrderLineItem item) async {
@@ -435,57 +363,107 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     // because ApiService is static and needs no context.
     if (_draftDebounce?.isActive ?? false) _saveDraftNow();
     _draftDebounce?.cancel();
-    _narration.removeListener(_scheduleDraftSave);
-    _narration.dispose();
+    _previewDebounce?.cancel();
+    _promo.dispose();
     for (final i in _lineItems) {
       i.dispose();
-    }
-    for (final a in _addons) {
-      a.dispose();
     }
     super.dispose();
   }
 
-  String get _financialYear {
-    final d = _documentDate;
-    final startYear = d.month >= 4 ? d.year : d.year - 1;
-    return '${(startYear % 100).toString().padLeft(2, '0')}-${((startYear + 1) % 100).toString().padLeft(2, '0')}';
+  // Sum of the cart lines at the catalog's pack price — what a lead "draft"
+  // shows; a customer order shows the server preview's total instead.
+  double get _itemsTotal => _lineItems.fold(0, (s, i) => s + i.productTotal);
+
+  double get _grandTotal => _isCustomer
+      ? ((_preview?['total'] as num?)?.toDouble() ?? _itemsTotal)
+      : _itemsTotal;
+
+  // user_addresses.id of the chosen delivery address — the order is placed
+  // against a saved address (address_id), per the order lifecycle doc.
+  int? get _addressId => int.tryParse('${_deliveryAddress?['id'] ?? ''}');
+
+  // Lines picked from the catalog with a vendor pack — the only kind the
+  // server can price (live pack price) and stock-check.
+  bool _isPackLine(OrderLineItem i) =>
+      i.productId != null && i.vendorProductId != null && i.packId != null;
+
+  bool get _hasNonPackLines =>
+      _lineItems.any((i) => i.product.text.trim().isNotEmpty && !_isPackLine(i));
+
+  List<Map<String, dynamic>> _orderLines() => _lineItems
+      .where((i) => _isPackLine(i) && i.qtyNum.round() > 0)
+      .map((i) => {
+            'product_id': int.parse(i.productId!),
+            'vendor_product_id': int.parse(i.vendorProductId!),
+            'pack_id': i.packId,
+            'quantity': i.qtyNum.round(),
+          })
+      .toList();
+
+  // Asks the server for the bill. Latest request wins (sequence guard), and
+  // the open Review sheet is refreshed when it lands.
+  Future<void> _refreshPreview() async {
+    if (!_isCustomer) return;
+    final seq = ++_previewSeq;
+    void apply(VoidCallback fn) {
+      if (!mounted || seq != _previewSeq) return;
+      setState(fn);
+      _reviewSetter?.call(() {});
+    }
+
+    if (_addressId == null) {
+      apply(() {
+        _preview = null;
+        _previewLoading = false;
+        _previewError =
+            'This customer has no saved delivery address. Add an address for the customer first.';
+      });
+      return;
+    }
+    if (_hasNonPackLines) {
+      apply(() {
+        _preview = null;
+        _previewLoading = false;
+        _previewError =
+            'Remove items that were not picked from the catalog (they have no vendor pack price).';
+      });
+      return;
+    }
+    final lines = _orderLines();
+    if (lines.isEmpty) {
+      apply(() {
+        _preview = null;
+        _previewError = null;
+        _previewLoading = false;
+      });
+      return;
+    }
+    apply(() => _previewLoading = true);
+    final res = await ApiService.previewSalesOrder(
+      buyerUserId: widget.accountId,
+      addressId: _addressId!,
+      items: lines,
+      promoCode: _promo.text,
+    );
+    apply(() {
+      _previewLoading = false;
+      if (res['success'] == true) {
+        _preview = Map<String, dynamic>.from(res['data'] as Map);
+        _previewError = null;
+      } else {
+        _preview = null;
+        _previewError = '${res['message'] ?? 'Could not calculate the order.'}';
+      }
+    });
   }
 
-  String _fmtDate(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+  void _schedulePreview() {
+    if (!_isCustomer) return;
+    _previewDebounce?.cancel();
+    _previewDebounce = Timer(const Duration(milliseconds: 450), _refreshPreview);
+  }
 
-  double get _grossAmount => _lineItems.fold(0, (s, i) => s + i.grossAmount);
-  double get _totalTax => _lineItems.fold(0, (s, i) => s + i.taxNum);
-  double get _addonsTotal => _addons.fold(0, (s, a) => s + a.amountNum);
-
-  double get _deliveryRuleMinTotal =>
-      (_deliveryRule?['min_total'] as num?)?.toDouble() ?? 0;
-  double get _deliveryRuleCharge =>
-      (_deliveryRule?['delivery_charge'] as num?)?.toDouble() ?? 0;
-  bool get _deliveryRuleHasExpress => _deliveryRule?['has_express'] == true;
-  double get _deliveryRuleExpressCharge =>
-      (_deliveryRule?['express_charge'] as num?)?.toDouble() ?? 0;
-
-  // Order value the min-order threshold is measured against — the goods
-  // total the customer pays (gross + tax), not counting addons/delivery.
-  double get _orderValueForDelivery => _grossAmount + _totalTax;
-
-  // Free once the order value reaches the rule's min_total; below that, the
-  // rule's flat delivery_charge applies. No rule loaded => no auto charge.
-  double get _autoDeliveryCharge => _deliveryRule == null
-      ? 0
-      : (_orderValueForDelivery >= _deliveryRuleMinTotal
-            ? 0
-            : _deliveryRuleCharge);
-
-  double get _expressCharge =>
-      (_isExpress && _deliveryRuleHasExpress) ? _deliveryRuleExpressCharge : 0;
-
-  double get _deliveryTotal => _autoDeliveryCharge + _expressCharge;
-
-  double get _grandTotal =>
-      _grossAmount + _totalTax + _addonsTotal + _deliveryTotal;
   int get _itemCount =>
       _lineItems.where((i) => i.product.text.trim().isNotEmpty).length;
 
@@ -568,21 +546,6 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     ];
   }
 
-  Widget _voucherArrow(IconData icon, VoidCallback? onTap) => GestureDetector(
-    onTap: onTap,
-    behavior: HitTestBehavior.opaque,
-    child: Container(
-      width: 34,
-      height: 38,
-      alignment: Alignment.center,
-      child: Icon(
-        icon,
-        size: 20,
-        color: onTap != null ? kGoldDark : Colors.grey.shade300,
-      ),
-    ),
-  );
-
   Widget _sheetHandle() => Center(
     child: Container(
       width: 42,
@@ -616,21 +579,6 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
       child: Icon(Icons.close_rounded, size: 18, color: Colors.grey.shade600),
     ),
   );
-
-  Future<void> _pickDate({required bool expected}) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: expected ? _expectedDate : _documentDate,
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-    );
-    if (picked != null) {
-      setState(
-        () => expected ? _expectedDate = picked : _documentDate = picked,
-      );
-      _scheduleDraftSave();
-    }
-  }
 
   Future<void> _pickProduct(OrderLineItem item) async {
     final picked = await showCatalogProductPicker(context);
@@ -706,7 +654,10 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     // rather than a `user` row. Debounced and fire-and-forget: a failed save
     // never blocks the on-screen cart, it just means the next open won't
     // reflect this particular change.
-    if (changed != null) _scheduleDraftSave();
+    if (changed != null) {
+      _scheduleDraftSave();
+      _schedulePreview();
+    }
     if (qty <= 0 && changed != null) changed!.dispose();
   }
 
@@ -717,14 +668,11 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   void _bump(StateSetter setModalState, VoidCallback fn) {
     setState(fn);
     setModalState(() {});
-    // Every Review-sheet edit - addon add/remove/rename, addon amount typing,
-    // item delete, manual item fields - goes through here, so one hook covers
-    // all of them.
+    // Every Review-sheet edit (item qty, item delete, manual item fields)
+    // goes through here, so one hook covers all of them.
     _scheduleDraftSave();
+    _schedulePreview();
   }
-
-  String _isoDate(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   Future<void> _submit() async {
     final validItems = _lineItems
@@ -748,89 +696,52 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
       // stored cart goes with it.
       await _discardDraft();
       if (!mounted) return;
-      widget.onSave(
-        itemsSummary,
-        _grandTotal.round(),
-        'Draft',
-        'Pending',
-        null,
-      );
+      widget.onSave(itemsSummary, _grandTotal.round(), 'Draft', 'Pending', null);
       _closeAfterSave();
       return;
     }
 
-    final missingProduct = validItems
-        .where((i) => i.productId == null)
-        .toList();
-    if (missingProduct.isNotEmpty) {
+    // Customer order: placed exactly as the order lifecycle doc describes —
+    // the server re-prices everything and must agree with the preview total.
+    final preview = _preview;
+    if (_addressId == null || preview == null || _previewError != null || _previewLoading) {
       Fluttertoast.showToast(
-        msg: 'Select a real product from search for every item before saving',
+        msg: _previewError ?? 'Please wait for the bill to load.',
         backgroundColor: Colors.red,
         textColor: Colors.white,
       );
+      if (_previewError == null) _refreshPreview();
       return;
     }
 
     setState(() => _saving = true);
+    final total = (preview['total'] as num).toDouble();
     final result = await ApiService.createSalesOrder(
       buyerUserId: widget.accountId,
-      // No tax_percent/sgst_percent/cgst_percent here — the server derives
-      // those authoritatively from the product's own gst_percent, not from
-      // whatever the client computed (see SalesOrderController::store).
-      items: validItems
-          .map(
-            (i) => {
-              'product_id': i.productId,
-              'quantity': i.qtyNum,
-              'item_price': i.priceNum,
-              'unit': i.unit,
-              // Stored server-side into orders_item.pinfo['ps'] and surfaced
-              // back by OrderListController::getOrderDetail — so Order
-              // Details can show which pack was actually sold, not just a
-              // bare unit token.
-              'pack_size': i.packLabel,
-            },
-          )
-          .toList(),
-      discount: 0,
-      // Addons (Hamali/Transport/Packing/etc.) are extra charges, not a discount —
-      // the backend has no dedicated "charges" field yet, so fold them into
-      // delivery_charge (which the order-total formula adds, matching intent).
-      // The auto-computed min-order delivery charge and express charge (from
-      // `cart_type` via _deliveryRule) are folded in the same way.
-      deliveryCharge: _addonsTotal + _deliveryTotal,
-      narration: _narration.text.trim().isEmpty ? null : _narration.text.trim(),
-      department: null,
-      areaName: widget.areaName,
-      timeSlot: _fmtDate(_expectedDate),
-      documentDate: _isoDate(_documentDate),
-      deliveryInfo: _deliveryAddress != null
-          ? {
-              'name': widget.name,
-              'address': _deliveryAddress!['address'],
-              'latitude': _deliveryAddress!['latitude'],
-              'longitude': _deliveryAddress!['longitude'],
-            }
-          : null,
+      addressId: _addressId!,
+      items: _orderLines(),
+      totalAmount: total,
+      promoCode: _promo.text,
     );
     if (!mounted) return;
     setState(() => _saving = false);
 
-    if (result == null) {
+    if (result['success'] != true) {
       Fluttertoast.showToast(
-        msg: 'Could not create the order. Try again.',
+        msg: '${result['message'] ?? 'Could not create the order. Try again.'}',
         backgroundColor: Colors.red,
         textColor: Colors.white,
       );
+      // Stock/price/offers may have changed since the preview — re-price.
+      _refreshPreview();
       return;
     }
 
-    final realOrderId = result['order_id']?.toString();
-    final savedTotal = ((result['order_total'] as num?) ?? _grandTotal).round();
+    final data = Map<String, dynamic>.from(result['data'] as Map);
+    final realOrderId = data['order_id']?.toString();
+    final savedTotal = ((data['order_total'] as num?) ?? total).round();
     // The order now owns these items - drop the draft so they don't keep
-    // re-appearing next time this account's cart loads. Awaited (the old
-    // fire-and-forget could lose the race against the sheet closing, leaving
-    // an already-ordered cart to come back).
+    // re-appearing next time this account's cart loads.
     await _discardDraft();
     if (!mounted) return;
     widget.onSave(itemsSummary, savedTotal, 'Pending', 'Not Paid', realOrderId);
@@ -920,7 +831,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Customer & Dates',
+                      'Customer',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
@@ -929,7 +840,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Enter or update customer and document details',
+                      'Customer and delivery address',
                       style: TextStyle(
                         fontSize: 11,
                         color: Colors.grey.shade500,
@@ -1009,168 +920,6 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _label('Financial Year'),
-                  Container(
-                    height: 46,
-                    alignment: Alignment.centerLeft,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: BoxDecoration(
-                      color: _fieldBg,
-                      borderRadius: BorderRadius.circular(11),
-                      border: Border.all(color: _fieldBorder),
-                    ),
-                    child: Text(
-                      _financialYear,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _label('Voucher No'),
-                  Container(
-                    height: 46,
-                    padding: const EdgeInsets.only(left: 12, right: 4),
-                    decoration: BoxDecoration(
-                      color: _fieldBg,
-                      borderRadius: BorderRadius.circular(11),
-                      border: Border.all(color: _fieldBorder),
-                    ),
-                    // No real "previous voucher" to browse to here — this is always a
-                    // *new* order, so only a refresh action makes sense (the preview
-                    // can go stale if another order is created elsewhere meanwhile) —
-                    // no left/previous arrow shown since there's nothing it could do.
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _voucherNo == null
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: kGold,
-                                  ),
-                                )
-                              : Text(
-                                  '$_voucherNo',
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                        ),
-                        _voucherArrow(
-                          Icons.refresh_rounded,
-                          _loadVoucherPreview,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _label('Document Date *'),
-                  InkWell(
-                    borderRadius: BorderRadius.circular(11),
-                    onTap: () => _pickDate(expected: false),
-                    child: Container(
-                      height: 46,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: _fieldBg,
-                        borderRadius: BorderRadius.circular(11),
-                        border: Border.all(color: _fieldBorder),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _fmtDate(_documentDate),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          Icon(
-                            Icons.calendar_today_rounded,
-                            size: 15,
-                            color: Colors.grey.shade500,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _label('Expected Date'),
-                  InkWell(
-                    borderRadius: BorderRadius.circular(11),
-                    onTap: () => _pickDate(expected: true),
-                    child: Container(
-                      height: 46,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: _fieldBg,
-                        borderRadius: BorderRadius.circular(11),
-                        border: Border.all(color: _fieldBorder),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _fmtDate(_expectedDate),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          Icon(
-                            Icons.calendar_today_rounded,
-                            size: 15,
-                            color: Colors.grey.shade500,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
         _label('Customer'),
         Container(
           width: double.infinity,
@@ -1197,29 +946,30 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
             ],
           ),
         ),
-        if (_deliveryAddress != null) ...[
-          const SizedBox(height: 14),
-          _label('Delivery Address'),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            decoration: BoxDecoration(
-              color: _fieldBg,
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: _fieldBorder),
-            ),
-            child: Text(
-              '${_deliveryAddress!['address'] ?? ''}',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        const SizedBox(height: 14),
+        _label('Delivery Address'),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            color: _fieldBg,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: _fieldBorder),
+          ),
+          child: Text(
+            _deliveryAddress != null && _addressId != null
+                ? '${_deliveryAddress!['address'] ?? ''}'
+                : (_isCustomer
+                    ? 'No saved delivery address for this customer — add one before placing an order.'
+                    : 'Not needed for a lead draft.'),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: _deliveryAddress != null && _addressId != null
+                  ? null
+                  : const Color(0xFFC0584C),
             ),
           ),
-        ],
-        const SizedBox(height: 14),
-        _label('Narration'),
-        TextField(
-          controller: _narration,
-          maxLines: 3,
-          decoration: _decor('', hint: 'Enter narration (optional)…'),
         ),
       ],
     );
@@ -1233,7 +983,9 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetCtx) => StatefulBuilder(
-        builder: (sheetCtx, setModalState) => Container(
+        builder: (sheetCtx, setModalState) {
+          _reviewSetter = setModalState;
+          return Container(
           height: MediaQuery.of(sheetCtx).size.height * 0.92,
           padding: EdgeInsets.fromLTRB(
             18,
@@ -1343,15 +1095,17 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                           // the full editable form so a price can be typed in.
                           final fromCatalog =
                               item.productId != null && item.packId != null;
-                          return fromCatalog
-                              ? _cartItemRow(item, setModalState)
+                          if (fromCatalog) return _cartItemRow(item, setModalState);
+                          // A customer order can only contain catalog packs
+                          // (the server uses the live pack price); a lead
+                          // draft can still hold a hand-typed line.
+                          return _isCustomer
+                              ? _nonPackItemRow(item, idx, setModalState)
                               : _manualItemForm(item, idx, setModalState);
                         }),
-                      const SizedBox(height: 2),
-                      _addChargesSection(setModalState),
-                      if (_deliveryRuleHasExpress) ...[
-                        const SizedBox(height: 10),
-                        _expressDeliveryToggle(setModalState),
+                      if (_isCustomer) ...[
+                        const SizedBox(height: 4),
+                        _promoField(setModalState),
                       ],
                       const SizedBox(height: 10),
                       _billDetailsCard(),
@@ -1365,7 +1119,9 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _saving
+                  onPressed: _saving ||
+                          (_isCustomer &&
+                              (_preview == null || _previewError != null || _previewLoading))
                       ? null
                       : () async {
                           await _submit();
@@ -1404,9 +1160,12 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
               ),
             ],
           ),
-        ),
+        );
+        },
       ),
-    );
+    ).whenComplete(() => _reviewSetter = null);
+    // Price the cart on the server as soon as the sheet opens.
+    _refreshPreview();
   }
 
   // Items added straight from the catalog already carry a real pack price —
@@ -1903,6 +1662,20 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   // expected delivery date already picked in Customer & Dates, plus the
   // delivery-charge figure once extra charges are added.
   Widget _deliveryInfoBanner() {
+    // Customer orders only: the delivery slot and charge come from the
+    // vendor's time_slots / timing_slot_groups via the server preview.
+    if (!_isCustomer) return const SizedBox.shrink();
+    final vendors = (_preview?['vendors'] as List?) ?? const [];
+    final slots = vendors
+        .map((v) => '${(v as Map)['time_slot'] ?? ''}'.trim())
+        .where((t) => t.isNotEmpty)
+        .toSet()
+        .toList();
+    final charge = (_preview?['delivery_charge'] as num?)?.toDouble() ?? 0;
+    final line = _preview == null
+        ? 'Calculated when the bill loads'
+        : '${charge > 0 ? 'Delivery charge ₹${charge.toStringAsFixed(0)}' : 'Free delivery'}'
+            '${slots.isNotEmpty ? '  ·  ${slots.join(' / ')}' : ''}';
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 10),
@@ -1914,11 +1687,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.local_shipping_outlined,
-            size: 15,
-            color: Color(0xFF2F9E57),
-          ),
+          const Icon(Icons.local_shipping_outlined, size: 15, color: Color(0xFF2F9E57)),
           const SizedBox(width: 7),
           Expanded(
             child: Column(
@@ -1926,22 +1695,12 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
               children: [
                 const Text(
                   'Delivery Info',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF2F9E57),
-                  ),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF2F9E57)),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  _deliveryTotal > 0
-                      ? 'Delivery charge ₹${_deliveryTotal.toStringAsFixed(0)}  ·  Expected by ${_fmtDate(_expectedDate)}'
-                      : 'Free delivery  ·  Expected by ${_fmtDate(_expectedDate)}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF2F9E57),
-                  ),
+                  line,
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF2F9E57)),
                 ),
               ],
             ),
@@ -1951,96 +1710,91 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     );
   }
 
-  // Collapsed behind a link by default — most orders never need Hamali/
-  // Transport/etc., so the plain item list + Bill Details stays the norm.
-  Widget _addChargesSection(StateSetter setModalState) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        GestureDetector(
-          onTap: () => _bump(setModalState, () => _showAddons = !_showAddons),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                _showAddons
-                    ? Icons.remove_circle_outline_rounded
-                    : Icons.add_circle_outline_rounded,
-                size: 15,
-                color: kGoldDark,
-              ),
-              const SizedBox(width: 5),
-              Text(
-                _showAddons
-                    ? 'Hide extra charges'
-                    : 'Add extra charges (Hamali, Transport…)',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: kGoldDark,
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (_showAddons) ...[
-          const SizedBox(height: 10),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: _addonItems(setModalState),
-          ),
-        ],
-      ],
-    );
-  }
-
-  // Only rendered when the loaded cart_type rule has has_express == true.
-  Widget _expressDeliveryToggle(StateSetter setModalState) {
+  // A line with no vendor pack can't go into a customer order (the server
+  // prices from the live pack) — shown so it can be removed.
+  Widget _nonPackItemRow(OrderLineItem item, int idx, StateSetter setModalState) {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(13),
+        color: const Color(0xFFC0584C).withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(11),
       ),
       child: Row(
         children: [
-          const Icon(Icons.bolt_rounded, size: 16, color: kGoldDark),
-          const SizedBox(width: 7),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Express Delivery',
-                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-                ),
-                Text(
-                  '+ ₹${_deliveryRuleExpressCharge.toStringAsFixed(0)}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                ),
-              ],
+            child: Text(
+              '${item.product.text.trim().isEmpty ? 'Item ${idx + 1}' : item.product.text.trim()} — not from the catalog, remove it to place the order',
+              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFFC0584C)),
             ),
           ),
-          Switch(
-            value: _isExpress,
-            activeThumbColor: kGoldDark,
-            onChanged: (v) =>
-                _bump(setModalState, () => _isExpress = v),
+          GestureDetector(
+            onTap: () => _bump(setModalState, () {
+              item.dispose();
+              _lineItems.removeAt(idx);
+            }),
+            child: const Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFFC0584C)),
           ),
         ],
       ),
     );
   }
 
+  Widget _promoField(StateSetter setModalState) {
+    final applied = (_preview?['promo_discount'] as num?)?.toDouble() ?? 0;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(13)),
+      child: Row(
+        children: [
+          const Icon(Icons.local_offer_outlined, size: 16, color: kGoldDark),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _promo,
+              textCapitalization: TextCapitalization.characters,
+              style: const TextStyle(fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Promo code (optional)',
+                hintStyle: TextStyle(fontSize: 12.5, color: Colors.grey.shade400),
+                border: InputBorder.none,
+                isDense: true,
+              ),
+              onSubmitted: (_) => _refreshPreview(),
+            ),
+          ),
+          if (applied > 0)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Text('−₹${applied.toStringAsFixed(0)}',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF2F9E57))),
+            ),
+          TextButton(
+            onPressed: _previewLoading ? null : _refreshPreview,
+            child: const Text('Apply', style: TextStyle(fontWeight: FontWeight.w700, color: kGoldDark)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _billRow(String label, String value, {Color? color, bool bold = false}) => Padding(
+        padding: const EdgeInsets.only(top: 5),
+        child: Row(
+          children: [
+            Expanded(child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600))),
+            Text(value,
+                style: TextStyle(fontSize: 12, fontWeight: bold ? FontWeight.w800 : FontWeight.w700, color: color)),
+          ],
+        ),
+      );
+
   Widget _billDetailsCard() {
-    final amount =
-        _grossAmount + _totalTax; // == sum of each line's productTotal
+    final p = _preview;
+    double n(String k) => (p?[k] as num?)?.toDouble() ?? 0;
+    final vendors = (p?['vendors'] as List?) ?? const [];
+    final freeItems = vendors.expand((v) => ((v as Map)['free_items'] as List?) ?? const []).toList();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 13),
@@ -2048,16 +1802,8 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(13),
         boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF141F1F).withValues(alpha: 0.04),
-            blurRadius: 2,
-            offset: const Offset(0, 1),
-          ),
-          BoxShadow(
-            color: const Color(0xFF141F1F).withValues(alpha: 0.05),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
+          BoxShadow(color: const Color(0xFF141F1F).withValues(alpha: 0.04), blurRadius: 2, offset: const Offset(0, 1)),
+          BoxShadow(color: const Color(0xFF141F1F).withValues(alpha: 0.05), blurRadius: 18, offset: const Offset(0, 6)),
         ],
       ),
       child: Column(
@@ -2065,125 +1811,51 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         children: [
           Row(
             children: [
-              Icon(
-                Icons.receipt_long_outlined,
-                size: 15,
-                color: Colors.grey.shade600,
-              ),
+              Icon(Icons.receipt_long_outlined, size: 15, color: Colors.grey.shade600),
               const SizedBox(width: 5),
-              const Text(
-                'Bill Details',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: _ink,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Text(
-                'Amount',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              ),
+              const Text('Bill Details', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _ink)),
               const Spacer(),
-              Text(
-                amount.toStringAsFixed(2),
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              if (_previewLoading)
+                const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: kGold)),
             ],
           ),
-          if (_addonsTotal > 0) ...[
-            const SizedBox(height: 5),
-            Row(
-              children: [
-                Text(
-                  'Extra Charges',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-                const Spacer(),
-                Text(
-                  _addonsTotal.toStringAsFixed(2),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ],
-          const SizedBox(height: 5),
-          Row(
-            children: [
-              Text(
-                'Delivery Charge',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              ),
-              const Spacer(),
-              Text(
-                _autoDeliveryCharge > 0
-                    ? _autoDeliveryCharge.toStringAsFixed(2)
-                    : 'Free',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: _autoDeliveryCharge > 0
-                      ? null
-                      : const Color(0xFF2F9E57),
-                ),
-              ),
-            ],
-          ),
-          if (_deliveryRule != null &&
-              _autoDeliveryCharge > 0 &&
-              _deliveryRuleMinTotal > 0) ...[
-            const SizedBox(height: 2),
-            Text(
-              'Free above ₹${_deliveryRuleMinTotal.toStringAsFixed(0)} — add ₹${(_deliveryRuleMinTotal - _orderValueForDelivery).toStringAsFixed(0)} more',
-              style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
-            ),
-          ],
-          if (_isExpress && _expressCharge > 0) ...[
-            const SizedBox(height: 5),
-            Row(
-              children: [
-                Text(
-                  'Express Delivery',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-                const Spacer(),
-                Text(
-                  _expressCharge.toStringAsFixed(2),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
+          const SizedBox(height: 4),
+          if (!_isCustomer)
+            _billRow('Amount', _itemsTotal.toStringAsFixed(2))
+          else if (_previewError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(_previewError!,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFC0584C))),
+            )
+          else if (p == null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(_lineItems.isEmpty ? 'Add products to see the bill.' : 'Calculating…',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+            )
+          else ...[
+            _billRow('Items (${p['items_count'] ?? 0})', (n('before_discount') - n('delivery_charge')).toStringAsFixed(2)),
+            _billRow('Delivery Charge', n('delivery_charge') > 0 ? n('delivery_charge').toStringAsFixed(2) : 'Free',
+                color: n('delivery_charge') > 0 ? null : const Color(0xFF2F9E57)),
+            if (n('offer_discount') > 0)
+              _billRow('Offer Discount', '−${n('offer_discount').toStringAsFixed(2)}', color: const Color(0xFF2F9E57)),
+            if (n('promo_discount') > 0)
+              _billRow('Promo Discount', '−${n('promo_discount').toStringAsFixed(2)}', color: const Color(0xFF2F9E57)),
+            for (final f in freeItems)
+              _billRow('Free: ${(f as Map)['name']} (${f['pack']}) × ${f['quantity']}', '₹0',
+                  color: const Color(0xFF2F9E57)),
           ],
           const SizedBox(height: 8),
           Divider(height: 1, color: kGold.withValues(alpha: 0.2)),
           const SizedBox(height: 8),
           Row(
             children: [
-              const Text(
-                'Total Amount',
-                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
-              ),
+              const Text('Total Amount', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800)),
               const Spacer(),
               Text(
-                '₹${_grandTotal.toStringAsFixed(2)}',
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: kGoldDark,
-                ),
+                _isCustomer && (p == null || _previewError != null) ? '—' : '₹${_grandTotal.toStringAsFixed(2)}',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: kGoldDark),
               ),
             ],
           ),
@@ -2233,125 +1905,6 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
           color: Color(0xFFD98A2B),
         ),
       ),
-    );
-  }
-
-  Widget _addonItems(StateSetter setModalState) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 4),
-        ..._addons.asMap().entries.map((entry) {
-          final idx = entry.key;
-          final addon = entry.value;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _label('Name'),
-                      Container(
-                        height: 46,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          color: _fieldBg,
-                          borderRadius: BorderRadius.circular(11),
-                          border: Border.all(color: _fieldBorder),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: addon.name,
-                            isExpanded: true,
-                            isDense: true,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: _ink,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            items: _addonNames
-                                .map(
-                                  (n) => DropdownMenuItem(
-                                    value: n,
-                                    child: Text(n),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (v) {
-                              if (v != null) {
-                                _bump(setModalState, () => addon.name = v);
-                              }
-                            },
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _label('Amount'),
-                      TextField(
-                        controller: addon.amount,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        onChanged: (_) => _bump(setModalState, () {}),
-                        decoration: _decor(''),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: GestureDetector(
-                    onTap: () => _bump(setModalState, () {
-                      addon.dispose();
-                      _addons.removeAt(idx);
-                    }),
-                    child: const Icon(
-                      Icons.delete_outline_rounded,
-                      size: 18,
-                      color: Color(0xFFC0584C),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }),
-        Align(
-          alignment: Alignment.centerRight,
-          child: OutlinedButton.icon(
-            onPressed: () => _bump(
-              setModalState,
-              () => _addons.add(OrderAddon(_addonNames.first)),
-            ),
-            icon: const Icon(Icons.add_rounded, size: 15, color: kGoldDark),
-            label: const Text(
-              'Addons',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: kGoldDark,
-              ),
-            ),
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: kGold),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 

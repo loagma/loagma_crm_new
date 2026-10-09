@@ -2,500 +2,139 @@
 
 namespace App\Http\Controllers;
 
-use App\Support\ProductTaxResolver;
-use Illuminate\Database\QueryException;
+use App\Services\OrderPlacementService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 /**
- * Minimal, safe slice of the real Sales Order model documented in
- * client/SALES_MODULE.md. `orders`/`orders_item` are shared, live production
- * tables (not owned by this app) with NO real AUTO_INCREMENT on TiDB, so IDs
- * are computed here the same way the documented system does it — but with an
- * explicit `lockForUpdate()` the doc flags as *missing* in the real
- * single-row `store()` path, to reduce (not fully eliminate) collision risk.
+ * Sales orders from the CRM, written exactly as described in
+ * ORDER_LIFECYCLE_FOR_NEW_FRONTEND.md — see OrderPlacementService.
  *
- * Scope deliberately stops at `order_state = 'pending'` (draft) — no
- * invoicing, no stock-ledger movement, no PDF generation. Per the doc,
- * stock only moves once an order transitions to `invoiced`, so a plain
- * "Create Sales Order" action from the CRM staying in `pending` cannot
- * corrupt stock or numbering sequences owned by the real invoicing flow.
+ *   POST /api/sales-orders/preview   ≈ calculateOrderDetails.php (writes nothing)
+ *   POST /api/sales-orders           ≈ placeNewOrder.php
+ *   POST /api/orders/{id}/cancel     ≈ cancelOrder.php (pending CRM orders only)
+ *
+ * The cart is on hold until the cart rules are confirmed, so the item list is
+ * sent by the app: items[] = {product_id, vendor_product_id, pack_id, quantity}.
  */
 class SalesOrderController extends Controller
 {
-    /**
-     * GET /api/sales-orders/next-order-id
-     *
-     * Non-authoritative preview of the order_id this order WOULD get if
-     * created right now (same "preview, not reserved" pattern as the real
-     * system's `series()` endpoint for invoice numbers — see SALES_MODULE.md
-     * §4). No lock is held, so the real `store()` call may still end up
-     * assigning a different (higher) id if another order is created in
-     * between; it's shown purely so the create form doesn't display a made-up
-     * number.
-     */
-    public function nextOrderId(): JsonResponse
+    public function __construct(private OrderPlacementService $orders)
     {
-        return response()->json([
-            'success' => true,
-            'data' => ['next_order_id' => self::nextFreeOrderId(false)],
-        ]);
     }
 
-    /**
-     * The next id free in BOTH `orders` and `master_orders`.
-     *
-     * One order writes an `orders` row AND a `master_orders` row under the
-     * same id, so allocating off `MAX(orders.order_id)` alone is wrong: the
-     * consumer app creates its `master_orders` row first (at payment
-     * initiation) and only writes the matching `orders` row once payment
-     * clears, so every abandoned consumer checkout leaves a `master_orders`
-     * id with no `orders` twin. `MAX(orders.order_id) + 1` then points
-     * straight at that orphan -- the `orders` insert succeeds, the
-     * `master_orders` insert dies on a duplicate PRIMARY key, the whole
-     * transaction rolls back, and the next attempt recomputes the exact same
-     * doomed id. CRM order creation stays wedged until someone cleans the
-     * orphan up by hand (observed live: master_orders 279662 with
-     * payment_status 'pms' and no orders_item rows blocked every checkout).
-     *
-     * Taking the max across both tables makes the id free in both by
-     * construction.
-     */
-    private static function nextFreeOrderId(bool $lock = true): int
+    private function input(bool $withTotal): array
     {
-        $orders = DB::table('orders');
-        $master = DB::table('master_orders');
-        if ($lock) {
-            $orders->lockForUpdate();
-            $master->lockForUpdate();
-        }
-
-        return max((int) $orders->max('order_id'), (int) $master->max('id')) + 1;
+        return validator(request()->all(), array_filter([
+            'buyer_userid'              => 'required|integer|min:1',
+            'address_id'                => 'required|integer|min:1',
+            'promo_code'                => 'nullable|string|max:100',
+            'items'                     => 'required|array|min:1',
+            'items.*.product_id'        => 'required|integer|min:1',
+            'items.*.vendor_product_id' => 'required|integer|min:1',
+            'items.*.pack_id'           => 'required|string|max:255',
+            'items.*.quantity'          => 'required|integer|min:1|max:65535',
+            'total_amount'              => $withTotal ? 'required|numeric|min:0' : null,
+        ]), [
+            'items.*.vendor_product_id.required' => 'Pick each product from the catalog (a vendor pack is required).',
+            'address_id.required'                => 'Select a saved delivery address for this customer.',
+        ])->validate();
     }
 
-    /**
-     * True for the specific failure the retry above exists to survive: another
-     * writer (the consumer app) taking the id we just picked, between our
-     * MAX() and our INSERT. Anything else -- a duplicate idempotency_key, a
-     * bill_no clash -- is a real error and must surface, not be retried.
-     */
-    private static function isDuplicatePrimaryKey(QueryException $e): bool
+    /** POST /api/sales-orders/preview — the bill, exactly as the order would be written. */
+    public function preview(): JsonResponse
     {
-        return (int) ($e->errorInfo[1] ?? 0) === 1062
-            && stripos($e->getMessage(), 'PRIMARY') !== false;
+        $d = $this->input(false);
+        $calc = $this->orders->calculate((int) $d['buyer_userid'], (int) $d['address_id'], $d['items'], $d['promo_code'] ?? null);
+
+        return response()->json(['success' => true, 'data' => $this->publicShape($calc)]);
     }
 
-    /**
-     * Per-line sanity checks shared by store() and updateItems():
-     * `orders_item.quantity` is an integer column and price/total columns are
-     * DECIMAL UNSIGNED on prod, so a fractional quantity would be silently
-     * rounded (total and quantity disagreeing) and a negative price would
-     * fail the insert.
-     */
-    private static function itemNumbersError(array $item): ?string
-    {
-        $qty = (float) $item['quantity'];
-        if (abs($qty - round($qty)) > 0.00001) {
-            return 'Quantity must be a whole number (number of packs/units).';
-        }
-        if (((float) ($item['item_price'] ?? 0)) < 0) {
-            return 'Item price cannot be negative.';
-        }
-        return null;
-    }
-
-    /**
-     * GET /api/sales-orders/delivery-rule
-     *
-     * Read-only lookup into `cart_type`, the consumer app's registry of
-     * per-category min-order/delivery-charge/express rules (see TABLES.md
-     * "Deliberately not used"). The CRM never writes to `cart_type` — this
-     * only reads the single row picked to govern all CRM-placed orders.
-     */
-    public function deliveryRule(): JsonResponse
-    {
-        $rule = DB::table('cart_type')
-            ->where('ctype_id', 'balaji_grocery')
-            ->first(['ctype_id', 'type_name', 'min_total', 'delivery_charge', 'has_express', 'express_charge']);
-
-        if (!$rule) {
-            return response()->json(['success' => true, 'data' => null]);
-        }
-
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'ctype_id'        => $rule->ctype_id,
-                'type_name'       => $rule->type_name,
-                'min_total'       => (float) $rule->min_total,
-                'delivery_charge' => (float) $rule->delivery_charge,
-                'has_express'     => (bool) $rule->has_express,
-                'express_charge'  => (float) $rule->express_charge,
-            ],
-        ]);
-    }
-
+    /** POST /api/sales-orders — place the order (re-calculated on the server; total must match the preview). */
     public function store(): JsonResponse
     {
-        $data = request()->all();
+        $d = $this->input(true);
+        $result = $this->orders->place(
+            (int) $d['buyer_userid'],
+            (int) $d['address_id'],
+            $d['items'],
+            $d['promo_code'] ?? null,
+            (float) $d['total_amount'],
+        );
 
-        $buyerUserId = $data['buyer_userid'] ?? null;
-        $items       = $data['items'] ?? [];
-
-        if (!$buyerUserId) {
-            return response()->json(['success' => false, 'message' => 'buyer_userid is required'], 422);
-        }
-
-        $buyer = DB::table('user')->where('userid', $buyerUserId)->first(['userid', 'contactno']);
-        if (!$buyer) {
-            return response()->json([
-                'success' => false,
-                'message' => 'This account has no matching registered customer (user) row — a real sales order can only be created for a registered customer, not a lead.',
-            ], 422);
-        }
-
-        if (!is_array($items) || count($items) === 0) {
-            return response()->json(['success' => false, 'message' => 'At least one item is required'], 422);
-        }
-
-        // Validate every item references a real, non-deleted product — orders_item.product_id is NOT NULL.
-        // Tax rates are resolved server-side from `product_taxes` and never
-        // trusted from the client — a stale cache or buggy client shouldn't be
-        // able to write an arbitrary tax rate onto a real order.
-        $productIds = collect($items)->pluck('product_id')->filter()->unique()->values();
-        $products = DB::table('product')
-            ->whereIn('product_id', $productIds)
-            ->where('is_deleted', 0)
-            ->get(['product_id', 'name', 'hsn_code'])
-            ->keyBy('product_id');
-        $taxes = ProductTaxResolver::forProducts($productIds);
-
-        foreach ($items as $item) {
-            $pid = $item['product_id'] ?? null;
-            if (!$pid || !$products->has((int) $pid)) {
-                return response()->json(['success' => false, 'message' => "Invalid or unknown product_id: {$pid}"], 422);
-            }
-            if (((float) ($item['quantity'] ?? 0)) <= 0) {
-                return response()->json(['success' => false, 'message' => 'Every item needs a quantity greater than 0'], 422);
-            }
-            if ($error = self::itemNumbersError($item)) {
-                return response()->json(['success' => false, 'message' => $error], 422);
-            }
-        }
-
-        $idempotencyKey = $data['idempotency_key'] ?? null;
-        if ($idempotencyKey) {
-            $existing = DB::table('orders')->where('idempotency_key', $idempotencyKey)->first(['order_id']);
-            if ($existing) {
-                return response()->json(['success' => true, 'data' => ['order_id' => (string) $existing->order_id], 'idempotent_replay' => true]);
-            }
-        }
-
-        $discount        = (float) ($data['discount'] ?? 0);
-        $deliveryCharge  = (float) ($data['delivery_charge'] ?? 0);
-        if ($discount < 0 || $deliveryCharge < 0) {
-            return response()->json(['success' => false, 'message' => 'Discount and delivery charge cannot be negative'], 422);
-        }
-        $narration       = $data['narration'] ?? null;
-        $department      = $data['department'] ?? null;
-        $areaName        = $data['area_name'] ?? null;
-        $timeSlot        = $data['time_slot'] ?? 'Now';
-        $documentDate    = $data['document_date'] ?? null; // Y-m-d
-        // Same shape the consumer app writes, so the admin/delivery side never
-        // meets a missing key; whatever the CRM form sent wins.
-        $deliveryInfo    = array_merge([
-            'name'            => '',
-            'address'         => '',
-            'contactno'       => (string) ($buyer->contactno ?? ''),
-            'comment'         => '',
-            'couponCode'      => '',
-            'latitude'        => 0,
-            'longitude'       => 0,
-            'expressDelivery' => '0',
-            'driverName'      => '',
-            'driverNumber'    => '',
-        ], is_array($data['delivery_info'] ?? null) ? $data['delivery_info'] : []);
-
-        // orders.admin_id is the vendor that fulfils the order (108 on every
-        // consumer order). Use the logged-in staff member's vendor, or the
-        // vendor's admin panel never sees CRM orders.
-        $staff         = JWTAuth::parseToken()->authenticate();
-        $vendorAdminId = (int) ($staff->admin_id ?? 0);
-
-        $beforeDiscount = 0.0;
-        foreach ($items as $item) {
-            $beforeDiscount += ((float) $item['quantity']) * ((float) ($item['item_price'] ?? 0));
-        }
-        // orders.order_total is DECIMAL UNSIGNED on prod — a discount larger
-        // than the subtotal would fail the insert outright.
-        $orderTotal = max(0.0, round($beforeDiscount - $discount + $deliveryCharge, 2));
-
-        $orderId = null;
-
-        // Retry rather than fail: the id is picked from a MAX() that no lock can
-        // hold a gap above, so a concurrent consumer-app order can still take it
-        // first. Each attempt re-runs against the rolled-back state and so picks
-        // up whatever landed in between.
-        for ($attempt = 1; ; $attempt++) {
-            try {
-                DB::transaction(function () use (
-                    $items, $taxes, $products, $buyerUserId, $discount, $deliveryCharge, $narration, $department,
-                    $areaName, $timeSlot, $documentDate, $deliveryInfo, $beforeDiscount, $orderTotal,
-                    $idempotencyKey, $vendorAdminId, &$orderId
-                ) {
-                    $nextOrderId = self::nextFreeOrderId();
-                    $nextItemId  = (int) (DB::table('orders_item')->lockForUpdate()->max('item_id')) + 1;
-
-                    $now = now();
-
-                    DB::table('orders')->insert([
-                        'order_id'          => $nextOrderId,
-                        'master_order_id'   => $nextOrderId,
-                        'txn_id'            => 'CRM-' . $nextOrderId . '-' . $now->timestamp,
-                        'buyer_userid'      => $buyerUserId,
-                        'start_time'        => $now->timestamp,
-                        'last_update_time'  => $now->timestamp,
-                        'short_datetime'    => $now->format('d-M-y h:i A'),
-                        'order_state'       => 'pending',
-                        'payment_method'    => 'cod',
-                        'items_count'       => count($items),
-                        'delivery_charge'   => $deliveryCharge,
-                        'order_total'       => $orderTotal,
-                        'delivery_info'     => json_encode($deliveryInfo),
-                        'area_name'         => $areaName,
-                        'feedback'          => '',
-                        'admin_id'          => $vendorAdminId,
-                        'payment_status'    => 'not_paid',
-                        'discount'          => $discount,
-                        'before_discount'   => $beforeDiscount,
-                        'time_slot'         => $timeSlot,
-                        'bill_narration'    => $narration,
-                        'department'        => $department,
-                        'bill_dt'           => $documentDate,
-                        'idempotency_key'   => $idempotencyKey,
-                    ]);
-
-                    $itemId = $nextItemId;
-                    foreach ($items as $item) {
-                        $qty        = (float) $item['quantity'];
-                        $price      = (float) ($item['item_price'] ?? 0);
-                        // Tax comes from product_taxes via the resolver, not the client —
-                        // see the note at $taxes above.
-                        $tax         = $taxes[(int) $item['product_id']];
-                        $taxPercent  = $tax['tax_percent'];
-                        $sgstPercent = $tax['sgst_percent'];
-                        $cgstPercent = $tax['cgst_percent'];
-                        DB::table('orders_item')->insert([
-                            'order_id'   => $nextOrderId,
-                            'item_id'    => $itemId,
-                            'product_id' => (int) $item['product_id'],
-                            'pinfo'      => json_encode([
-                                'unit'                  => $item['unit'] ?? 'PCS',
-                                // The catalog pack's own label (e.g. "1 Pack of 5 Kg
-                                // @ 195/-"), if the client sent one — surfaced back as
-                                // OrderListController::getOrderDetail's 'pack_size' so
-                                // the order screen can show which pack was actually sold.
-                                'ps'                    => $item['pack_size'] ?? null,
-                                'selected_pack'         => $item['pack_size'] ?? null,
-                                'hsn_code'              => $products->get((int) $item['product_id'])->hsn_code ?? null,
-                                'price_inclusive'       => true,
-                                'unit_price_inclusive'  => $price,
-                                'tax_percent'           => $taxPercent,
-                                'sgst_percent'          => $sgstPercent,
-                                'cgst_percent'          => $cgstPercent,
-                                'discount_percent'      => 0,
-                            ]),
-                            'quantity'   => (int) round($qty),
-                            'item_price' => $price,
-                            'item_total' => round($qty * $price, 2),
-                            'commission' => 0,
-                        ]);
-                        $itemId++;
-                    }
-
-                    DB::table('master_orders')->insert([
-                        'id'              => $nextOrderId,
-                        'user_id'         => $buyerUserId,
-                        'txn_id'          => 'CRM-' . $nextOrderId,
-                        'payment_status'  => 'not_paid',
-                        'order_count'     => count($items),
-                        'payment_method'  => 'cod',
-                        'delivery_info'   => json_encode($deliveryInfo),
-                        'order_total'     => $orderTotal,
-                        'delivery_charge' => $deliveryCharge,
-                        'discount'        => $discount,
-                        'before_discount' => $beforeDiscount,
-                        'status'          => '1',
-                        'created_at'      => $now,
-                    ]);
-
-                    $orderId = $nextOrderId;
-                });
-                break;
-            } catch (QueryException $e) {
-                if ($attempt >= 5 || !self::isDuplicatePrimaryKey($e)) {
-                    throw $e;
-                }
-            }
-        }
+        // The order now owns these items — drop this staff member's CRM draft for the customer.
+        DB::table('cart')
+            ->where('ctype_id', 'crm_sales_draft')
+            ->where('staff_id', (string) JWTAuth::parseToken()->authenticate()->mobile)
+            ->where('account_ref', (string) $d['buyer_userid'])
+            ->where('account_type', 'customer')
+            ->delete();
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'order_id'    => (string) $orderId,
-                'order_total' => $orderTotal,
+            'data'    => [
+                'order_id'        => (string) ($result['order_ids'][0] ?? ''),
+                'order_ids'       => array_map('strval', $result['order_ids']),
+                'master_order_id' => (string) $result['master_order_id'],
+                'order_total'     => $result['order_total'],
             ],
         ], 201);
     }
 
-    /**
-     * PUT /api/orders/{orderId}/items
-     *
-     * Persist an add/edit/remove of line items on an EXISTING order — the
-     * missing counterpart to store() that the Order Detail screen needs so
-     * edits survive a refresh instead of only living in local widget state.
-     *
-     * Deliberately scoped to `order_state = 'pending'` only, same reasoning
-     * as store(): per SALES_MODULE.md §7, stock only moves once an order is
-     * `invoiced`, and re-editing an invoiced order in the real system
-     * reverses+reapplies the stock ledger — logic this app does not
-     * implement. Editing a pending order touches no stock/ledger/invoice
-     * fields at all, so it's safe to do here with a plain delete+reinsert of
-     * `orders_item`, mirroring the real update()'s item-replacement approach
-     * (SALES_MODULE.md §4).
-     */
-    public function updateItems(string $orderId): JsonResponse
+    /** POST /api/orders/{orderId}/cancel — pending CRM orders only (doc §6). */
+    public function cancel(string $orderId): JsonResponse
     {
-        $data  = request()->all();
-        $items = $data['items'] ?? [];
+        $this->orders->cancel((int) $orderId);
 
-        if (!is_array($items) || count($items) === 0) {
-            return response()->json([
-                'success' => false,
-                'message' => "An order can't be saved with zero items — it still needs at least one. Delete the whole order instead if you want to clear it out.",
-            ], 422);
+        return response()->json(['success' => true, 'message' => 'Order cancelled']);
+    }
+
+    /** Preview payload for the app (internal keys like address/promo id stripped). */
+    private function publicShape(array $calc): array
+    {
+        $vendors = [];
+        foreach ($calc['vendors'] as $v) {
+            $vendors[] = [
+                'vendor_id'             => $v['vendor_id'],
+                'items'                 => array_map(fn ($l) => [
+                    'product_id'        => (string) $l['product_id'],
+                    'vendor_product_id' => (string) $l['vendor_product_id'],
+                    'pack_id'           => $l['pack_id'],
+                    'name'              => $l['name'],
+                    'pack'              => $l['pack']['tx'] ?? $l['pack_id'],
+                    'quantity'          => $l['quantity'],
+                    'item_price'        => $l['item_price'],
+                    'item_total'        => $l['item_total'],
+                ], $v['cartList']),
+                'free_items'            => array_map(fn ($f) => [
+                    'product_id' => (string) $f['product_id'],
+                    'name'       => $f['name'],
+                    'pack'       => $f['pack']['tx'] ?? $f['pack_id'],
+                    'quantity'   => $f['quantity'],
+                    'offer'      => $f['offer_name'],
+                ], $v['freeItems']),
+                'subtotal'              => $v['subtotal'],
+                'delivery_charge'       => $v['deliveryCharge'],
+                'free_delivery_above'   => $v['freeDeliMinTotal'],
+                'before_discount'       => $v['beforeDiscount'],
+                'offer_discount'        => $v['offerDiscount'],
+                'promo_discount'        => $v['promoCodeDiscount'],
+                'new_customer_discount' => $v['newCustomerDiscount'],
+                'total'                 => $v['afterDiscount'],
+                'time_slot'             => $v['timeSlotText'],
+            ];
         }
 
-        // Tax comes from product_taxes, not the client — see the matching note
-        // in store().
-        $productIds = collect($items)->pluck('product_id')->filter()->unique()->values();
-        $products = DB::table('product')
-            ->whereIn('product_id', $productIds)
-            ->where('is_deleted', 0)
-            ->get(['product_id', 'name', 'hsn_code'])
-            ->keyBy('product_id');
-        $taxes = ProductTaxResolver::forProducts($productIds);
-
-        foreach ($items as $item) {
-            $pid = $item['product_id'] ?? null;
-            if (!$pid || !$products->has((int) $pid)) {
-                return response()->json(['success' => false, 'message' => "Invalid or unknown product_id: {$pid}"], 422);
-            }
-            if (((float) ($item['quantity'] ?? 0)) <= 0) {
-                return response()->json(['success' => false, 'message' => 'Every item needs a quantity greater than 0'], 422);
-            }
-            if ($error = self::itemNumbersError($item)) {
-                return response()->json(['success' => false, 'message' => $error], 422);
-            }
-        }
-
-        $result = null;
-
-        DB::transaction(function () use ($orderId, $items, $taxes, $products, &$result) {
-            $order = DB::table('orders')->where('order_id', $orderId)->lockForUpdate()->first(['order_id', 'txn_id', 'order_state', 'discount', 'delivery_charge']);
-
-            if (!$order) {
-                $result = ['status' => 404, 'body' => ['success' => false, 'message' => 'Order not found']];
-                return;
-            }
-
-            // Only orders this CRM created (txn_id 'CRM-…') may be edited here —
-            // a consumer-app order that happens to be pending is not ours.
-            if (!str_starts_with((string) $order->txn_id, 'CRM-')) {
-                $result = ['status' => 403, 'body' => ['success' => false, 'message' => 'Only orders created from the CRM can be edited here.']];
-                return;
-            }
-
-            if ($order->order_state !== 'pending') {
-                $result = ['status' => 422, 'body' => [
-                    'success' => false,
-                    'message' => 'Only draft (pending) orders can have items edited here — this order is already ' . $order->order_state . '.',
-                ]];
-                return;
-            }
-
-            DB::table('orders_item')->where('order_id', $orderId)->delete();
-
-            $nextItemId = (int) (DB::table('orders_item')->lockForUpdate()->max('item_id')) + 1;
-            $beforeDiscount = 0.0;
-            $itemId = $nextItemId;
-
-            foreach ($items as $item) {
-                $qty   = (float) $item['quantity'];
-                $price = (float) ($item['item_price'] ?? 0);
-                $lineTotal = round($qty * $price, 2);
-                $beforeDiscount += $lineTotal;
-
-                $tax         = $taxes[(int) $item['product_id']];
-                $taxPercent  = $tax['tax_percent'];
-                $sgstPercent = $tax['sgst_percent'];
-                $cgstPercent = $tax['cgst_percent'];
-                DB::table('orders_item')->insert([
-                    'order_id'   => $orderId,
-                    'item_id'    => $itemId,
-                    'product_id' => (int) $item['product_id'],
-                    'pinfo'      => json_encode([
-                        'unit'                  => $item['unit'] ?? 'PCS',
-                        'ps'                    => $item['pack_size'] ?? null,
-                        'selected_pack'         => $item['pack_size'] ?? null,
-                        'hsn_code'              => $products->get((int) $item['product_id'])->hsn_code ?? null,
-                        'price_inclusive'       => true,
-                        'unit_price_inclusive'  => $price,
-                        'tax_percent'           => $taxPercent,
-                        'sgst_percent'          => $sgstPercent,
-                        'cgst_percent'          => $cgstPercent,
-                        'discount_percent'      => 0,
-                    ]),
-                    'quantity'   => (int) round($qty),
-                    'item_price' => $price,
-                    'item_total' => $lineTotal,
-                    'commission' => 0,
-                ]);
-                $itemId++;
-            }
-
-            $discount       = (float) $order->discount;
-            $deliveryCharge = (float) $order->delivery_charge;
-            $orderTotal     = round($beforeDiscount - $discount + $deliveryCharge, 2);
-            if ($orderTotal < 0) {
-                $orderTotal = 0.0;
-            }
-
-            DB::table('orders')->where('order_id', $orderId)->update([
-                'items_count'      => count($items),
-                'before_discount'  => $beforeDiscount,
-                'order_total'      => $orderTotal,
-                'last_update_time' => now()->timestamp,
-            ]);
-
-            DB::table('master_orders')->where('id', $orderId)->update([
-                'order_count'     => count($items),
-                'before_discount' => $beforeDiscount,
-                'order_total'     => $orderTotal,
-            ]);
-
-            $result = ['status' => 200, 'body' => [
-                'success' => true,
-                'data' => [
-                    'order_id'        => (string) $orderId,
-                    'items_count'     => count($items),
-                    'before_discount' => $beforeDiscount,
-                    'order_total'     => $orderTotal,
-                ],
-            ]];
-        });
-
-        return response()->json($result['body'], $result['status']);
+        return [
+            'vendors'         => $vendors,
+            'items_count'     => $calc['order_count'],
+            'before_discount' => $calc['beforeDiscount'],
+            'delivery_charge' => $calc['deliveryCharge'],
+            'offer_discount'  => $calc['offerDiscount'],
+            'promo_discount'  => $calc['promoCodeDiscount']['discount'],
+            'promo_message'   => $calc['promoCodeDiscount']['description'],
+            'total'           => $calc['afterDiscount'],
+        ];
     }
 }
