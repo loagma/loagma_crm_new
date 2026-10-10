@@ -107,11 +107,13 @@ class SalesOrderDraftController extends Controller
                 return;
             }
 
-            // `cart.cart_id` has no AUTO_INCREMENT — allocate MAX+1 under lock.
-            $nextId = (int) DB::table('cart')->lockForUpdate()->max('cart_id') + 1;
+            // prod `cart.cart_id` is AUTO_INCREMENT (the consumer app inserts
+            // too, so picking an id ourselves could clash); MAX+1 only where the
+            // column has no AUTO_INCREMENT (dev TiDB).
+            $hasAutoId = (bool) DB::selectOne("SELECT 1 x FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cart' AND COLUMN_NAME = 'cart_id' AND EXTRA LIKE '%auto_increment%'");
+            $idCol = $hasAutoId ? [] : ['cart_id' => (int) DB::table('cart')->lockForUpdate()->max('cart_id') + 1];
 
-            DB::table('cart')->insert([
-                'cart_id'           => $nextId,
+            DB::table('cart')->insert($idCol + [
                 // Always 0: the account lives in account_ref. Putting the real
                 // customer id here would let the consumer app's own cart query
                 // (WHERE userid = ?) pick up this CRM draft row as a cart item.

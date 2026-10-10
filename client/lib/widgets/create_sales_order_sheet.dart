@@ -182,6 +182,16 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   // The open Review sheet's setState, so a preview landing later refreshes it.
   StateSetter? _reviewSetter;
 
+  // Customer orders use the customer's CART (order lifecycle doc §15): every
+  // quantity change is written to `cart` (one row per pack, userid +
+  // address), the bill and the order are built from those rows on the server,
+  // and placing the order clears them. The cart is shared with the customer's
+  // own app. Leads (no `user` row) keep the CRM draft instead.
+  final Map<String, int> _cartSynced = {}; // "vendorProductId|packId" → qty saved in cart
+  Timer? _cartDebounce;
+  Future<void>? _cartSync;
+  bool get _usesCart => _isCustomer && _addressId != null;
+
   bool get _isCustomer => widget.accountType == 'customer';
 
   // -- Draft persistence (sales_order_draft_crm) ---------------------------
@@ -211,7 +221,98 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     // Leads restore too - the draft table is keyed by (staff, account) and
     // never touches `user`, so nothing here depends on the account being a
     // registered customer.
-    _loadDraft();
+    _loadDraft().then((_) => _loadCart());
+  }
+
+  String _cartKey(String vpId, String packId) => '$vpId|$packId';
+
+  // The customer's cart rows → line items (live price / stock from the server).
+  Future<void> _loadCart() async {
+    if (!_usesCart || !mounted) return;
+    final rows = await ApiService.getCart(widget.accountId, _addressId!);
+    if (rows == null || !mounted) return;
+    setState(() {
+      for (final r in rows) {
+        final vp = '${r['vendor_product_id']}';
+        final pack = '${r['pack_id']}';
+        final qty = (r['quantity'] as num?)?.toInt() ?? 0;
+        _cartSynced[_cartKey(vp, pack)] = qty;
+        _cartProductOf[_cartKey(vp, pack)] = (r['product_id'] as num?)?.toInt() ?? int.parse('${r['product_id']}');
+        // a pack already picked on screen while the cart was loading keeps the on-screen qty
+        if (_lineItems.any((i) => i.vendorProductId == vp && i.packId == pack)) continue;
+        final item = OrderLineItem();
+        item.product.text = '${r['name'] ?? ''}';
+        item.productId = '${r['product_id']}';
+        item.vendorProductId = vp;
+        item.packId = pack;
+        item.packLabel = r['pack_label']?.toString();
+        item.hsnCode = r['hsn_code']?.toString();
+        item.unit = (r['unit'] ?? 'PCS').toString();
+        item.maxQty = (r['max_qty'] as num?)?.toInt();
+        item.unitPrice.text = ((r['price'] as num?) ?? 0).toStringAsFixed(2);
+        item.qty.text = '$qty';
+        _lineItems.add(item);
+      }
+    });
+    _scheduleCartSync(); // anything picked during the load
+    _refreshPreview();
+  }
+
+  void _scheduleCartSync() {
+    if (!_usesCart) return;
+    _cartDebounce?.cancel();
+    _cartDebounce = Timer(const Duration(milliseconds: 500), () => _cartSync = _syncCartNow());
+  }
+
+  // Writes every pack whose quantity differs from what the cart holds
+  // (quantity 0 removes the row). Server refusals (stock, unit) are shown.
+  Future<void> _syncCartNow() async {
+    if (!_usesCart) return;
+    final want = <String, Map<String, dynamic>>{};
+    for (final l in _orderLines()) {
+      want[_cartKey('${l['vendor_product_id']}', '${l['pack_id']}')] = l;
+    }
+    final keys = {...want.keys, ..._cartSynced.keys};
+    for (final k in keys) {
+      final qty = (want[k]?['quantity'] as int?) ?? 0;
+      if ((_cartSynced[k] ?? 0) == qty) continue;
+      final parts = k.split('|');
+      final line = want[k];
+      // a removed line is gone from the screen; its product id was remembered
+      final int? productId = (line?['product_id'] as int?) ?? _cartProductOf[k];
+      if (productId == null) continue;
+      final res = await ApiService.setCartItem(
+        userId: widget.accountId,
+        addressId: _addressId!,
+        productId: productId,
+        vendorProductId: int.parse(parts[0]),
+        packId: parts[1],
+        quantity: qty,
+      );
+      if (res['success'] == true) {
+        if (qty == 0) {
+          _cartSynced.remove(k);
+        } else {
+          _cartSynced[k] = qty;
+          _cartProductOf[k] = productId;
+        }
+      } else if (mounted) {
+        Fluttertoast.showToast(msg: '${res['message']}', backgroundColor: Colors.red, textColor: Colors.white);
+      }
+    }
+  }
+
+  // product id per cart key, so a removed line can still be cleared from the cart
+  final Map<String, int> _cartProductOf = {};
+
+  // Waits for pending cart writes, so the bill / order read the latest cart.
+  Future<void> _flushCart() async {
+    if (!_usesCart) return;
+    if (_cartDebounce?.isActive ?? false) {
+      _cartDebounce!.cancel();
+      _cartSync = _syncCartNow();
+    }
+    await _cartSync;
   }
 
   // Restores this staff member's in-progress cart for this account so
@@ -237,7 +338,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     }
 
     setState(() {
-      for (final raw in (draft['items'] as List?) ?? const []) {
+      for (final raw in (_isCustomer ? const [] : (draft['items'] as List?) ?? const [])) {
         final r = Map<String, dynamic>.from(raw as Map);
         // This GET is fired from initState and the catalog is already
         // interactive while it's in flight, so the user can have added this
@@ -295,7 +396,8 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   // are stored as their raw controller text so a restore is character-exact
   // rather than round-tripped through a double.
   Map<String, dynamic> _draftPayload() => {
-    'items': _lineItems
+    // customers: items are in the cart table, the draft only keeps add-ons / address
+    if (!_usesCart) 'items': _lineItems
         .map(
           (i) => {
             'product_name': i.product.text,
@@ -319,12 +421,13 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   // True once there's genuinely nothing worth restoring - an emptied cart
   // deletes its draft row instead of storing an empty one, so re-opening
   // starts clean rather than restoring a blank draft over fresh defaults.
-  bool get _draftIsEmpty => _lineItems.isEmpty && _addons.isEmpty;
+  bool get _draftIsEmpty => (_usesCart || _lineItems.isEmpty) && _addons.isEmpty;
 
   // Called from every cart mutation. Coalesces a burst of edits into one
   // write and never blocks the UI - a failed save just means this particular
   // edit isn't there next time.
   void _scheduleDraftSave() {
+    _scheduleCartSync(); // customers: items live in the customer's cart
     if (!_draftLoaded) return; // still restoring - don't overwrite the draft
     _draftDebounce?.cancel();
     _draftDebounce = Timer(_draftDebounceDelay, _saveDraftNow);
@@ -401,6 +504,10 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     // because ApiService is static and needs no context.
     if (_draftDebounce?.isActive ?? false) _saveDraftNow();
     _draftDebounce?.cancel();
+    if (_cartDebounce?.isActive ?? false) {
+      _cartDebounce!.cancel();
+      _syncCartNow(); // finishes after the sheet closes; ApiService needs no context
+    }
     _previewDebounce?.cancel();
     _promo.dispose();
     for (final a in _addons) {
@@ -481,10 +588,12 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
       return;
     }
     apply(() => _previewLoading = true);
+    await _flushCart(); // the bill is built from the cart rows
+    if (seq != _previewSeq) return;
     final res = await ApiService.previewSalesOrder(
       buyerUserId: widget.accountId,
       addressId: _addressId!,
-      items: lines,
+      items: _usesCart ? null : lines,
       promoCode: _promo.text,
       charges: _chargesPayload,
     );
@@ -780,10 +889,11 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     final key = _keyFor({
       'address': _addressId, 'items': lines, 'promo': _promo.text.trim(), 'charges': _chargesPayload, 'total': total,
     });
+    await _flushCart(); // the order is built from the cart rows (doc §15)
     final result = await ApiService.createSalesOrder(
       buyerUserId: widget.accountId,
       addressId: _addressId!,
-      items: lines,
+      items: _usesCart ? null : lines,
       totalAmount: total,
       promoCode: _promo.text,
       charges: _chargesPayload,
@@ -805,6 +915,8 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     }
 
     _checkoutKey = null; // placed — the next checkout is a new order
+    _cartSynced.clear(); // the server cleared the cart with the order
+    _cartDebounce?.cancel();
     final data = Map<String, dynamic>.from(result['data'] as Map);
     final realOrderId = data['order_id']?.toString();
     final savedTotal = ((data['order_total'] as num?) ?? total).round();

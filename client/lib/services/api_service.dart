@@ -429,7 +429,7 @@ class ApiService {
   static Map<String, dynamic> _orderBody({
     required String buyerUserId,
     required int addressId,
-    required List<Map<String, dynamic>> items,
+    List<Map<String, dynamic>>? items, // null → the server uses the customer's cart
     String? promoCode,
     double? totalAmount,
     List<Map<String, dynamic>>? charges,
@@ -437,7 +437,7 @@ class ApiService {
   }) => {
         'buyer_userid': buyerUserId,
         'address_id':   addressId,
-        'items':        items,
+        'items':        ?items,
         if (promoCode != null && promoCode.trim().isNotEmpty) 'promo_code': promoCode.trim(),
         'total_amount': ?totalAmount,
         // add-on charges (Hamali…) → orders.charges_json; not in the total
@@ -463,6 +463,55 @@ class ApiService {
       return {'success': false, 'message': 'Network error — check your connection.'};
     }
   }
+
+  /// The customer's cart for one saved address (shared with the consumer app).
+  static Future<List<Map<String, dynamic>>?> getCart(String userId, int addressId) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/cart')
+        .replace(queryParameters: {'userid': userId, 'address_id': '$addressId'});
+    try {
+      final response = await http.get(url, headers: _authHeaders).timeout(const Duration(seconds: 20));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 200 && decoded['success'] == true) {
+        return (decoded['data'] as List).map((r) => Map<String, dynamic>.from(r as Map)).toList();
+      }
+    } catch (e) {
+      print('getCart error: $e');
+    }
+    return null;
+  }
+
+  /// Add / change / remove (quantity 0) one pack in the customer's cart.
+  static Future<Map<String, dynamic>> setCartItem({
+    required String userId,
+    required int addressId,
+    required int productId,
+    required int vendorProductId,
+    required String packId,
+    required int quantity,
+  }) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}/api/cart/item');
+    try {
+      final response = await http
+          .put(url, headers: _authHeaders, body: jsonEncode({
+                'userid': userId, 'address_id': addressId, 'product_id': productId,
+                'vendor_product_id': vendorProductId, 'pack_id': packId, 'quantity': quantity,
+              }))
+          .timeout(const Duration(seconds: 20));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {
+        return {'success': true};
+      }
+      return {'success': false, 'message': _serverMessage(decoded, 'Could not update the cart.')};
+    } catch (e) {
+      print('setCartItem error: $e');
+      return {'success': false, 'message': 'Network error — check your connection.'};
+    }
+  }
+
+  /// Reorder: a past order's items back into the customer's cart for [addressId]
+  /// (the cart is emptied first). data = {added: [...], unavailable: [...]}.
+  static Future<Map<String, dynamic>> reorderToCart(String orderId, int addressId) =>
+      _orderCall('POST', '/api/orders/$orderId/reorder', {'address_id': addressId}, 'Could not reorder.');
 
   /// New bill for changing a pending CRM order (writes nothing).
   static Future<Map<String, dynamic>> previewOrderEdit(String orderId,
@@ -495,7 +544,7 @@ class ApiService {
   static Future<Map<String, dynamic>> previewSalesOrder({
     required String buyerUserId,
     required int addressId,
-    required List<Map<String, dynamic>> items,
+    List<Map<String, dynamic>>? items,
     String? promoCode,
     List<Map<String, dynamic>>? charges,
   }) async {
@@ -524,7 +573,7 @@ class ApiService {
   static Future<Map<String, dynamic>> createSalesOrder({
     required String buyerUserId,
     required int addressId,
-    required List<Map<String, dynamic>> items,
+    List<Map<String, dynamic>>? items,
     required double totalAmount,
     String? promoCode,
     List<Map<String, dynamic>>? charges,

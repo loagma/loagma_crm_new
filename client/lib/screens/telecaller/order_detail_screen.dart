@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../services/invoice_printer.dart';
+import '../../widgets/address_picker_dialog.dart';
 import '../../widgets/order_edit_sheet.dart';
 import '../../widgets/single_location_map_screen.dart';
 import 'order_list_screen.dart';
@@ -127,6 +128,55 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   bool _cancelling = false;
+  bool _reordering = false;
+
+  // Reorder (order lifecycle doc §1.8): this order's items go back into the
+  // customer's cart for a saved address — the cart is emptied first, and items
+  // no longer available are listed. The order is then placed from Take Order.
+  Future<void> _reorder() async {
+    final buyer = '${_order?['buyer_userid'] ?? ''}';
+    final address = await resolveDeliveryAddress(context, const {}, customerId: buyer);
+    if (!mounted) return;
+    if (address == null) {
+      _showSavedSnack('This customer has no saved delivery address.', error: true);
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: const Text('Reorder'),
+        content: Text("Put this order's items into the customer's cart for:\n${address['address'] ?? ''}\n\n"
+            'Anything already in that cart is replaced.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
+          TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('Reorder')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _reordering = true);
+    final res = await ApiService.reorderToCart(_currentOrderId, int.parse('${address['id']}'));
+    if (!mounted) return;
+    setState(() => _reordering = false);
+    if (res['success'] != true) {
+      _showSavedSnack('${res['message']}', error: true);
+      return;
+    }
+    final data = Map<String, dynamic>.from(res['data'] as Map);
+    final added = (data['added'] as List?) ?? const [];
+    final missing = (data['unavailable'] as List?) ?? const [];
+    await showDialog<void>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: Text('${added.length} item${added.length == 1 ? '' : 's'} added to the cart'),
+        content: Text([
+          if (missing.isNotEmpty) 'Not available now:\n- ${missing.join('\n- ')}',
+          'Open Take Order for this customer to review and place the order.',
+        ].join('\n\n')),
+        actions: [TextButton(onPressed: () => Navigator.pop(d), child: const Text('OK'))],
+      ),
+    );
+  }
 
   // Orders follow the order lifecycle doc: no item edits after placing. A
   // still-pending order placed from the CRM can be cancelled instead — the
@@ -177,6 +227,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
+          if (_order != null && '${_order!['buyer_userid'] ?? ''}'.isNotEmpty)
+            IconButton(
+              tooltip: 'Reorder',
+              icon: const Icon(Icons.replay_rounded),
+              onPressed: _reordering ? null : _reorder,
+            ),
           IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: _load),
         ],
       ),

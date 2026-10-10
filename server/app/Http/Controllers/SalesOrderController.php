@@ -33,7 +33,8 @@ class SalesOrderController extends Controller
             'buyer_userid'              => $forEdit ? null : 'required|integer|min:1',
             'address_id'                => $forEdit ? null : 'required|integer|min:1',
             'promo_code'                => $forEdit ? null : 'nullable|string|max:100',
-            'items'                     => 'required|array|min:1',
+            // no items → the bill / order is built from the customer's cart (doc §15)
+            'items'                     => $forEdit ? 'required|array|min:1' : 'nullable|array',
             'items.*.product_id'        => 'required|integer|min:1',
             'items.*.vendor_product_id' => 'required|integer|min:1',
             'items.*.pack_id'           => 'required|string|max:255',
@@ -56,7 +57,8 @@ class SalesOrderController extends Controller
     public function preview(): JsonResponse
     {
         $d = $this->input(false);
-        $calc = $this->orders->calculate((int) $d['buyer_userid'], (int) $d['address_id'], $d['items'], $d['promo_code'] ?? null, $d['charges'] ?? []);
+        $lines = !empty($d['items']) ? $d['items'] : $this->orders->cartLines((int) $d['buyer_userid'], (int) $d['address_id']);
+        $calc = $this->orders->calculate((int) $d['buyer_userid'], (int) $d['address_id'], $lines, $d['promo_code'] ?? null, $d['charges'] ?? []);
 
         return response()->json(['success' => true, 'data' => $this->publicShape($calc)]);
     }
@@ -90,11 +92,12 @@ class SalesOrderController extends Controller
         $result = $this->orders->place(
             (int) $d['buyer_userid'],
             (int) $d['address_id'],
-            $d['items'],
+            $d['items'] ?? [],
             $d['promo_code'] ?? null,
             (float) $d['total_amount'],
             $d['charges'] ?? [],
             $d['idempotency_key'] ?? null,
+            empty($d['items']), // no items sent → order from the cart, cart cleared after
         );
 
         // The order now owns these items — drop this staff member's CRM draft for the customer.
@@ -114,6 +117,15 @@ class SalesOrderController extends Controller
                 'order_total'     => $result['order_total'],
             ],
         ], 201);
+    }
+
+    /** POST /api/orders/{orderId}/reorder {address_id} — past order's items back into the customer's cart (doc §1.8). */
+    public function reorder(string $orderId): JsonResponse
+    {
+        $d = validator(request()->all(), ['address_id' => 'required|integer|min:1'])->validate();
+        $r = $this->orders->reorderToCart((int) $orderId, (int) $d['address_id']);
+
+        return response()->json(['success' => true, 'data' => $r]);
     }
 
     /** POST /api/orders/{orderId}/cancel — pending CRM orders only (doc §6). */

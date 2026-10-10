@@ -257,19 +257,20 @@ class OrderPlacementService
     /**
      * @return array{master_order_id:int, order_ids:int[], order_total:float}
      */
-    public function place(int $userId, int $addressId, array $lines, ?string $promoCode, float $totalAmount, array $charges = [], ?string $idempotencyKey = null): array
+    public function place(int $userId, int $addressId, array $lines, ?string $promoCode, float $totalAmount, array $charges = [], ?string $idempotencyKey = null, bool $fromCart = false): array
     {
+
         // One checkout = one order. The app sends the same key for every try of
         // the same checkout (double tap, slow network retry); a key already used
         // returns that order instead of placing another. The lock makes two
         // requests that arrive together wait for each other.
         if ($idempotencyKey !== null && $idempotencyKey !== '') {
-            return Cache::lock('crm-order:' . $idempotencyKey, 60)->block(30, function () use ($userId, $addressId, $lines, $promoCode, $totalAmount, $charges, $idempotencyKey) {
+            return Cache::lock('crm-order:' . $idempotencyKey, 60)->block(30, function () use ($userId, $addressId, $lines, $promoCode, $totalAmount, $charges, $idempotencyKey, $fromCart) {
                 return $this->alreadyPlaced($userId, $idempotencyKey)
-                    ?? $this->placeOnce($userId, $addressId, $lines, $promoCode, $totalAmount, $charges, $idempotencyKey);
+                    ?? $this->placeOnce($userId, $addressId, $lines, $promoCode, $totalAmount, $charges, $idempotencyKey, $fromCart);
             });
         }
-        return $this->placeOnce($userId, $addressId, $lines, $promoCode, $totalAmount, $charges, null);
+        return $this->placeOnce($userId, $addressId, $lines, $promoCode, $totalAmount, $charges, null, $fromCart);
     }
 
     /** The order an idempotency key already created, in place()'s return shape. */
@@ -286,8 +287,16 @@ class OrderPlacementService
         ];
     }
 
-    private function placeOnce(int $userId, int $addressId, array $lines, ?string $promoCode, float $totalAmount, array $charges, ?string $idempotencyKey): array
+    private function placeOnce(int $userId, int $addressId, array $lines, ?string $promoCode, float $totalAmount, array $charges, ?string $idempotencyKey, bool $fromCart = false): array
     {
+        // doc §15: the order is built from the customer's cart rows (read after
+        // the duplicate check, so a retry of a placed order isn't "cart empty")
+        if ($fromCart) {
+            $lines = $this->cartLines($userId, $addressId);
+            if (!$lines) {
+                $this->fail('items', 'The cart is empty — add products first.');
+            }
+        }
         $calc = $this->calculate($userId, $addressId, $lines, $promoCode, $charges);
 
         // doc §1 step 3 — compare with the REAL master total (gotcha 4 fixed)
@@ -297,7 +306,7 @@ class OrderPlacementService
 
         $this->minimumOrderGates($userId, $calc);
 
-        return DB::transaction(function () use ($userId, $calc, $idempotencyKey) {
+        return DB::transaction(function () use ($userId, $addressId, $calc, $idempotencyKey, $fromCart) {
             // stock re-validation under row locks (doc §1 step 7) — paid AND free lines
             $stockToRemove = $this->measureStockUnderLock($calc);
 
@@ -366,8 +375,131 @@ class OrderPlacementService
             // vendor_products.packs stock (doc §2.6)
             $this->updateStock($stockToRemove, false);
 
+            // doc §2.7: the cart for this user + address is cleared once the
+            // order is in (same transaction, so a failed order keeps the cart)
+            if ($fromCart) {
+                $this->clearCart($userId, $addressId);
+            }
+
             return ['master_order_id' => $masterId, 'order_ids' => $orderIds, 'order_total' => $calc['afterDiscount']];
         });
+    }
+
+    // ═════════════════════════════════════════════════ cart (customer cart, as in the doc)
+
+    /** cart.ctype_id the CRM's own draft rows use — never part of a customer cart. */
+    public const DRAFT_CTYPE = 'crm_sales_draft';
+
+    /**
+     * The customer's cart for one saved address — the same rows the consumer
+     * app uses (one per pack: userid, addressId, product_id, vendor_product_id,
+     * pack_id, quantity, total). The CRM's draft rows are excluded.
+     */
+    public function cartRows(int $userId, int $addressId)
+    {
+        return DB::table('cart')->where('userid', $userId)->where('addressId', $addressId)
+            ->where(fn ($q) => $q->whereNull('ctype_id')->orWhere('ctype_id', '<>', self::DRAFT_CTYPE))
+            ->orderBy('cart_id')->get();
+    }
+
+    /** Cart rows → order lines (what calculate() / place() take). */
+    public function cartLines(int $userId, int $addressId): array
+    {
+        return $this->cartRows($userId, $addressId)->map(fn ($r) => [
+            'product_id'        => (int) $r->product_id,
+            'vendor_product_id' => (int) $r->vendor_product_id,
+            'pack_id'           => (string) $r->pack_id,
+            'quantity'          => (int) $r->quantity,
+        ])->values()->all();
+    }
+
+    /**
+     * Add / change / remove one pack in the customer's cart (≈ addProductToCart).
+     * The pack is checked exactly like an order line (for sale, in stock,
+     * units_master conversion, buy cap); total = live rp × quantity, as in the
+     * consumer app's rows. Quantity 0 removes the row.
+     */
+    public function setCartItem(int $userId, int $addressId, int $productId, int $vendorProductId, string $packId, int $qty): void
+    {
+        $this->assertCustomer($userId);
+        $this->addressRow($userId, $addressId);
+        $key = ['userid' => $userId, 'product_id' => $productId, 'pack_id' => $packId, 'addressId' => $addressId];
+
+        if ($qty <= 0) {
+            DB::table('cart')->where($key)->delete();
+            return;
+        }
+        $line = $this->resolveLines([[
+            'product_id' => $productId, 'vendor_product_id' => $vendorProductId, 'pack_id' => $packId, 'quantity' => $qty,
+        ]])[0];
+
+        DB::transaction(function () use ($key, $line, $vendorProductId, $qty) {
+            $existing = DB::table('cart')->where($key)->lockForUpdate()->first(['cart_id']);
+            $row = [
+                'vendor_product_id' => $vendorProductId,
+                'quantity'          => $qty,
+                'total'             => $line['item_total'],
+                'ctype_id'          => 'vegetables_fruits',
+                'created_at'        => Carbon::now(config('app.timezone'))->format('Y-m-d H:i:s'),
+            ];
+            if ($existing) {
+                DB::table('cart')->where('cart_id', $existing->cart_id)->update($row);
+            } else {
+                $this->insertGetId('cart', 'cart_id', $key + $row);
+            }
+        });
+    }
+
+    /**
+     * Reorder (≈ Cart::addOrdersItemsToCart, doc §1.8): empty the customer's cart
+     * for this address, then put back every paid item of a past order that can
+     * still be sold — same checks as adding to the cart (for sale, in stock,
+     * units_master unit, buy cap). Free items are not copied (offers recompute
+     * them). Returns the items added and the names that are not available.
+     */
+    public function reorderToCart(int $orderId, int $addressId): array
+    {
+        $order = DB::table('orders')->where('order_id', $orderId)->first(['order_id', 'buyer_userid']);
+        if (!$order) {
+            $this->fail('order', 'Order not found.', 404);
+        }
+        $userId = (int) $order->buyer_userid;
+        $this->assertCustomer($userId);
+        $this->addressRow($userId, $addressId);
+
+        $items = DB::table('orders_item as oi')->leftJoin('product as p', 'p.product_id', '=', 'oi.product_id')
+            ->where('oi.order_id', $orderId)->where(fn ($q) => $q->whereNull('oi.offers')->orWhere('oi.offers', '<>', 'free_item'))
+            ->orderBy('oi.item_id')->get(['oi.product_id', 'oi.vendor_product_id', 'oi.pinfo', 'oi.quantity', 'p.name']);
+
+        return DB::transaction(function () use ($items, $userId, $addressId) {
+            $this->clearCart($userId, $addressId);
+            $added = [];
+            $unavailable = [];
+            foreach ($items as $i) {
+                $pack = json_decode((string) $i->pinfo, true) ?: [];
+                $name = trim(($i->name ?: ($pack['tx'] ?? 'Item')) . (isset($pack['tx']) ? " ({$pack['tx']})" : ''));
+                $packId = $pack['pi'] ?? null;
+                if (!$i->vendor_product_id || !$packId) { // older orders saved without the pack id
+                    $unavailable[] = $name;
+                    continue;
+                }
+                try {
+                    $this->setCartItem($userId, $addressId, (int) $i->product_id, (int) $i->vendor_product_id, (string) $packId, (int) $i->quantity);
+                    $added[] = $name;
+                } catch (ValidationException $e) {
+                    $unavailable[] = $name; // not for sale / out of stock / unit not set
+                }
+            }
+            return ['user_id' => $userId, 'added' => $added, 'unavailable' => $unavailable];
+        });
+    }
+
+    /** Empty the customer's cart for one address (≈ Cart::clearCart). */
+    public function clearCart(int $userId, int $addressId): void
+    {
+        DB::table('cart')->where('userid', $userId)->where('addressId', $addressId)
+            ->where(fn ($q) => $q->whereNull('ctype_id')->orWhere('ctype_id', '<>', self::DRAFT_CTYPE))
+            ->delete();
     }
 
     // ═════════════════════════════════════════════════ edit (pending CRM orders)

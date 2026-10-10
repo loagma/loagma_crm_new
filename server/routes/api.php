@@ -9,6 +9,7 @@ use App\Http\Controllers\AreaController;
 use App\Http\Controllers\AreaAssignController;
 use App\Http\Controllers\InchargeAssignController;
 use App\Http\Controllers\CustomerAssignController;
+use App\Http\Controllers\CartController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\BeatPlanController;
 use App\Http\Controllers\SalesOrderDraftController;
@@ -94,10 +95,18 @@ Route::get('/orders/{orderId}', [OrderListController::class, 'show']);
 Route::post('/sales-orders/preview', [SalesOrderController::class, 'preview']); // must be before POST /sales-orders in case of future {id} routes
 Route::post('/sales-orders', [SalesOrderController::class, 'store']);
 Route::post('/orders/{orderId}/cancel', [SalesOrderController::class, 'cancel']);
+// past order's items back into the customer's cart (doc §1.8 addOrdersItemsToCart)
+Route::post('/orders/{orderId}/reorder', [SalesOrderController::class, 'reorder']);
 // change a pending CRM order (items + add-on charges), same rules as placing
 Route::post('/orders/{orderId}/edit-preview', [SalesOrderController::class, 'editPreview']);
 Route::put('/orders/{orderId}', [SalesOrderController::class, 'update']);
 Route::get('/products/search', [ProductController::class, 'search']);
+
+// Customer cart (doc §15): filled from the order screen, the order is built
+// from it and it is cleared when the order is placed.
+Route::get('/cart', [CartController::class, 'show']);
+Route::put('/cart/item', [CartController::class, 'setItem']);
+Route::delete('/cart', [CartController::class, 'clear']);
 
 // Un-submitted Create Sales Order cart, per (staff member, account) — stored as
 // one JSON row on the shared `cart` table (ctype_id = 'crm_sales_draft'); see

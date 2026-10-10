@@ -105,6 +105,26 @@ The same applies to cancel: it locks the order and the stock rows, and either ev
 
 ---
 
+## 6E. Customer cart, as in the doc (2026-10-10)
+
+Customer orders now go through the customer's **cart**, as in doc §15:
+- **Filling the cart:** every quantity change in the order screen writes to `cart` through `PUT /api/cart/item` (≈ `addProductToCart`). There is one row per pack, keyed by the customer's `userid` + saved `addressId` (prod's unique key `userid, product_id, pack_id, addressId`). Each row holds `vendor_product_id`, `quantity`, `total` = live `rp` × qty and `ctype_id = 'vegetables_fruits'`, the same as the consumer app's rows. A pack is checked like an order line before it goes in (for sale, in stock, `units_master` unit, buy cap). Quantity 0 removes the row.
+- **Reading it:** `GET /api/cart?userid=&address_id=` returns the rows with live price, unit name and maximum quantity.
+- **Bill and order from the cart:** `POST /api/sales-orders/preview` and `POST /api/sales-orders` without `items` read the cart rows (≈ `calculateOrderDetails` / `placeNewOrder`).
+- **Clearing:** the cart for that user + address is cleared **inside the order's transaction** (≈ `clearCart`), so a failed order keeps its cart. A double-tap retry still returns the first order.
+- **Shared with the consumer app:** it is the same cart, so items added in the customer's app show in the CRM and the other way round.
+- **Leads** have no `user` row, so they keep the CRM draft (`ctype_id = 'crm_sales_draft'`, `userid = 0`). For customers, that draft now keeps only the add-ons and the address.
+- **Inserts:** `cart_id` uses AUTO_INCREMENT where the column has it (prod), and MAX+1 only on dev.
+- **Body path kept:** sending `items` in the body still works (backup / edit).
+- **Reorder** (doc §1.8 `addOrdersItemsToCart`): `POST /api/orders/{id}/reorder {address_id}` empties the customer's cart for that address, then re-adds every paid item of the past order that can still be sold, with the same checks as adding to the cart. Free items aren't copied, because offers recompute them. Items that are no longer available are returned so staff can be told. The app has a Reorder button on the order detail screen.
+- **Not buildable from what we have:**
+  - Serviceability (`City::isProductServiceableInArea`, a point-in-polygon check): no table in the prod schema stores area boundaries.
+  - The out-of-stock and vendor-128 push notifications: they need the consumer backend's Firebase credentials, which aren't in this repo.
+
+Tests: 15 cart checks on the MariaDB prod schema (88/88 in total); 174/174 API checks, 147/147 routes.
+
+---
+
 ## 7. Open questions for sir
 
 1. **Cart:** should the CRM use the customer's own `cart` rows (`addProductToCart`), and may the CRM write into a customer's cart?
