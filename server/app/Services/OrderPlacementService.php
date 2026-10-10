@@ -429,6 +429,11 @@ class OrderPlacementService
             DB::table('cart')->where($key)->delete();
             return;
         }
+        // PENDING — delivery area check (doc §1.2 step 3: City::isProductServiceableInArea
+        // ($addressId, $vendorId, $catId), a point-in-polygon check of the customer's address
+        // against the vendor's delivery area). Not built yet: sir will share where the
+        // delivery-area boundaries are stored. Until then any saved address is accepted.
+        // When added, refuse the pack here with a clear message if the address is outside.
         $line = $this->resolveLines([[
             'product_id' => $productId, 'vendor_product_id' => $vendorProductId, 'pack_id' => $packId, 'quantity' => $qty,
         ]])[0];
@@ -826,6 +831,11 @@ class OrderPlacementService
             if ($qty < 1) {
                 $this->fail('items', "Quantity for {$r->name} must be at least 1.");
             }
+            // PENDING — delivery area check (doc §6 step 5: every line is checked with
+            // City::isProductServiceableInArea($addressId, $vendorId, product.parent_cat_id)
+            // before it is priced, in the bill and when the order is placed). Not built yet:
+            // sir will share where the delivery-area boundaries are stored. resolveLines()
+            // has no address today — pass the address id in and check here when it is added.
             // isProductForSell + stock flags (doc §1 step 7)
             if ((string) $r->status !== '1' || (int) $r->is_published !== 1 || (int) $r->is_deleted !== 0
                 || (string) $r->vendor_in_stock !== '1' || (int) $r->product_in_stock !== 1) {

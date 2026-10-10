@@ -125,6 +125,19 @@ Tests: 15 cart checks on the MariaDB prod schema (88/88 in total); 174/174 API c
 
 ---
 
+## 6F. Sir's answers (2026-10-10)
+
+- **Offers, promo code, notifications:** ignore for now. They stay as built (offers and promo as in the doc; no push notifications).
+- **Shared customer cart:** confirmed.
+  - The CRM uses the customer's own cart; items show on both sides.
+  - Placing an order clears the whole cart for that address.
+  - A salesman and a telecaller share one cart.
+- **Delivery area check:** important. Sir will share where the area boundaries are stored. Until then it is marked `PENDING — delivery area check` in `OrderPlacementService.php`, in two places:
+  - `setCartItem()`, when a pack is added to the cart;
+  - `resolveLines()`, where every line is checked for the bill and for placing.
+
+---
+
 ## 7. Open questions for sir
 
 1. **Cart:** should the CRM use the customer's own `cart` rows (`addProductToCart`), and may the CRM write into a customer's cart?
