@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\OrderPlacementService;
+use App\Support\UnitConversion;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -14,6 +15,8 @@ use Tymon\JWTAuth\Facades\JWTAuth;
  *   POST /api/sales-orders/preview   ≈ calculateOrderDetails.php (writes nothing)
  *   POST /api/sales-orders           ≈ placeNewOrder.php
  *   POST /api/orders/{id}/cancel     ≈ cancelOrder.php (pending CRM orders only)
+ *   POST /api/orders/{id}/edit-preview, PUT /api/orders/{id}
+ *                                    — change a pending CRM order (same rules as placing)
  *
  * The cart is on hold until the cart rules are confirmed, so the item list is
  * sent by the app: items[] = {product_id, vendor_product_id, pack_id, quantity}.
@@ -24,18 +27,25 @@ class SalesOrderController extends Controller
     {
     }
 
-    private function input(bool $withTotal): array
+    private function input(bool $withTotal, bool $forEdit = false): array
     {
         return validator(request()->all(), array_filter([
-            'buyer_userid'              => 'required|integer|min:1',
-            'address_id'                => 'required|integer|min:1',
-            'promo_code'                => 'nullable|string|max:100',
+            'buyer_userid'              => $forEdit ? null : 'required|integer|min:1',
+            'address_id'                => $forEdit ? null : 'required|integer|min:1',
+            'promo_code'                => $forEdit ? null : 'nullable|string|max:100',
             'items'                     => 'required|array|min:1',
             'items.*.product_id'        => 'required|integer|min:1',
             'items.*.vendor_product_id' => 'required|integer|min:1',
             'items.*.pack_id'           => 'required|string|max:255',
             'items.*.quantity'          => 'required|integer|min:1|max:65535',
+            // add-on charges (orders.charges_json, as the PMS stores them)
+            'charges'                   => 'nullable|array|max:' . count(OrderPlacementService::CHARGE_NAMES),
+            'charges.*.name'            => 'required|string|in:' . implode(',', OrderPlacementService::CHARGE_NAMES),
+            'charges.*.amount'          => 'required|numeric|between:-1000000,1000000',
+            'charges.*.remarks'         => 'nullable|string|max:100',
             'total_amount'              => $withTotal ? 'required|numeric|min:0' : null,
+            // same key for every try of one checkout → one order (double tap / retry)
+            'idempotency_key'           => 'nullable|string|max:64',
         ]), [
             'items.*.vendor_product_id.required' => 'Pick each product from the catalog (a vendor pack is required).',
             'address_id.required'                => 'Select a saved delivery address for this customer.',
@@ -46,9 +56,31 @@ class SalesOrderController extends Controller
     public function preview(): JsonResponse
     {
         $d = $this->input(false);
-        $calc = $this->orders->calculate((int) $d['buyer_userid'], (int) $d['address_id'], $d['items'], $d['promo_code'] ?? null);
+        $calc = $this->orders->calculate((int) $d['buyer_userid'], (int) $d['address_id'], $d['items'], $d['promo_code'] ?? null, $d['charges'] ?? []);
 
         return response()->json(['success' => true, 'data' => $this->publicShape($calc)]);
+    }
+
+    /** POST /api/orders/{orderId}/edit-preview — the new bill for an edit of a pending CRM order (writes nothing). */
+    public function editPreview(string $orderId): JsonResponse
+    {
+        $d = $this->input(false, true);
+        $calc = $this->orders->edit((int) $orderId, $d['items'], array_key_exists('charges', $d) ? ($d['charges'] ?? []) : null, null, true);
+
+        return response()->json(['success' => true, 'data' => $this->publicShape($calc)]);
+    }
+
+    /** PUT /api/orders/{orderId} — save an edit of a pending CRM order (total must match the edit preview). */
+    public function update(string $orderId): JsonResponse
+    {
+        $d = $this->input(true, true);
+        $result = $this->orders->edit((int) $orderId, $d['items'], array_key_exists('charges', $d) ? ($d['charges'] ?? []) : null, (float) $d['total_amount']);
+
+        return response()->json(['success' => true, 'data' => [
+            'order_id'        => (string) $result['order_id'],
+            'master_order_id' => (string) $result['master_order_id'],
+            'order_total'     => $result['order_total'],
+        ]]);
     }
 
     /** POST /api/sales-orders — place the order (re-calculated on the server; total must match the preview). */
@@ -61,6 +93,8 @@ class SalesOrderController extends Controller
             $d['items'],
             $d['promo_code'] ?? null,
             (float) $d['total_amount'],
+            $d['charges'] ?? [],
+            $d['idempotency_key'] ?? null,
         );
 
         // The order now owns these items — drop this staff member's CRM draft for the customer.
@@ -103,6 +137,7 @@ class SalesOrderController extends Controller
                     'pack_id'           => $l['pack_id'],
                     'name'              => $l['name'],
                     'pack'              => $l['pack']['tx'] ?? $l['pack_id'],
+                    'unit'              => UnitConversion::unitName($l['pack']['pui'] ?? null),
                     'quantity'          => $l['quantity'],
                     'item_price'        => $l['item_price'],
                     'item_total'        => $l['item_total'],
@@ -135,6 +170,10 @@ class SalesOrderController extends Controller
             'promo_discount'  => $calc['promoCodeDiscount']['discount'],
             'promo_message'   => $calc['promoCodeDiscount']['description'],
             'total'           => $calc['afterDiscount'],
+            // add-on charges: saved on the order (charges_json), added on the invoice — not in total
+            'charges'         => $calc['charges'],
+            'charges_total'   => $calc['charges_total'],
+            'round_off'       => $calc['round_off'],
         ];
     }
 }

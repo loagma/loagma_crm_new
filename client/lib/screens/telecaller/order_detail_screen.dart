@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../services/invoice_printer.dart';
+import '../../widgets/order_edit_sheet.dart';
 import '../../widgets/single_location_map_screen.dart';
 import 'order_list_screen.dart';
 
@@ -561,6 +562,30 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       'Items ($itemsCount)',
                     ),
                   ),
+                  // Pending CRM order: items and add-on charges can be changed
+                  // (re-priced on the server, stock moved by the difference).
+                  if (o['can_edit'] == true) ...[
+                    GestureDetector(
+                      onTap: _cancelling
+                          ? null
+                          : () async {
+                              if (await showOrderEditSheet(context, o)) _load();
+                            },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _gold.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: _gold.withValues(alpha: 0.4)),
+                        ),
+                        child: const Text(
+                          'Edit',
+                          style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFFB89A3E)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
                   if (o['can_cancel'] == true)
                     GestureDetector(
                       onTap: _cancelling ? null : _cancelOrder,
@@ -729,6 +754,17 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 '₹${deliveryChg.toStringAsFixed(2)}',
               ),
               _summaryRow('Total', '₹${total.toStringAsFixed(2)}', bold: true),
+              // add-on charges (orders.charges_json) — added on the invoice
+              for (final c in (o['charges'] as List?) ?? const [])
+                _summaryRow(
+                  '${(c as Map)['name']}${c['remarks'] != null ? ' (${c['remarks']})' : ''} — on invoice',
+                  '${(c['amount'] as num) < 0 ? '−' : '+'}₹${(c['amount'] as num).abs().toStringAsFixed(2)}',
+                ),
+              if (((o['round_off'] as num?) ?? 0) != 0)
+                _summaryRow(
+                  'Round off — on invoice',
+                  '${(o['round_off'] as num) < 0 ? '−' : '+'}₹${(o['round_off'] as num).abs().toStringAsFixed(2)}',
+                ),
             ],
           ),
         ),

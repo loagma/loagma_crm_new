@@ -317,10 +317,11 @@ class ApiService {
 
   /// Fetch customers from user table, optionally filtered by pincodes and/or
   /// a free-text search query ([q] matches name / shop_name / contact number).
-  static Future<List<Map<String, dynamic>>> getCustomers({List<String>? pincodes, String? q}) async {
+  static Future<List<Map<String, dynamic>>> getCustomers({List<String>? pincodes, String? q, String? userId}) async {
     final uri = Uri.parse('${ApiConfig.baseUrl}/api/customers');
     var finalUri = uri;
     final params = <String, dynamic>{};
+    if (userId != null && userId.isNotEmpty) params['userid'] = userId;
     if (pincodes != null && pincodes.isNotEmpty) params['pincodes[]'] = pincodes;
     if (q != null && q.trim().isNotEmpty) params['q'] = q.trim();
     if (params.isNotEmpty) {
@@ -431,13 +432,51 @@ class ApiService {
     required List<Map<String, dynamic>> items,
     String? promoCode,
     double? totalAmount,
+    List<Map<String, dynamic>>? charges,
+    String? idempotencyKey,
   }) => {
         'buyer_userid': buyerUserId,
         'address_id':   addressId,
         'items':        items,
         if (promoCode != null && promoCode.trim().isNotEmpty) 'promo_code': promoCode.trim(),
         'total_amount': ?totalAmount,
+        // add-on charges (Hamali…) → orders.charges_json; not in the total
+        'charges': ?charges,
+        'idempotency_key': ?idempotencyKey,
       };
+
+  /// POST/PUT helper for the order endpoints: {success, data} or {success: false, message}.
+  static Future<Map<String, dynamic>> _orderCall(String method, String path, Map<String, dynamic> body, String fallback) async {
+    final url = Uri.parse('${ApiConfig.baseUrl}$path');
+    try {
+      final response = await (method == 'PUT'
+              ? http.put(url, headers: _authHeaders, body: jsonEncode(body))
+              : http.post(url, headers: _authHeaders, body: jsonEncode(body)))
+          .timeout(const Duration(seconds: 30));
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {
+        return {'success': true, 'data': Map<String, dynamic>.from(decoded['data'] as Map)};
+      }
+      return {'success': false, 'message': _serverMessage(decoded, fallback)};
+    } catch (e) {
+      print('$path error: $e');
+      return {'success': false, 'message': 'Network error — check your connection.'};
+    }
+  }
+
+  /// New bill for changing a pending CRM order (writes nothing).
+  static Future<Map<String, dynamic>> previewOrderEdit(String orderId,
+          {required List<Map<String, dynamic>> items, required List<Map<String, dynamic>> charges}) =>
+      _orderCall('POST', '/api/orders/$orderId/edit-preview', {'items': items, 'charges': charges},
+          'Could not calculate the change.');
+
+  /// Save the change; [totalAmount] must be the edit preview's total.
+  static Future<Map<String, dynamic>> updateOrder(String orderId,
+          {required List<Map<String, dynamic>> items,
+          required List<Map<String, dynamic>> charges,
+          required double totalAmount}) =>
+      _orderCall('PUT', '/api/orders/$orderId',
+          {'items': items, 'charges': charges, 'total_amount': totalAmount}, 'Could not save the change.');
 
   /// First error message out of a Laravel 422 body (or the plain message).
   static String _serverMessage(Map<String, dynamic> decoded, String fallback) {
@@ -458,12 +497,14 @@ class ApiService {
     required int addressId,
     required List<Map<String, dynamic>> items,
     String? promoCode,
+    List<Map<String, dynamic>>? charges,
   }) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/sales-orders/preview');
     try {
       final response = await http
           .post(url, headers: _authHeaders, body: jsonEncode(_orderBody(
-              buyerUserId: buyerUserId, addressId: addressId, items: items, promoCode: promoCode)))
+              buyerUserId: buyerUserId, addressId: addressId, items: items, promoCode: promoCode,
+              charges: charges)))
           .timeout(const Duration(seconds: 20));
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {
@@ -486,13 +527,16 @@ class ApiService {
     required List<Map<String, dynamic>> items,
     required double totalAmount,
     String? promoCode,
+    List<Map<String, dynamic>>? charges,
+    String? idempotencyKey,
   }) async {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/sales-orders');
     try {
       final response = await http
           .post(url, headers: _authHeaders, body: jsonEncode(_orderBody(
               buyerUserId: buyerUserId, addressId: addressId, items: items,
-              promoCode: promoCode, totalAmount: totalAmount)))
+              promoCode: promoCode, totalAmount: totalAmount, charges: charges,
+              idempotencyKey: idempotencyKey)))
           .timeout(const Duration(seconds: 30));
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       if (response.statusCode >= 200 && response.statusCode < 300 && decoded['success'] == true) {

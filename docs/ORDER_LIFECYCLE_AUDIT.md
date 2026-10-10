@@ -50,7 +50,7 @@
 | §7 payment | cod / pending (master) / not_paid (order) | Same | ✅ |
 | §8 add-ons | None exist | Removed from the CRM | ✅ |
 | §9 promo | Upper-cased title, `status = 1`, `max_use > 0`, `min_user_id`, not used before; 4 types | Same | ✅ |
-| §10 unit factors | `framework/config.php` | **Guessed**: size in `pu` × base unit ("500 Gms." = 0.5, "5 Kg" = 5, "nos" = 1). Fits every `pu` value in the DB | ⚠ confirm |
+| §10 unit factors | `framework/config.php` | **`units_master.conversion_rate` by the pack's `pui`** (sir's decision, see §6) | ✅ |
 | §13 gotcha 11 | Preview writes `offer_log` | Preview writes nothing | ✅ fixed |
 
 ---
@@ -80,11 +80,36 @@ The same applies to cancel: it locks the order and the stock rows, and either ev
 
 ---
 
-## 5. Open questions for sir
+## 6. Units master as source of truth, add-on charges, editing (2026-10-10, after sir's review)
+
+**Sir's decisions:** `units_master` is the source of truth for stock conversion; packs get a `pui` key (= `units_master.unit_id`); add-on charges and order editing come back; `shop_plot_no` stays as the second minimum; items keep coming in the API body.
+
+**Stock conversion now:** `qty × extractFirstNumber(ps) × units_master.conversion_rate[pui] ÷ conversion_rate[product.stock_uom]`. This is the doc's formula with the factor read from `units_master` by id. For KG / NOS stock (rate 1) it is exactly the doc's formula; the division only matters for the 15 products whose stock is kept in GM.
+
+| Where | What changed |
+|---|---|
+| `app/Support/UnitConversion.php` (new) | Reads `units_master`. Works out stock per pack, and gives the reason a pack can't be sold: no `pui`; unit missing or inactive; pack unit of a different kind than the product's stock unit (KG vs NOS); size written in the pack text ("1 Pack of 5 Kg") disagreeing with ps × unit; ps "0" |
+| `OrderPlacementService` | Order check, locked re-check, stock deduction, `in_stk`, cancel restock and edit all use it. A pack with a problem is refused with the reason. Old orders whose pinfo has no `pui` restock with the previous text rule |
+| `orders_item.pinfo` | Still the raw pack snapshot, so it now carries `pui` |
+| Catalog (`ProductController::parsePacks`, app catalog) | Stock in whole packs from the same conversion. The app shares the product's pool between its packs in real units (1 × 5 kg leaves 10 fewer 500 g packs). Blocked packs show the reason |
+| Order detail / invoice | Unit name from `units_master` via `pinfo.pui` (pack text for old orders) |
+| `GET /api/masters/units` | Also returns `conversion_rate`; no longer breaks on the dev copy, which has no `serial_no` |
+
+**`pui` backfill:** `php artisan packs:backfill-pui` (dry run) / `--apply`. Matches each pack's `pu` text to a unit name ("500 Gms." → `500 GM`, "1 kg" → `KG`, "nos" → `NOS`). For a count unit (nos/PCS) on a KG product, it takes the weight unit from the pack's own text when that gives the exact size ("10 Kg x 495" → `KG`, "1 pack 250 g" → `250 GM`); these are marked `set_from_text` for review. A pack only gets a `pui` when the conversion is trustworthy. Everything else is left without one, so the CRM can't sell it, and is listed with the reason in `storage/app/pui_backfill_report.csv`, which is **the fix list for the PMS**. On dev (10,028 packs): 9,811 matched by name + 30 from text; 59 unmapped (`pack`, `WEIGHT`, empty, `test`); 115 with a real problem; 13 already had a `pui` (11 of them with a problem). Dev `units_master` row 90 "5 kg" was stored as COUNT/NOS and was corrected to MASS/KG (prod has no `dimension` column).
+
+**Add-on charges** (rules confirmed by Sparsh from the PMS code): stored in `orders.charges_json` as `[{"name","amount","remarks"?}]` with the PMS names **Hamali, Freight, Others, Discount** (exact case). Amounts are JSON numbers. Discount is stored negative, because the PMS normaliser doesn't run on CRM rows. "Packing" has no PMS name, so it is saved as Others with remarks "Packing". **Round off goes to `orders.bill_roff`**, never `charges_json` (the invoice adds both). Delivery charge stays in `delivery_charge`. None of it is added to `order_total`: the PMS invoice and outstanding totals add the charges themselves. Charges go on the vendor-108 order, else the first.
+
+**Editing:** `POST /api/orders/{id}/edit-preview`, `PUT /api/orders/{id}`. Pending CRM orders only. Everything is re-priced like placing (live price, units_master stock, offers, delivery charge, the order's own promo re-applied) in one transaction. Stock moves by the difference only. Items and offer_log are replaced; order and master totals are updated; total mismatch is rejected. Address and time slot stay. App: "Edit" on the order detail screen.
+
+**Tests:** MariaDB prod schema 55/55 (conversion, blocked packs, charges in PMS form + bill_roff, edit, transactions); MySQL 8 `test_cms` 170/170, 144/144 routes (rolled back); PHPUnit 19/19; `flutter analyze` 0 errors.
+
+---
+
+## 7. Open questions for sir
 
 1. **Cart:** should the CRM use the customer's own `cart` rows (`addProductToCart`), and may the CRM write into a customer's cart?
-2. **unit_factors:** what are the real values in `framework/config.php`?
-3. **Double stock deduction:** the doc deducts stock at placement. Does the admin PMS deduct again when it invoices?
+2. ~~unit_factors~~: answered: `units_master` is the source of truth (§6).
+3. ~~Double stock deduction~~: answered by Sparsh (2026-10-10): stock is deducted when the order is placed, not at invoice. The CRM does the same, so there is no double deduction.
 4. **Serviceability:** how does `City::isProductServiceableInArea` decide? Which tables does it read?
 5. **Notifications:** should CRM orders also send the out-of-stock alert and the vendor-128 push?
 6. **Offer data keys:** every offer in the dev DB is inactive. Can we get one real active offer of each type to confirm the `off_data` key names?

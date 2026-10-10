@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
@@ -78,6 +80,16 @@ class OrderLineItem {
   }
 }
 
+class OrderAddon {
+  String name;
+  final amount = TextEditingController(text: '0');
+  OrderAddon(this.name);
+
+  double get amountNum => double.tryParse(amount.text.trim()) ?? 0;
+
+  void dispose() => amount.dispose();
+}
+
 class CreateSalesOrderSheet extends StatefulWidget {
   final String name;
   final String accountId;
@@ -134,6 +146,20 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
   List<String> _units = const ['PCS', 'KG', 'BOX', 'LTR', 'NOS'];
   // Promo code typed by staff — validated and applied by the server preview.
   final _promo = TextEditingController();
+
+  // Add-on charges — the server stores them the way the PMS reads them:
+  // orders.charges_json with the PMS names (Packing → Others + remarks,
+  // Discount negative) and Round off in orders.bill_roff. None of it is part
+  // of the order total; the invoice adds them.
+  static const _addonNames = ['Hamali', 'Freight', 'Packing', 'Others', 'Discount', 'Round off'];
+  final List<OrderAddon> _addons = [];
+  // collapsed behind "+ Add extra charges" — most orders never need them
+  bool _showAddons = false;
+
+  List<Map<String, dynamic>> get _chargesPayload => _addons
+      .where((a) => a.amountNum != 0)
+      .map((a) => {'name': a.name, 'amount': a.amountNum})
+      .toList();
 
   // Starts empty — items only ever arrive from the catalog's qty stepper
   // (or, for a product with no vendor pack pricing, the manual product
@@ -242,6 +268,17 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
         item.unitPrice.text = (r['unit_price'] ?? '0').toString();
         _lineItems.add(item);
       }
+      for (final raw in (draft['addons'] as List?) ?? const []) {
+        final r = Map<String, dynamic>.from(raw as Map);
+        var name = (r['name'] ?? '').toString();
+        if (name == 'Transport') name = 'Freight'; // older drafts
+        if (name == 'Other') name = 'Others';
+        final addon = OrderAddon(_addonNames.contains(name) ? name : 'Others');
+        addon.amount.text = (r['amount'] ?? '0').toString();
+        _addons.add(addon);
+      }
+      if (_addons.isNotEmpty) _showAddons = true;
+
       final addr = draft['delivery_address'];
       if (addr is Map) _draftDeliveryAddress = Map<String, dynamic>.from(addr);
 
@@ -275,13 +312,14 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
           },
         )
         .toList(),
+    'addons': _addons.map((a) => {'name': a.name, 'amount': a.amount.text}).toList(),
     'delivery_address': _deliveryAddress,
   };
 
   // True once there's genuinely nothing worth restoring - an emptied cart
   // deletes its draft row instead of storing an empty one, so re-opening
   // starts clean rather than restoring a blank draft over fresh defaults.
-  bool get _draftIsEmpty => _lineItems.isEmpty;
+  bool get _draftIsEmpty => _lineItems.isEmpty && _addons.isEmpty;
 
   // Called from every cart mutation. Coalesces a burst of edits into one
   // write and never blocks the UI - a failed save just means this particular
@@ -365,6 +403,9 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     _draftDebounce?.cancel();
     _previewDebounce?.cancel();
     _promo.dispose();
+    for (final a in _addons) {
+      a.dispose();
+    }
     for (final i in _lineItems) {
       i.dispose();
     }
@@ -445,6 +486,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
       addressId: _addressId!,
       items: lines,
       promoCode: _promo.text,
+      charges: _chargesPayload,
     );
     apply(() {
       _previewLoading = false;
@@ -674,7 +716,24 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     _schedulePreview();
   }
 
+  // One checkout = one order: every try of the same cart (double tap, retry
+  // after a slow/failed response) sends the same key, so the server returns
+  // the first order instead of placing it again. A changed cart gets a new key.
+  String? _checkoutKey;
+  String? _checkoutSig;
+
+  String _keyFor(Map<String, dynamic> body) {
+    final sig = jsonEncode(body);
+    if (_checkoutKey == null || sig != _checkoutSig) {
+      final r = Random.secure();
+      _checkoutKey = List.generate(16, (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+      _checkoutSig = sig;
+    }
+    return _checkoutKey!;
+  }
+
   Future<void> _submit() async {
+    if (_saving) return; // a second tap while the first is still saving
     final validItems = _lineItems
         .where((i) => i.product.text.trim().isNotEmpty && i.qtyNum > 0)
         .toList();
@@ -715,16 +774,24 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
     }
 
     setState(() => _saving = true);
+    _reviewSetter?.call(() {}); // the Place Order button lives in the cart sheet
     final total = (preview['total'] as num).toDouble();
+    final lines = _orderLines();
+    final key = _keyFor({
+      'address': _addressId, 'items': lines, 'promo': _promo.text.trim(), 'charges': _chargesPayload, 'total': total,
+    });
     final result = await ApiService.createSalesOrder(
       buyerUserId: widget.accountId,
       addressId: _addressId!,
-      items: _orderLines(),
+      items: lines,
       totalAmount: total,
       promoCode: _promo.text,
+      charges: _chargesPayload,
+      idempotencyKey: key,
     );
     if (!mounted) return;
     setState(() => _saving = false);
+    _reviewSetter?.call(() {});
 
     if (result['success'] != true) {
       Fluttertoast.showToast(
@@ -737,6 +804,7 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
       return;
     }
 
+    _checkoutKey = null; // placed — the next checkout is a new order
     final data = Map<String, dynamic>.from(result['data'] as Map);
     final realOrderId = data['order_id']?.toString();
     final savedTotal = ((data['order_total'] as num?) ?? total).round();
@@ -1103,8 +1171,10 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
                               ? _nonPackItemRow(item, idx, setModalState)
                               : _manualItemForm(item, idx, setModalState);
                         }),
+                      const SizedBox(height: 2),
+                      _addChargesSection(setModalState),
                       if (_isCustomer) ...[
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 10),
                         _promoField(setModalState),
                       ],
                       const SizedBox(height: 10),
@@ -1845,6 +1915,14 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
             for (final f in freeItems)
               _billRow('Free: ${(f as Map)['name']} (${f['pack']}) × ${f['quantity']}', '₹0',
                   color: const Color(0xFF2F9E57)),
+            // add-on charges are saved on the order and added on the invoice
+            for (final c in (p['charges'] as List?) ?? const [])
+              _billRow('${(c as Map)['name']}${c['remarks'] != null ? ' (${c['remarks']})' : ''} — on invoice',
+                  '${(c['amount'] as num) < 0 ? '−' : '+'}${(c['amount'] as num).abs().toStringAsFixed(2)}',
+                  color: kGoldDark),
+            if (n('round_off') != 0)
+              _billRow('Round off — on invoice',
+                  '${n('round_off') < 0 ? '−' : '+'}${n('round_off').abs().toStringAsFixed(2)}', color: kGoldDark),
           ],
           const SizedBox(height: 8),
           Divider(height: 1, color: kGold.withValues(alpha: 0.2)),
@@ -1905,6 +1983,173 @@ class _CreateSalesOrderSheetState extends State<CreateSalesOrderSheet> {
           color: Color(0xFFD98A2B),
         ),
       ),
+    );
+  }
+
+  // Collapsed behind a link by default — most orders never need Hamali/
+  // Transport/etc., so the plain item list + Bill Details stays the norm.
+  Widget _addChargesSection(StateSetter setModalState) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: () => _bump(setModalState, () => _showAddons = !_showAddons),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _showAddons
+                    ? Icons.remove_circle_outline_rounded
+                    : Icons.add_circle_outline_rounded,
+                size: 15,
+                color: kGoldDark,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                _showAddons
+                    ? 'Hide extra charges'
+                    : 'Add extra charges (Hamali, Freight…)',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: kGoldDark,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_showAddons) ...[
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: _addonItems(setModalState),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _addonItems(StateSetter setModalState) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 4),
+        ..._addons.asMap().entries.map((entry) {
+          final idx = entry.key;
+          final addon = entry.value;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _label('Name'),
+                      Container(
+                        height: 46,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: _fieldBg,
+                          borderRadius: BorderRadius.circular(11),
+                          border: Border.all(color: _fieldBorder),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: addon.name,
+                            isExpanded: true,
+                            isDense: true,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: _ink,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            items: _addonNames
+                                .map(
+                                  (n) => DropdownMenuItem(
+                                    value: n,
+                                    child: Text(n),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) {
+                              if (v != null) {
+                                _bump(setModalState, () => addon.name = v);
+                              }
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _label('Amount'),
+                      TextField(
+                        controller: addon.amount,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        onChanged: (_) => _bump(setModalState, () {}),
+                        decoration: _decor(''),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: GestureDetector(
+                    onTap: () => _bump(setModalState, () {
+                      addon.dispose();
+                      _addons.removeAt(idx);
+                    }),
+                    child: const Icon(
+                      Icons.delete_outline_rounded,
+                      size: 18,
+                      color: Color(0xFFC0584C),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+        Align(
+          alignment: Alignment.centerRight,
+          child: OutlinedButton.icon(
+            onPressed: () => _bump(
+              setModalState,
+              () => _addons.add(OrderAddon(_addonNames.first)),
+            ),
+            icon: const Icon(Icons.add_rounded, size: 15, color: kGoldDark),
+            label: const Text(
+              'Addons',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: kGoldDark,
+              ),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: kGold),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 

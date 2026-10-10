@@ -146,7 +146,8 @@ class InvoicePrinter {
                 return [
                   (it['product_id'] ?? '').toString(),
                   (it['name'] ?? 'Item').toString(),
-                  (it['pack_size'] ?? '').toString(),
+                  // unit name from units_master (pinfo.pui); pack text for old orders
+                  (it['unit_id'] != null ? it['unit'] : (it['pack_size'] ?? it['unit'] ?? '')).toString(),
                   qty.toString(),
                   rate.toStringAsFixed(2),
                   tot.toStringAsFixed(2),

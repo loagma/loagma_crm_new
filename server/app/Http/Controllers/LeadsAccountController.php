@@ -623,6 +623,13 @@ class LeadsAccountController extends Controller
 
         $query = UserCustomer::query();
 
+        // one customer by id — the order sheet uses this to get the saved
+        // addresses when the screen that opened it didn't pass them
+        $userId = request()->query('userid');
+        if ($userId !== null && $userId !== '') {
+            $query->where('userid', (int) $userId);
+        }
+
         if (!empty($pincodes)) {
             $query->whereIn('pincode', $pincodes);
         }

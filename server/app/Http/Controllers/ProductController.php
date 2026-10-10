@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Support\ProductTaxResolver;
+use App\Support\UnitConversion;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -45,6 +46,7 @@ class ProductController extends Controller
                 'product.name',
                 'product.hsn_code',
                 'units_master.unit_name as stock_uom',
+                'product.stock_uom as stock_uom_id',
                 'product.cat_id',
                 'product.parent_cat_id',
             ]);
@@ -141,7 +143,7 @@ class ProductController extends Controller
                     // all (same case where packs is empty).
                     'vendor_product_id' => isset($vp->id) ? (string) $vp->id : null,
                     'default_pack_id' => $vp->default_pack_id ?? null,
-                    'packs'           => $vp ? self::parsePacks($vp->packs, $vp->default_pack_id) : [],
+                    'packs'           => $vp ? self::parsePacks($vp->packs, $vp->default_pack_id, $r->stock_uom_id) : [],
                 ];
             }),
         ]);
@@ -168,21 +170,21 @@ class ProductController extends Controller
 
     /**
      * `vendor_products.packs` is a JSON object keyed by pack id — e.g.
-     * {"diGd":{"tx":"1 kg","op":90,"rp":60,"ps":"1","pu":"kg","pi":"diGd","stk":42}}
-     * where `tx` is the display label, `op` the MRP, `rp` the actual selling
-     * price (same shape `product.packs` used before pricing moved to being
-     * vendor-scoped — see the class doc comment on search()), and `stk` the
-     * available stock (per docs/SALES_MODULE.md §7, this is the authoritative
-     * stock figure for PACK_WISE products — the legacy stock-ledger mutation
-     * keeps every pack's `stk` in the same `vendor_products` row in sync with
-     * each other, so any one pack's `stk` already reflects the shared pool).
-     * Most (product_id, vendor) pairs have no row at all, so callers must
-     * handle an empty result (no priced pack to pick) rather than assume
-     * every product has one.
+     * {"diGd":{"tx":"1 kg","op":90,"rp":60,"ps":"1","pu":"kg","pui":85,"pi":"diGd","stk":42,"in_stk":1}}
+     * `tx` display label, `op` MRP, `rp` selling price, `pui` the
+     * units_master unit, `stk` the product's stock pool (shared by all its
+     * packs, in product.stock_uom units). Most (product, vendor) pairs have no
+     * row at all, so callers must handle an empty result.
      *
-     * @return list<array{id: string, label: string, mrp: float, price: float, is_default: bool, stock: int}>
+     * Stock is converted with units_master (UnitConversion — the same maths
+     * the order is placed with): `stock` is how many whole packs the pool
+     * holds; `base_per_pack` / `stock_base` let the app share the pool between
+     * several packs in one cart. A pack whose unit can't be trusted comes back
+     * `orderable = false` with the reason, and stock 0.
+     *
+     * @return list<array<string, mixed>>
      */
-    public static function parsePacks(?string $raw, ?string $defaultPackId): array
+    public static function parsePacks(?string $raw, ?string $defaultPackId, $stockUom = null): array
     {
         if ($raw === null || $raw === '' || $raw === '[]') {
             return [];
@@ -195,13 +197,30 @@ class ProductController extends Controller
         $packs = [];
         foreach ($decoded as $id => $p) {
             if (!is_array($p)) continue;
+            $why     = UnitConversion::problem($p, $stockUom);
+            $perPack = $why ? null : UnitConversion::basePerPack($p, $stockUom);
+            $stk     = (float) ($p['stk'] ?? 0);
+            $inStk   = (int) ($p['in_stk'] ?? 1) === 1;
+            // bc = buy cap per order when numeric (some packs keep a barcode there) — same rule as the order check
+            $buyCap  = isset($p['bc']) && is_numeric($p['bc']) && (int) $p['bc'] > 0 ? (int) $p['bc'] : null;
+            $whole   = ($perPack && $inStk) ? (int) floor($stk / $perPack + 1e-9) : 0;
             $packs[] = [
-                'id'         => (string) $id,
-                'label'      => (string) ($p['tx'] ?? $id),
-                'mrp'        => (float) ($p['op'] ?? 0),
-                'price'      => (float) ($p['rp'] ?? ($p['op'] ?? 0)),
-                'is_default' => (string) $id === (string) $defaultPackId,
-                'stock'      => (int) ($p['stk'] ?? 0),
+                'id'             => (string) $id,
+                'label'          => (string) ($p['tx'] ?? $id),
+                'mrp'            => (float) ($p['op'] ?? 0),
+                'price'          => (float) ($p['rp'] ?? ($p['op'] ?? 0)),
+                'is_default'     => (string) $id === (string) $defaultPackId,
+                // most packs one order can take: whole packs the shared pool can
+                // supply, capped by the buy cap (0 if not sellable)
+                'stock'          => $buyCap !== null ? min($whole, $buyCap) : $whole,
+                'buy_cap'        => $buyCap,
+                'stock_base'     => $stk,
+                'base_per_pack'  => $perPack,
+                'pui'            => isset($p['pui']) && $p['pui'] !== '' ? (int) $p['pui'] : null,
+                'unit_name'      => UnitConversion::unitName($p['pui'] ?? null),
+                'in_stk'         => $inStk,
+                'orderable'      => $why === null,
+                'blocked_reason' => $why,
             ];
         }
         return $packs;

@@ -550,7 +550,7 @@ The order header twin. All 13 columns are written by the CRM.
 | `item_id` | bigint unsigned **PK** | Global sequence across all orders. **No AUTO_INCREMENT** — `MAX + 1` |
 | `order_id` | bigint unsigned NOT NULL | |
 | `product_id` | bigint unsigned NOT NULL | **NOT NULL** — this is why the CRM refuses free-text items and every line must resolve to a real `product` row |
-| `pinfo` | text NOT NULL | JSON: `{unit, ps, price_inclusive, unit_price_inclusive, tax_percent, sgst_percent, cgst_percent, discount_percent}`. `ps` is the catalog pack label, surfaced back as `pack_size` |
+| `pinfo` | text NOT NULL | JSON snapshot of the pack from `vendor_products.packs`: `{tx, op, rp, sn, ps, pu, pi, stk, in_stk, bc, pui}` (`pui` = `units_master.unit_id`; `rp` = 0 on free items). Orders placed before 2026-10-09 have the old CRM shape `{unit, ps, tax_percent, …}` |
 | `quantity` | mediumint unsigned | Integer only — no fractional quantities |
 | `item_price`, `item_total` | decimal(12,2) unsigned | **Tax-inclusive** (`price_inclusive: true`); tax is extracted out, never added on top |
 | `qty_delivered` | int | Written by the fulfilment side |
@@ -617,7 +617,8 @@ The authoritative GST source, via `ProductTaxResolver`.
 |---|---|---|
 | `unit_id` | int **UNI** | Target of `product.stock_uom` |
 | `unit_name` | varchar(100) NOT NULL | `KG`, `NOS`, `PCS`, `BOX`, `DOZEN`… Note it's `DOZEN`, not `DOZ` |
-| `serial_no` | int | Display order |
+| `serial_no` | int | Display order (prod only; the dev copy has no such column) |
+| `conversion_rate` | decimal(10,4) NOT NULL | **Source of truth for stock conversion**, relative to the base unit (KG / LTR / NOS): `500 GM` = 0.5, `5 kg` = 5, `DOZEN` = 12. Read by `UnitConversion` through each pack's `pui` |
 | `is_active` | tinyint(1) default 1 | The dropdown filters on this; name resolution for an existing product does not |
 
 ## admin

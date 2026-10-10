@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../screens/telecaller/telecaller_mock_data.dart' show kGold;
+import '../services/api_service.dart';
 
 /// The saved-address list to offer for a Create Sales Order delivery —
 /// shared by the salesman (Order Funnel) and telecaller (Profile) "take
@@ -33,12 +34,22 @@ List<Map<String, dynamic>> addressOptionsFrom(Map<String, dynamic> acc) {
 /// Returns null (with the dialog never shown) if the user cancels the picker.
 Future<Map<String, dynamic>?> resolveDeliveryAddress(
   BuildContext context,
-  Map<String, dynamic> acc,
-) async {
+  Map<String, dynamic> acc, {
+  String? customerId,
+}) async {
   // An order is placed against a SAVED address (user_addresses.id is sent as
   // address_id — see OrderPlacementService), so only entries with an id can
   // be offered here.
-  final options = addressOptionsFrom(acc).where((a) => a['id'] != null).toList();
+  var options = addressOptionsFrom(acc).where((a) => a['id'] != null).toList();
+  // Some ways of opening a customer (telecaller dashboard, "Go There",
+  // switching visits) don't carry the saved-address list — fetch it.
+  if (options.isEmpty && customerId != null && customerId.isNotEmpty) {
+    final found = await ApiService.getCustomers(userId: customerId);
+    if (found.isNotEmpty) {
+      options = addressOptionsFrom(found.first).where((a) => a['id'] != null).toList();
+    }
+    if (!context.mounted) return null;
+  }
   if (options.isEmpty) return null;
   if (options.length == 1) return options.first;
 

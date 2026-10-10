@@ -358,7 +358,8 @@ class _WorklistVisitScreenState extends State<WorklistVisitScreen> {
       return;
     }
     final options = addressOptionsFrom(_acc);
-    final deliveryAddress = await resolveDeliveryAddress(context, _acc);
+    final deliveryAddress = await resolveDeliveryAddress(context, _acc,
+        customerId: _isCustomer ? widget.accountId : null);
     if (options.length > 1 && deliveryAddress == null) return;
     if (!mounted) return;
 

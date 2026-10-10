@@ -825,7 +825,8 @@ class _TelecallerProfileScreenState extends State<TelecallerProfileScreen>
     // If the account has more than one saved address, ask which one this
     // order should ship to before opening the order drawer at all.
     final options = _addressOptions;
-    final selectedAddress = await resolveDeliveryAddress(context, _acc);
+    final selectedAddress = await resolveDeliveryAddress(context, _acc,
+        customerId: _isLead ? null : _id);
     if (options.length > 1 && selectedAddress == null) return; // cancelled — don't open the order drawer
     if (!mounted) return;
 

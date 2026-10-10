@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\OrderPlacementService;
+use App\Support\UnitConversion;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
@@ -223,6 +225,8 @@ class OrderListController extends Controller
                 'orders_item.qty_delivered',
                 'orders_item.item_price',
                 'orders_item.item_total',
+                'orders_item.vendor_product_id',
+                'orders_item.offers',
                 'product.name as product_name',
             ])
             ->get();
@@ -231,15 +235,19 @@ class OrderListController extends Controller
             $pinfo = json_decode((string) $row->pinfo, true) ?: [];
             return [
                 'product_id'   => (string) $row->product_id,
+                'vendor_product_id' => $row->vendor_product_id !== null ? (string) $row->vendor_product_id : null,
+                'pack_id'      => $pinfo['pi'] ?? null,
+                'free'         => $row->offers === 'free_item',
                 'name'         => $row->product_name ?: ($pinfo['tx'] ?? 'Item'),
                 'pack_size'    => $pinfo['ps'] ?? null,
                 'quantity'     => (int) $row->quantity,
                 'qty_delivered' => $row->qty_delivered !== null ? (int) $row->qty_delivered : 0,
                 'item_price'   => (float) $row->item_price,
                 'item_total'   => (float) $row->item_total,
-                // `pu` is the pack unit in the doc's pinfo snapshot; `unit`
-                // is what older CRM orders stored.
-                'unit'          => $pinfo['pu'] ?? $pinfo['unit'] ?? 'PCS',
+                // unit name from units_master by the pack's pui; older orders
+                // fall back to the pu / unit text they were saved with
+                'unit'          => UnitConversion::unitName($pinfo['pui'] ?? null) ?? $pinfo['pu'] ?? $pinfo['unit'] ?? 'PCS',
+                'unit_id'       => isset($pinfo['pui']) && $pinfo['pui'] !== '' ? (int) $pinfo['pui'] : null,
                 'tax_percent'   => (float) ($pinfo['tax_percent'] ?? 0),
                 'sgst_percent'  => (float) ($pinfo['sgst_percent'] ?? 0),
                 'cgst_percent'  => (float) ($pinfo['cgst_percent'] ?? 0),
@@ -253,9 +261,13 @@ class OrderListController extends Controller
                 'buyer_userid'     => (string) $order->buyer_userid,
                 'order_state'      => $order->order_state,
                 // Only a still-pending order placed from the CRM can be
-                // cancelled here (OrderPlacementService::cancel).
-                'can_cancel'       => $order->order_state === 'pending'
-                    && str_starts_with((string) $order->txn_id, \App\Services\OrderPlacementService::TXN_PREFIX),
+                // cancelled or edited here (OrderPlacementService::cancel / edit).
+                'can_cancel'       => $editable = ($order->order_state === 'pending'
+                    && str_starts_with((string) $order->txn_id, OrderPlacementService::TXN_PREFIX)),
+                'can_edit'         => $editable,
+                // add-on charges (Hamali…) as the PMS stores them; not part of order_total
+                'charges'          => json_decode((string) ($order->charges_json ?? ''), true) ?: [],
+                'round_off'        => (float) ($order->bill_roff ?? 0),
                 'payment_status'   => $order->payment_status,
                 'payment_method'   => $order->payment_method,
                 // Same reasoning as index(): a stored total that can't be traced

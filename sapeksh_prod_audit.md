@@ -283,7 +283,13 @@ Sir's doc describes how the consumer app writes an order (`calculateOrderDetails
 **Waiting for sir:**
 1. **Cart:** should the CRM use the customer's own `cart` rows (`addProductToCart` rules), and may the CRM write into the customer's cart?
 2. **`unit_factors`:** what are the real values in `framework/config.php`? The CRM uses a guessed rule: size in `pu` × base unit ("500 Gms." = 0.5, "5 Kg" = 5, "nos" = 1; kg/l = 1, gm/ml = 0.001) in `server/app/Support/UnitFactors.php`.
-3. **Double stock deduction:** the doc deducts stock when the order is placed. Does the admin PMS deduct it again when it invoices the order?
+3. ~~Double stock deduction~~: answered by Sparsh (2026-10-10): stock is deducted when the order is placed, not at invoice. The CRM does the same, so there is no double deduction.
+
+---
+
+## 6D. Units master, add-on charges, editing (2026-10-10)
+
+See `docs/ORDER_LIFECYCLE_AUDIT.md` §6. In short: stock conversion uses `units_master.conversion_rate` through each pack's new `pui` key. Packs whose unit can't be trusted are blocked and listed by `php artisan packs:backfill-pui` (fix list). Add-on charges are saved in `orders.charges_json` like the PMS. Pending CRM orders can be edited. **Go-live step:** run `php artisan packs:backfill-pui` (dry run), share the report, then `--apply` on prod.
 
 ---
 

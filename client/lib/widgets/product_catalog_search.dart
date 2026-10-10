@@ -424,25 +424,34 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
   int _rawStock(Map<String, dynamic> pack) =>
       (pack['stock'] as num?)?.toInt() ?? 0;
 
-  // Every pack of a product draws from the same physical stock pool — the
-  // server keeps each pack's raw `stock` figure in sync (see
-  // ProductController::parsePacks), but that's only true for what's actually
-  // *sold*. Locally, quantities already picked for this product's *other*
-  // packs (in this cart draft, not yet submitted) also have to come off
-  // what's left, so picking 5 of "1 kg" here leaves only stock-5 available
-  // for "500 g" of the same product, not the full raw figure for both.
+  double? _perPack(Map<String, dynamic> pack) =>
+      (pack['base_per_pack'] as num?)?.toDouble();
+
+  // Every pack of a product draws from one stock pool (`stock_base`, in the
+  // product's stock unit). Each pack uses `base_per_pack` of it — converted
+  // with units_master on the server, the same maths the order is placed
+  // with — so picking 1 × "5 kg" leaves 5 kg less for "500 g" of the same
+  // product (10 fewer packs), not just one fewer.
   int _availableStock(Map<String, dynamic> pack) {
+    // unit can't be trusted (blocked server-side) or flagged out of stock
+    if (pack['orderable'] == false || pack['in_stk'] == false) return 0;
     final productId = _productId;
-    final raw = _rawStock(pack);
-    if (productId == null) return raw;
+    final per = _perPack(pack);
+    final pool = (pack['stock_base'] as num?)?.toDouble();
+    if (productId == null || per == null || per <= 0 || pool == null) {
+      return _rawStock(pack);
+    }
     final packId = pack['id'] as String?;
-    var reservedByOtherPacks = 0;
+    var reserved = 0.0;
     for (final p in _packs) {
       if (p['id'] == packId) continue;
-      reservedByOtherPacks += widget.qtyFor(productId, p['id'] as String?);
+      reserved += widget.qtyFor(productId, p['id'] as String?) * (_perPack(p) ?? 0);
     }
-    final avail = raw - reservedByOtherPacks;
-    return avail > 0 ? avail : 0;
+    final left = pool - reserved;
+    final whole = left > 0 ? (left / per + 1e-9).floor() : 0;
+    // the server also refuses more than the pack's buy cap in one order
+    final cap = (pack['buy_cap'] as num?)?.toInt();
+    return cap != null && cap < whole ? cap : whole;
   }
 
   // Price is always taken from whichever pack is selected — never typed in —
@@ -499,19 +508,12 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
         item.maxQty = _stock;
         item.packLabel = pack['label'] as String?;
         item.hsnCode = widget.product['hsn_code']?.toString();
-        item.unit = _shortUnit(pack['label'] as String? ?? _fallbackUnit);
+        // unit name from units_master (the pack's pui)
+        item.unit = (pack['unit_name'] as String?) ?? _fallbackUnit;
         item.unitPrice.text = price.toStringAsFixed(2);
         return item;
       },
     );
-  }
-
-  // Pack labels from `packs` are free text like "1 kg" / "500 gm" — the order
-  // form's unit field expects a plain unit token, so this takes just the
-  // trailing word (falls back to the whole label if that doesn't parse).
-  String _shortUnit(String label) {
-    final parts = label.trim().split(RegExp(r'\s+'));
-    return parts.isNotEmpty ? parts.last : label;
   }
 
   static const _chipGreen = Color(0xFF1EA37A);
@@ -519,15 +521,32 @@ class _ProductCatalogCardState extends State<_ProductCatalogCard> {
 
   // A single-pack product has nothing to choose between, so it gets a plain
   // read-only info box instead of a (misleadingly tappable-looking) chip.
-  Widget _singlePackBox(Map<String, dynamic> pack) =>
-      _priceBox(pack, selected: true);
+  Widget _singlePackBox(Map<String, dynamic> pack) => _withBlockedNote(pack);
+
+  // A pack whose unit isn't set correctly in PMS can't be ordered (its stock
+  // would be deducted by a wrong amount) — say why instead of a dead stepper.
+  Widget _withBlockedNote(Map<String, dynamic> pack) {
+    final reason = pack['orderable'] == false ? '${pack['blocked_reason'] ?? 'unit not set'}' : null;
+    if (reason == null) return _priceBox(pack, selected: true);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _priceBox(pack, selected: true),
+        const SizedBox(height: 4),
+        Text(
+          "Can't order this pack: $reason. Fix the unit in PMS.",
+          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFC0584C)),
+        ),
+      ],
+    );
+  }
 
   // Summary of the currently-selected pack, shown above the chip row so the
   // price stays visible even once the chips themselves scroll or wrap.
   Widget _packSummaryLine() {
     final pack = _selectedPack;
     if (pack == null) return const SizedBox.shrink();
-    return _priceBox(pack, selected: true);
+    return _withBlockedNote(pack);
   }
 
   // Bordered "label: ₹price" box — matches the crm-telecaller mockup's plain

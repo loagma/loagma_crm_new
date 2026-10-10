@@ -7,6 +7,7 @@ use App\Models\RoleCrm;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class MastersController extends Controller
 {
@@ -66,14 +67,18 @@ class MastersController extends Controller
      */
     public function units(): JsonResponse
     {
-        $units = DB::table('units_master')
-            ->where('is_active', 1)
-            ->orderBy('serial_no')
-            ->orderBy('unit_name')
-            ->get(['unit_id', 'unit_name'])
+        $q = DB::table('units_master')->where('is_active', 1);
+        // prod has serial_no; the dev copy doesn't
+        if (Schema::hasColumn('units_master', 'serial_no')) {
+            $q->orderBy('serial_no');
+        }
+        $units = $q->orderBy('unit_name')
+            ->get(['unit_id', 'unit_name', 'conversion_rate'])
             ->map(fn ($u) => [
-                'unit_id'   => (int) $u->unit_id,
-                'unit_name' => $u->unit_name,
+                'unit_id'         => (int) $u->unit_id,
+                'unit_name'       => $u->unit_name,
+                // units_master is the source of truth for stock conversion
+                'conversion_rate' => (float) $u->conversion_rate,
             ]);
 
         return response()->json(['success' => true, 'data' => $units]);

@@ -193,9 +193,10 @@ class SalesOrderDraftController extends Controller
 
         $vendorProducts = $vendorProductIds->isEmpty()
             ? collect()
-            : DB::table('vendor_products')
-                ->whereIn('id', $vendorProductIds)
-                ->get(['id', 'packs', 'default_pack_id'])
+            : DB::table('vendor_products as vp')
+                ->leftJoin('product as p', 'p.product_id', '=', 'vp.product_id')
+                ->whereIn('vp.id', $vendorProductIds)
+                ->get(['vp.id', 'vp.packs', 'vp.default_pack_id', 'p.stock_uom'])
                 ->keyBy('id');
 
         return collect($items)->map(function ($item) use ($vendorProducts) {
@@ -211,9 +212,11 @@ class SalesOrderDraftController extends Controller
             if (!$vp) {
                 return $item;
             }
-            foreach (ProductController::parsePacks($vp->packs, $vp->default_pack_id) as $pack) {
+            foreach (ProductController::parsePacks($vp->packs, $vp->default_pack_id, $vp->stock_uom) as $pack) {
                 if ($pack['id'] === (string) $packId) {
                     $item['max_qty'] = $pack['stock'];
+                    $item['base_per_pack'] = $pack['base_per_pack'];
+                    $item['stock_base'] = $pack['stock_base'];
                     break;
                 }
             }

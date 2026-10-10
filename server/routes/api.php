@@ -94,6 +94,9 @@ Route::get('/orders/{orderId}', [OrderListController::class, 'show']);
 Route::post('/sales-orders/preview', [SalesOrderController::class, 'preview']); // must be before POST /sales-orders in case of future {id} routes
 Route::post('/sales-orders', [SalesOrderController::class, 'store']);
 Route::post('/orders/{orderId}/cancel', [SalesOrderController::class, 'cancel']);
+// change a pending CRM order (items + add-on charges), same rules as placing
+Route::post('/orders/{orderId}/edit-preview', [SalesOrderController::class, 'editPreview']);
+Route::put('/orders/{orderId}', [SalesOrderController::class, 'update']);
 Route::get('/products/search', [ProductController::class, 'search']);
 
 // Un-submitted Create Sales Order cart, per (staff member, account) — stored as
