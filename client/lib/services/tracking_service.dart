@@ -225,12 +225,13 @@ class _TrackingTaskHandler extends TaskHandler {
     final settings = Platform.isAndroid
         ? AndroidSettings(
             accuracy: LocationAccuracy.high,
-            distanceFilter: 0, // we thin client-side; see _onPosition
+            distanceFilter: 5, // OS-level gate; matches _minKeepMeters
             intervalDuration: const Duration(seconds: _intervalSeconds),
+            forceLocationManager: false,
           )
         : const LocationSettings(
             accuracy: LocationAccuracy.high,
-            distanceFilter: 0,
+            distanceFilter: 5,
           );
 
     _positionSub = Geolocator.getPositionStream(locationSettings: settings)
@@ -472,7 +473,7 @@ class _ForegroundOnlyTracker {
 
     const settings = LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 0, // thinned client-side, same as the mobile path
+      distanceFilter: 5, // OS-level gate; matches _minKeepMeters
     );
 
     _positionSub = Geolocator.getPositionStream(locationSettings: settings)
