@@ -165,8 +165,8 @@ class _TrackingTaskHandler extends TaskHandler {
   // scheduled delivery every [_intervalSeconds] and thin the stream ourselves:
   // keep a point when it moved ≥[_minKeepMeters] with an acceptable accuracy
   // (≤[_maxAccuracyMeters]), or every [_heartbeat] as a liveness breadcrumb.
-  static const int _intervalSeconds = 10;
-  static const double _minKeepMeters = 5;
+  static const int _intervalSeconds = 5;
+  static const double _minKeepMeters = 3;
   // Drop fixes the GPS itself reports as low-quality (accuracy radius worse
   // than this) — they're jitter and make the live track look LESS accurate.
   // Looser than the server's 50m backstop (TrackingController::MAX_ACCURACY_
@@ -225,9 +225,9 @@ class _TrackingTaskHandler extends TaskHandler {
     final settings = Platform.isAndroid
         ? AndroidSettings(
             accuracy: LocationAccuracy.high,
-            distanceFilter: 5, // OS-level gate; matches _minKeepMeters
+            distanceFilter: 0,
             intervalDuration: const Duration(seconds: _intervalSeconds),
-            forceLocationManager: false,
+            forceLocationManager: true,
           )
         : const LocationSettings(
             accuracy: LocationAccuracy.high,
@@ -430,7 +430,7 @@ class _ForegroundOnlyTracker {
   _ForegroundOnlyTracker._();
   static final _ForegroundOnlyTracker instance = _ForegroundOnlyTracker._();
 
-  static const double _minKeepMeters = 5;
+  static const double _minKeepMeters = 3;
   static const double _maxAccuracyMeters = 30;
   static const Duration _heartbeat = Duration(seconds: 60);
   static const Duration _batteryRefresh = Duration(seconds: 60);
@@ -473,7 +473,7 @@ class _ForegroundOnlyTracker {
 
     const settings = LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 5, // OS-level gate; matches _minKeepMeters
+      distanceFilter: 3,
     );
 
     _positionSub = Geolocator.getPositionStream(locationSettings: settings)

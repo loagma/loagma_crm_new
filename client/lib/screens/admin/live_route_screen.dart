@@ -96,7 +96,7 @@ class _LiveRouteScreenState extends State<LiveRouteScreen>
   void initState() {
     super.initState();
     _fetch(initial: true);
-    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _fetch());
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _fetch());
   }
 
   @override
