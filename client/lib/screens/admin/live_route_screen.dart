@@ -69,11 +69,6 @@ class _LiveRouteScreenState extends State<LiveRouteScreen>
   double _displayHeading = 0;
   double? _tipAccuracy;
 
-  // Last RECEIVED point — distance accumulates on arrival, independent of
-  // how far the display animation has caught up.
-  LatLng? _lastReceived;
-  DateTime? _lastReceivedAt;
-
   String? _lastRecordedAt;
   double _distanceKm = 0;
   bool _hasGaps = false;
@@ -146,21 +141,17 @@ class _LiveRouteScreenState extends State<LiveRouteScreen>
         );
       }
 
+      // The server recomputes distance from ALL pings on every response
+      // (including delta polls), so always trust its values.
+      _distanceKm = (data['distance_km'] as num?)?.toDouble() ?? _distanceKm;
+      _hasGaps = data['has_gaps'] == true;
+
       for (final p in incoming) {
         final pt = LatLng(
           (p['lat'] as num).toDouble(),
           (p['lng'] as num).toDouble(),
         );
         final at = DateTime.tryParse(p['recorded_at'] as String? ?? '');
-
-        if (!fullFetch && _lastReceived != null && at != null && _lastReceivedAt != null) {
-          if (at.difference(_lastReceivedAt!) > _gapRule) {
-            _hasGaps = true; // interrupted — do not count the jump
-          } else {
-            _distanceKm +=
-                const Distance().as(LengthUnit.Kilometer, _lastReceived!, pt);
-          }
-        }
 
         fresh.add(_IncomingPoint(
           pt: pt,
@@ -170,14 +161,10 @@ class _LiveRouteScreenState extends State<LiveRouteScreen>
           accuracy: (p['accuracy'] as num?)?.toDouble(),
         ));
 
-        _lastReceived = pt;
-        if (at != null) _lastReceivedAt = at;
         _lastRecordedAt = p['recorded_at'] as String;
       }
 
       if (fullFetch) {
-        _distanceKm = (data['distance_km'] as num?)?.toDouble() ?? 0;
-        _hasGaps = data['has_gaps'] == true;
         // Draw the whole existing trail instantly — only NEW points animate.
         for (final f in fresh) {
           _points.add(f.pt);
